@@ -34,8 +34,10 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 | `test/jstart/archive_test.d` | gav 3/4/5 段解析、classifier/打包类型识别、Maven2 布局、依赖行解析 |
 | `test/jstart/repo_test.d` | 本地仓库展开、sha1 文本解析、远程列表（Central 恒在末尾） |
 | `test/jstart/zipfile_test.d` | jar/war 条目读取、Manifest `Main-Class` 解析 |
-| `test/jstart/resolver_test.d` | jar/war/解压目录/文本文件的依赖解析、去重、空行、无描述 jar |
+| `test/jstart/resolver_test.d` | jar/war/解压目录/文本文件的依赖解析、去重、空行、无描述 jar、dependencyPath（快照时间戳路径） |
 | `test/jstart/consolidate_test.d` | repo 整合：复制 jar+sha1、本地已有跳过、双缺失报告 |
+| `test/jstart/download_test.d` | 并行下载（--jobs 并发/串行可观测）与 Range 分段下载合并、内容校验 |
+| `test/jstart/spec_test.d` | launch spec 识别/完整解析（含 [app] runtime 与旧 java/[jvm] 告警）、行号告警、未知段、deps 原样保留等 |
 
 ## 冒烟测试
 

@@ -13,14 +13,16 @@ import std.algorithm : canFind, endsWith, sort;
 import std.array : join, split;
 import std.conv : to;
 import std.file : dirEntries, exists, isDir, isFile, readText, remove, SpanMode;
+import std.parallelism : TaskPool;
 import std.path : absolutePath, baseName, pathSeparator;
 import std.process : environment;
+import std.range : iota;
 import std.stdio : stderr, writeln;
 import std.string : indexOf, startsWith, strip;
 
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile,
   expandLocalPath, parseArchive, parseGav;
-import jstart.http : downloadFile;
+import jstart.http : downloadFile, downloadFileSmart;
 import jstart.repo : LocalRepo, RemoteRepo, verifySha1;
 import jstart.zipfile : manifestMainClass, readZipEntry;
 
@@ -43,6 +45,8 @@ final class Resolver {
   /// Prefer war packaging when resolving a gav artifact.
   bool preferWar;
   bool verbose;
+  /// Snapshot 构件解析到的本地时间戳文件（raw -> path）。
+  string[string] snapshotFiles;
 
   this(LocalRepo local, RemoteRepo[] remotes, bool verbose = true, bool preferWar = false) {
     this.local = local;
@@ -111,11 +115,12 @@ final class Resolver {
 
   /**
      * Read the dependency description of the given application file or
-     * directory. Plain text files are treated as dependency descriptions
-     * themselves. Only the explicit lines inside the description are taken
-     * into account: jstart never reads Maven POMs and performs no transitive
-     * dependency resolution, so the application must list all of its runtime
-     * dependencies (project constraint).
+     * directory: the description is embedded inside a jar/war (or lives at
+     * the war layout path of an exploded directory). Only the explicit
+     * lines inside the description are taken into account: jstart never
+     * reads Maven POMs and performs no transitive dependency resolution,
+     * so the application must list all of its runtime dependencies
+     * (project constraint).
      */
   Archive[] resolveDependencies(string appPath) {
     string content;
@@ -135,9 +140,7 @@ final class Resolver {
           return [];
         }
         content = toText(data);
-      } else {
-        content = readText(appPath);
-      }
+      } // 其它普通文件不再当作依赖清单读取（纯文本清单已不支持）
     } else if (isDir(appPath)) {
       auto nested = appPath ~ "/WEB-INF/classes/META-INF/beangle/dependencies";
       if (isFile(nested)) {
@@ -184,28 +187,78 @@ final class Resolver {
      * Ensure every dependency is present locally: downloads missing
      * artifacts and verifies sha1 when possible. Returns the raw
      * descriptions of unresolved dependencies.
+     *
+     * Dependencies are processed concurrently when jobs > 1 (default 10):
+     * each one downloads through its own curl process into its own .part
+     * file, so parallel connections are only limited by the remote host.
+     * Set jobs to 1 for a strictly serial download.
      */
-  string[] ensureDependencies(Archive[] deps) {
-    string[] missing;
-    foreach (dep; deps) {
-      bool ok;
-      if (auto a = cast(Artifact) dep) {
-        ok = ensureArtifact(a);
-      } else if (auto lf = cast(LocalFile) dep) {
-        ok = exists(lf.file);
-        if (!ok && verbose) {
-          writeln("Cannot find " ~ lf.file);
-        }
-      } else if (auto rf = cast(RemoteFile) dep) {
-        ok = ensureRemoteFile(rf);
-      } else {
-        ok = true;
+  string[] ensureDependencies(Archive[] deps, int jobs = 10) {
+    snapshotFiles = null;
+    auto snap = new string[deps.length];
+    if (jobs > 1 && deps.length > 1) {
+      auto results = new string[deps.length];
+      auto pool = new TaskPool(cast(size_t) jobs);
+      scope (exit) pool.stop();
+      foreach (i; pool.parallel(iota(deps.length))) {
+        string tsFile;
+        results[i] = ensureOne(deps[i], tsFile) ? "" : deps[i].raw;
+        snap[i] = tsFile;
       }
-      if (!ok) {
+      string[] missing;
+      foreach (raw; results) {
+        if (raw.length) {
+          missing ~= raw;
+        }
+      }
+      foreach (i, dep; deps) {
+        if (snap[i].length) {
+          snapshotFiles[dep.raw] = snap[i];
+        }
+      }
+      return missing;
+    }
+    string[] missing;
+    foreach (i, dep; deps) {
+      string tsFile;
+      if (!ensureOne(dep, tsFile)) {
         missing ~= dep.raw;
+      } else {
+        snap[i] = tsFile;
+      }
+    }
+    foreach (i, dep; deps) {
+      if (snap[i].length) {
+        snapshotFiles[dep.raw] = snap[i];
       }
     }
     return missing;
+  }
+
+  /// Ensure one dependency; true when it is present or downloaded.
+  private bool ensureOne(Archive dep, out string snapshotPath) {
+    snapshotPath = "";
+    bool ok;
+    if (auto a = cast(Artifact) dep) {
+      if (a.isSnapshot) {
+        auto tsFile = local.snapshotPathOf(a);
+        if (tsFile.length) {
+          snapshotPath = tsFile;
+          return true;
+        }
+      }
+      ok = ensureArtifact(a);
+    } else if (auto lf = cast(LocalFile) dep) {
+      ok = exists(lf.file);
+      if (!ok && verbose) {
+        writeln("Cannot find " ~ lf.file);
+      }
+    } else if (auto rf = cast(RemoteFile) dep) {
+      ok = ensureRemoteFile(rf);
+    } else {
+      ok = true;
+    }
+    return ok;
   }
 
   /** Ensure a remote file dependency is cached under the local repo. */
@@ -217,7 +270,7 @@ final class Resolver {
     if (verbose) {
       writeln("Downloading " ~ rf.url);
     }
-    if (downloadFile(rf.url, target, verbose, baseName(target))) {
+    if (downloadFileSmart(rf.url, target, verbose, baseName(target))) {
       return true;
     }
     error("Cannot download " ~ rf.url);
@@ -258,25 +311,7 @@ final class Resolver {
         remove(file);
         remove(sha1File);
         needDownload = true;
-      } else {
-        // The sha1 file is missing: pull it from the remotes.
-        foreach (remote; remotes) {
-          auto sha1Url = remote.base ~ a.sha1.layoutPath;
-          if (!downloadFile(sha1Url, sha1File, false, "")) {
-            continue;
-          }
-          if (verifySha1(local, a)) {
-            return true;
-          }
-          logInfo("Error sha1 for " ~ a.raw ~ ",Remove it.");
-          remove(file);
-          remove(sha1File);
-          needDownload = true;
-          break;
-        }
-        if (!needDownload) {
-          return true; // sha1 不可得，接受本地文件
-        }
+        // 本地已命中且无 .sha1：直接接受，不发起网络补拉。
       }
     }
 
@@ -284,20 +319,19 @@ final class Resolver {
       foreach (remote; remotes) {
         auto url = remote.base ~ a.layoutPath;
         logInfo("Downloading " ~ url);
-        if (!downloadFile(url, file, verbose, a.raw)) {
+        if (!downloadFileSmart(url, file, verbose, a.raw)) {
           continue;
         }
-        if (!a.isSnapshot) {
-          auto sha1Url = remote.base ~ a.sha1.layoutPath;
-          if (downloadFile(sha1Url, sha1File, false, "")) {
-            if (!verifySha1(local, a)) {
-              logInfo("Error sha1 for " ~ a.raw ~ ",Remove it.");
-              remove(file);
-              remove(sha1File);
-              continue; // try the next remote
-            }
+        // 下载后从同一远程复核 .sha1（SNAPSHOT 同样校验）；该远程无 .sha1
+        // 时接受（verify aborted），与既有 release 语义一致。
+        auto sha1Url = remote.base ~ a.sha1.layoutPath;
+        if (downloadFile(sha1Url, sha1File, false, "")) {
+          if (!verifySha1(local, a)) {
+            logInfo("Error sha1 for " ~ a.raw ~ ",Remove it.");
+            remove(file);
+            remove(sha1File);
+            continue; // try the next remote
           }
-          // 该远程无 .sha1 时不做校验（verify aborted）
         }
         return true;
       }
@@ -343,15 +377,24 @@ final class Resolver {
       }
     }
     foreach (dep; deps) {
-      if (auto a = cast(Artifact) dep) {
-        paths ~= local.filePath(a);
-      } else if (auto lf = cast(LocalFile) dep) {
-        paths ~= lf.file;
-      } else if (auto rf = cast(RemoteFile) dep) {
-        paths ~= remoteLocalPath(rf);
-      }
+      paths ~= dependencyPath(dep);
     }
     return paths.join(pathSeparator);
+  }
+
+  /**
+     * classpath 中一条依赖的本地路径：Artifact 命中快照库时间戳文件时返回
+     * 该时间戳文件，否则为本地仓库布局路径；LocalFile/RemoteFile 返回各自落盘。
+     */
+  string dependencyPath(Archive dep) {
+    if (auto a = cast(Artifact) dep) {
+      return snapshotFiles.get(a.raw, local.filePath(a));
+    } else if (auto lf = cast(LocalFile) dep) {
+      return lf.file;
+    } else if (auto rf = cast(RemoteFile) dep) {
+      return remoteLocalPath(rf);
+    }
+    return dep.raw;
   }
 
   /** Main-Class of the target jar; "" when absent (e.g. wars or dirs). */

@@ -3,12 +3,15 @@
  */
 module jstart.repo;
 
+import std.algorithm : endsWith;
 import std.array : split;
+import std.conv : to;
 import std.digest : digest, toHexString;
 import std.digest.sha : SHA1;
-import std.file : exists, mkdirRecurse, read, readText;
+import std.file : dirEntries, exists, isDir, mkdirRecurse, read, readText, SpanMode;
+import std.path : baseName, dirName;
 import std.process : environment;
-import std.string : startsWith, strip, toLower;
+import std.string : lastIndexOf, startsWith, strip, toLower;
 
 import jstart.archive : Artifact, expandLocalPath;
 
@@ -16,13 +19,19 @@ import jstart.archive : Artifact, expandLocalPath;
 final class LocalRepo {
   /// Repository base directory, no trailing slash.
   string base;
+  /// Timestamped snapshot lookup base, ~/.m2/snapshots by default.
+  string snapshotBase;
 
   this(string base = "") {
-    string b = base.length ? expandLocalPath(base.strip) : defaultLocalBase();
+    auto given = base.strip;
+    string b = given.length ? expandLocalPath(given) : defaultLocalBase();
     while (b.length > 1 && b[$ - 1] == '/') {
       b = b[0 .. $ - 1];
     }
     this.base = b;
+    // 与 beangle/boot 一致：显式给出 base 时快照也放该 base；默认才是
+    // ~/.m2/snapshots。
+    this.snapshotBase = given.length ? b : defaultSnapshotBase();
     if (!exists(this.base)) {
       mkdirRecurse(this.base);
     }
@@ -31,6 +40,71 @@ final class LocalRepo {
   /// Absolute path of an artifact inside this repository.
   string filePath(Artifact a) const {
     return base ~ a.layoutPath;
+  }
+
+  /**
+   * Latest local timestamped snapshot file for a snapshot artifact, e.g.
+   * <snapshotBase>/g/a/1.0-SNAPSHOT/a-1.0-20260101.010101-2.jar, or ""
+   * when none exists. Timestamp format: yyyyMMdd.HHmmss-build, the newest
+   * (timestamp, build) pair wins, mirroring beangle/boot LocalSnapshot.
+   */
+  string snapshotPathOf(Artifact a) const {
+    if (!a.isSnapshot) {
+      return "";
+    }
+    auto ver = a.ver;
+    if (ver.endsWith("-SNAPSHOT")) {
+      ver = ver[0 .. $ - "-SNAPSHOT".length];
+    }
+    auto dir = dirName(snapshotBase ~ a.layoutPath);
+    if (!exists(dir) || !isDir(dir)) {
+      return "";
+    }
+    auto prefix = a.artifactId ~ "-" ~ ver ~ "-";
+    auto ext = "." ~ a.packaging;
+    string bestName;
+    string bestTs;
+    auto bestBuild = -1;
+    foreach (e; dirEntries(dir, SpanMode.shallow)) {
+      auto name = baseName(e.name);
+      if (!name.startsWith(prefix) || !name.endsWith(ext)) {
+        continue;
+      }
+      auto mid = name[prefix.length .. $ - ext.length];
+      auto dash = mid.lastIndexOf("-");
+      if (dash <= 0) {
+        continue;
+      }
+      auto ts = mid[0 .. dash];
+      if (!isTimestampVersion(ts)) {
+        continue;
+      }
+      auto build = -1;
+      try {
+        build = to!int(mid[dash + 1 .. $]);
+      } catch (Exception e) {
+        continue;
+      }
+      if (ts > bestTs || (ts == bestTs && build > bestBuild)) {
+        bestTs = ts;
+        bestBuild = build;
+        bestName = name;
+      }
+    }
+    return bestName.length ? dir ~ "/" ~ bestName : "";
+  }
+
+  /** yyyyMMdd.HHmmss, e.g. 20260101.010101. */
+  private static bool isTimestampVersion(string ts) {
+    if (ts.length != 15 || ts[8] != '.') {
+      return false;
+    }
+    foreach (i, c; ts) {
+      if (i != 8 && (c < '0' || c > '9')) {
+        return false;
+      }
+    }
+    return true;
   }
 }
 
@@ -41,6 +115,15 @@ string defaultLocalBase() {
     home = ".";
   }
   return home ~ "/.m2/repository";
+}
+
+/// Default timestamped snapshot repository location.
+string defaultSnapshotBase() {
+  auto home = environment.get("HOME");
+  if (home.length == 0) {
+    home = ".";
+  }
+  return home ~ "/.m2/snapshots";
 }
 
 /** sha1 hex digest of a file. */

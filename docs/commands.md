@@ -1,7 +1,8 @@
 # 命令详解
 
-jstart 0.0.1 提供四个子命令。命令名可以省略（默认 `run`）；选项与目标的位置不敏感，
-`--xxx=value` 形式。未被 jstart 消费的参数进入 `run` 的透传列表。
+jstart 0.0.1 提供五个子命令：`run` / `resolve` / `classpath` / `info` / `repo`。
+命令名可以省略（默认 `run`）；选项与目标的位置不敏感，`--xxx=value` 形式。
+未被 jstart 消费的参数进入 `run` 的透传列表。
 
 ## 通用
 
@@ -13,10 +14,12 @@ jstart [options] <command> <target> [args...]
 
 | 选项 | 说明 |
 |------|------|
-| `--local=<dir>` | 本地仓库，默认 `~/.m2/repository`；repo 命令里是"目标仓库" |
+| `--local=<dir>` | 本地仓库，默认 `~/.m2/repository`；SNAPSHOT 时间戳构件默认在独立的 `~/.m2/snapshots`（不混合），显式给定时也定位到该目录下的快照路径；repo 命令里是"目标仓库" |
 | `--source=<dir>` | 仅 repo 命令：源仓库，默认 `~/.m2/repository`，须与 `--local` 不同 |
 | `--remote=<urls>` | 逗号分隔的远程仓库；默认阿里云 public、华为云 maven、Maven Central |
 | `--preferwar` | gav 目标优先尝试 war 打包（对应原 sas.sh 场景） |
+| `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
+| `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
 | `--quiet` / `-q` | 关闭下载/过程输出（错误仍由退出码体现） |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
@@ -28,7 +31,24 @@ jstart [options] <command> <target> [args...]
 | 0 | 成功 |
 | 1 | 目标无法获取、依赖缺失、repo 源缺失或与 local 相同 |
 | 2 | 缺少目标等用法错误（打印 usage） |
-| 其他 | `run` 直接继承 java 的退出码（exec 后即 java 自身） |
+| 其他 | `run` 直接继承被启动应用的退出码（exec 后即应用自身，当前为 java） |
+
+## 本地仓库与快照库（不混合）
+
+jstart 维护**两个互不混合的本地目录**，取决于构件类型：
+
+| 目录 | 内容 | 默认位置 |
+|------|------|----------|
+| 本地仓库 | release/普通构件与 `.sha1`（含 `-SNAPSHOT` 字面文件），maven2 布局 `g/a/v/a-v.jar` | `~/.m2/repository`（`--local=` 覆盖） |
+| 快照库 | SNAPSHOT **时间戳**构件 `a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`，**全部带时间戳** | `~/.m2/snapshots`（独立，不与 repository 混合） |
+
+- release 类构件只进本地仓库，**不会**出现在快照库；
+- SNAPSHOT 时间戳构件只进快照库，**不会**与 repository 混合存放——本地判定"是否
+  已是最新"只需看快照库内时间戳文件名（字符串即时间序），命中即用，不比较 mtime、
+  不查远端；
+- 显式 `--local=<dir>` 时快照时间戳文件也定位到该目录下对应快照路径（对齐 boot：
+  显式给出 base 后不再另设 `~/.m2/snapshots`），但两者仍按 maven 发布/快照布局区分
+  存放，文件名互不覆盖。
 
 ## run —— 解析并启动
 
@@ -36,18 +56,33 @@ jstart [options] <command> <target> [args...]
 jstart [options] run <target> [args...]
 ```
 
-流程：解析目标 → 准备依赖 → 读 `Main-Class` → `execvp` 把自身替换为 java：
+流程：解析目标 → 准备依赖 → 读 `Main-Class` → `execvp` 把自身替换为运行时
+（当前 `run` 的运行时即 java）：
 
 ```text
-java [jvm-args] -cp <classpath> <Main-Class> [app-args...]
+java <runtime-options> -cp <classpath> <Main-Class> [app-args...]
 ```
+
+target 为 launch spec（`.launch`/`.jstart`，见 [launch-spec.md](launch-spec.md)）时，
+主类（`[app] main`）、运行时/解释器可执行文件（`[app] runtime`）、运行时参数
+（`[runtime]` 段）与应用参数（`[args]` 段）取自 spec；命令行上追加的参数排在 spec
+之后（`-D`/`-X` 开头归运行时）。spec 声明 `[deps]` 时它是依赖唯一来源，否则回退
+读取 entry 内置依赖清单。
 
 参数分配：
 
-- `-D...` / `-X...` 开头的参数交给 JVM；
+- `-D...` / `-X...` 开头的参数归运行时（java 即 JVM 参数）；
 - 其余（`--port=8080`、普通位置参数等）原样传给应用，顺序保持；
 - 需在 classpath 前置追加路径时用环境变量 `CLASSPATH_EXTRA`（或小写
   `classpath_extra`，小写优先）。
+
+`--print`：不 exec，把将执行的命令打印到 stdout（逐参数 POSIX 单引号，可直接复制
+执行），用于审计与调试：
+
+```bash
+jstart run --print app.launch
+jstart run --print app.jar --port=8080
+```
 
 示例：
 
@@ -92,6 +127,36 @@ exec java -cp "$cp" "$main" "$@"
 classpath 组成顺序：`CLASSPATH_EXTRA` → 应用 jar（或解压 war 的
 `WEB-INF/classes` + `WEB-INF/lib/*.jar`）→ 各依赖本地路径。
 
+## info —— 输出结构化信息
+
+```text
+jstart [options] info <target>
+```
+
+与 `resolve` 相同的准备语义（解析 → 下载缺失依赖 → 校验），齐备后把结构化信息
+打到 stdout，供审计与 IDE/CI 集成；缺件时与 `resolve` 一致打 `Missing: ...` 并 exit 1。
+
+输出为稳定的 `key: value` 文本，每个依赖一行 `dep <n>: <kind> <raw> -> <path> (<bytes> bytes)`：
+
+```text
+target: /path/to/app.jar
+entry: /path/to/app.jar
+app: /path/to/app.jar
+type: jar
+main: org.beangle.app.Main
+local: /home/user/.m2/repository
+snapshots: /home/user/.m2/snapshots
+remotes: https://maven.aliyun.com/repository/public,...,https://repo1.maven.org/maven2
+deps: 2
+dep 1: gav org.slf4j:slf4j-api:2.0.17 -> /home/user/.m2/repository/org/slf4j/slf4j-api/2.0.17/slf4j-api-2.0.17.jar (69908 bytes)
+dep 2: http https://repo.example.com/lib.jar -> /home/user/.m2/repository/repo.example.com/lib.jar (2826 bytes)
+```
+
+- `kind`：`gav`（maven 构件，命中本地快照库时 `path` 为时间戳文件）/ `local` / `http`；
+- `type`：`jar`/`war`/`dir`（解压目录）/`file`（其它本地文件）；
+- launch spec target 时 `entry`/`main` 取自 spec，其余字段一致；
+- 脚本用 `grep '^main: '`、`grep '^dep '` 等按前缀取行即可。
+
 ## repo —— 离线仓库整合
 
 ```text
@@ -99,7 +164,8 @@ jstart [options] repo <target> [--source=<dir>]
 ```
 
 对应原 `org.beangle.boot.launcher.Repo`。target 必须是**已存在于本地**的 jar/war/
-解压目录/文本依赖文件。逻辑：
+解压目录或 launch spec（其 `entry` 必须是本地文件/目录）。
+逻辑：
 
 1. 解析 target 的依赖描述；
 2. 只处理 gav 构件：`--local` 仓库已有则跳过；
@@ -129,7 +195,8 @@ jstart --local=/opt/offline-repo --quiet resolve /path/to/app.jar
 | `/path/to/app.jar` | 瘦 jar，内含依赖描述（无描述时按自包含 jar 处理） |
 | `/path/to/app.war` | war，读取 `WEB-INF/classes/...` 依赖描述 |
 | `/path/dir` | 解压后的 war 目录 |
-| `/path/deps.txt` | 普通文本，逐行当作依赖描述（便于调试） |
+| `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[deps]` |
+| `/path/app.launch` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
 | `group:artifact:version` | gav；含 `:` 且无 `/`、`\` 时识别为 gav |
 | `gav://group:artifact:version` | 显式 gav |
 | `http(s)://host/path/app.jar` | 按主机路径缓存到本地仓库后使用 |

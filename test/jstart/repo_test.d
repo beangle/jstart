@@ -30,3 +30,45 @@ unittest {
   auto defaults = buildRemotes();
   assert(defaults.length == 3);
 }
+
+unittest {
+  import std.conv : to;
+  import std.file : dirEntries, exists, isDir, mkdirRecurse, remove, tempDir,
+    write, SpanMode;
+  import std.path : buildPath;
+  import std.process : thisProcessID;
+
+  import jstart.archive : parseGav;
+
+  void rmTree(string path) {
+    if (!exists(path)) {
+      return;
+    }
+    if (isDir(path)) {
+      foreach (e; dirEntries(path, SpanMode.shallow)) {
+        rmTree(e.name);
+      }
+    }
+    remove(path);
+  }
+
+  auto tmpBase = buildPath(tempDir(), "jstart-snapshot-test-" ~ to!string(thisProcessID));
+  rmTree(tmpBase);
+  mkdirRecurse(tmpBase);
+  scope (exit) rmTree(tmpBase);
+
+  auto repo = new LocalRepo(tmpBase);
+  auto dir = buildPath(tmpBase, "org/test/demo/1.0-SNAPSHOT");
+  mkdirRecurse(dir);
+  write(buildPath(dir, "demo-1.0-20260101.010101-1.jar"), "old");
+  write(buildPath(dir, "demo-1.0-20260101.010101-2.jar"), "new");
+
+  auto snap = parseGav("org.test:demo:1.0-SNAPSHOT", "org.test:demo:1.0-SNAPSHOT");
+  assert(repo.snapshotPathOf(snap) == buildPath(dir, "demo-1.0-20260101.010101-2.jar"));
+
+  // 非 SNAPSHOT 或无效时间戳文件名不参与
+  auto rel = parseGav("org.test:demo:1.0", "org.test:demo:1.0");
+  assert(repo.snapshotPathOf(rel).length == 0);
+  write(buildPath(dir, "demo-1.0-notimestamp.jar"), "x");
+  assert(repo.snapshotPathOf(snap) == buildPath(dir, "demo-1.0-20260101.010101-2.jar"));
+}

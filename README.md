@@ -6,14 +6,21 @@ jstart 是用 D 语言实现的轻量级 jar/war 启动器：以轻量方式解�
 
 ## 特性
 
-- 目标支持：本地 jar/war、解压 war 目录、`g:a:v`/`gav://`、`http(s)://` url、普通文本依赖文件。
+- 目标支持：本地 jar/war、解压 war 目录、`g:a:v`/`gav://`、`http(s)://` url；
+  `run` 的声明式目标为 launch spec（`.launch`/`.jstart`，见 [docs/launch-spec.md](docs/launch-spec.md)）。
 - 读取应用内置依赖清单（jar：`META-INF/beangle/dependencies`；war：`WEB-INF/classes/...`），
   逐行准备 gav/本地文件/远程文件三类依赖。
 - 缺失依赖下载到本地 Maven 仓库（默认 `~/.m2/repository`），`.sha1` 校验、损坏删除重下；
+- **快照库独立**：SNAPSHOT 时间戳构件（`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）放在
+  单独的 `~/.m2/snapshots`，**不与 `~/.m2/repository` 混合**；本地命中最新时间戳即直接用，
+  缺失才下载；
   远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖。
 - `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待；`--port=8080` 等参数原样
-  转发给应用，`-D`/`-X` 开头参数交给 JVM。
-- 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl。
+  转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 用通用命名
+  （`[app] runtime`/`[runtime]`，见 [docs/launch-spec.md](docs/launch-spec.md)），为后续
+  非 java 运行时预留。
+- 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
+  （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 
 > **项目约束**：不做传递依赖解析。依赖清单是依赖的唯一来源，应用的全部运行期依赖须由构建期
 > beangle maven/sbt 插件显式写全；漏写不推导，`resolve`/`run` 会以 Missing 失败。
@@ -30,7 +37,10 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 app=$(./target/jstart --quiet resolve /path/to/app.jar)
 
 # 输出 Main-Class@classpath，供 launch.sh 式脚本自行 exec java
-info=$(./target/jstart --quiet classpath "$app")
+meta=$(./target/jstart --quiet classpath "$app")
+
+# 输出结构化信息（app/main/依赖落盘路径与体积），供审计与 CI
+./target/jstart --quiet info "$app"
 
 # 离线整合：把依赖从 --source 仓库复制到 --local 仓库
 ./target/jstart repo "$app" --local=/opt/offline-repo

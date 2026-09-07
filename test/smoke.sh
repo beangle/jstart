@@ -58,6 +58,12 @@ out="$("$JSTART" --local="$REPO" --quiet classpath "$T/app.jar")"; code=$?
 check "classpath main" "$code" 0 "org.jstarttest.Hello@"
 check "classpath dep" "$code" 0 "slf4j-api-2.0.17.jar"
 
+echo "== info =="
+out="$("$JSTART" --local="$REPO" --quiet info "$T/app.jar")"; code=$?
+check "info exit" "$code" 0 "main: org.jstarttest.Hello"
+check "info deps" "$code" 0 "deps: 1"
+printf '%s' "$out" | grep -q "dep 1: gav org.slf4j:slf4j-api:2.0.17 -> " || { echo "FAIL info dep line" >&2; failures=$((failures + 1)); }
+
 echo "== second resolve uses local cache =="
 out="$("$JSTART" --local="$REPO" --quiet resolve "$T/app.jar")"; code=$?
 check "resolve cached" "$code" 0 "$T/app.jar"

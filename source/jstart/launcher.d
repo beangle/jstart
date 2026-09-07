@@ -16,7 +16,7 @@ import std.file : exists;
 import std.path : buildPath, pathSeparator;
 import std.process : environment;
 import std.stdio : stderr, stdout, writeln;
-import std.string : toStringz;
+import std.string : replace, toStringz;
 
 version (Posix) {
   import core.sys.posix.unistd : execvp;
@@ -37,18 +37,54 @@ string javaExecutable() {
 }
 
 /**
+ * Resolve the java executable: an explicit java from [app] runtime (an
+ * executable path, or a JVM home directory which gets bin/java appended)
+ * wins, otherwise $JAVA_HOME/bin/java or "java" on PATH.
+ */
+private string resolveJava(string java) {
+  if (java.length == 0) {
+    return javaExecutable();
+  }
+  auto bin = buildPath(java, "bin", "java");
+  return exists(bin) ? bin : java;
+}
+
+/**
  * Launch a jar application with:
  *   java [jvmOptions] -cp <classpath> <Main-Class> [appArgs]
  *
  * On POSIX the current process is replaced by java, so the exit code and
  * signal behavior are java's own. On Windows java runs as a child and its
- * exit code is returned.
+ * exit code is returned. java overrides the java executable (a launch spec
+ * [app] runtime path); empty means the $JAVA_HOME/PATH lookup.
  */
 int runJarApp(string classpath, string mainClass, string[] jvmOptions,
-    string[] appArgs, bool verbose = true) {
-  auto java = javaExecutable();
-  auto cmd = [java] ~ jvmOptions ~ ["-cp", classpath] ~ [mainClass] ~ appArgs;
+    string[] appArgs, bool verbose = true, string java = "") {
+  auto cmd = [resolveJava(java)] ~ jvmOptions ~ ["-cp", classpath] ~
+    [mainClass] ~ appArgs;
   return execCmd(cmd, verbose);
+}
+
+/**
+ * Print the command `run` would exec (java [jvm] -cp cp main args), with
+ * every argv POSIX-single-quoted, without executing it.
+ */
+int printJavaCommand(string classpath, string mainClass, string[] jvmOptions,
+    string[] appArgs, string java = "") {
+  auto cmd = [resolveJava(java)] ~ jvmOptions ~ ["-cp", classpath] ~
+    [mainClass] ~ appArgs;
+  string[] quoted;
+  foreach (a; cmd) {
+    quoted ~= shellQuote(a);
+  }
+  writeln(quoted.join(" "));
+  return 0;
+}
+
+/** Single-quote an argv for POSIX shells, escaping embedded quotes. */
+private string shellQuote(string arg) {
+  auto escaped = arg.replace("'", "'\\''");
+  return "'" ~ escaped ~ "'";
 }
 
 /**

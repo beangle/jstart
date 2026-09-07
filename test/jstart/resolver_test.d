@@ -7,7 +7,7 @@
  */
 module test.jstart.resolver_test;
 
-import jstart.archive : Artifact, LocalFile, RemoteFile;
+import jstart.archive : Artifact, LocalFile, RemoteFile, parseGav;
 import jstart.repo : LocalRepo;
 import jstart.resolver : Resolver;
 
@@ -133,12 +133,10 @@ unittest {
   auto dirArt = cast(Artifact) dirDeps[0];
   assert(dirArt !is null && dirArt.artifactId == "commons-lang3");
 
-  // ---- 纯文本依赖文件（与 jar 内部文件同一套解析逻辑） ----
+  // ---- 普通文本文件不再是依赖清单（纯文本清单已不支持）：不读取，返回空 ----
   auto txtPath = buildPath(tmpBase, "deps.txt");
   write(txtPath, "org.slf4j:slf4j-api:2.0.17\n");
-  auto txtDeps = resolver.resolveDependencies(txtPath);
-  assert(txtDeps.length == 1);
-  assert(cast(Artifact) txtDeps[0]!is null);
+  assert(resolver.resolveDependencies(txtPath).length == 0);
 
   // ---- 无依赖文件的 jar：返回空列表而非报错 ----
   auto bareJar = buildPath(tmpBase, "bare.jar");
@@ -148,4 +146,51 @@ unittest {
   ]);
   assert(resolver.resolveDependencies(bareJar).length == 0);
   assert(resolver.mainClassOf(bareJar) == "org.example.Main");
+}
+
+unittest {
+  import std.conv : to;
+  import std.file : dirEntries, exists, isDir, mkdirRecurse, remove, tempDir, write, SpanMode;
+  import std.path : buildPath;
+  import std.process : thisProcessID;
+
+  import jstart.repo : LocalRepo;
+
+  void rmTree(string path) {
+    if (!exists(path)) {
+      return;
+    }
+    if (isDir(path)) {
+      foreach (e; dirEntries(path, SpanMode.shallow)) {
+        rmTree(e.name);
+      }
+    }
+    remove(path);
+  }
+
+  // dependencyPath：release 走本地仓库布局；SNAPSHOT 命中本地快照库时间戳文件。
+  auto tmpBase = buildPath(tempDir(), "jstart-deppath-test-" ~ to!string(thisProcessID));
+  rmTree(tmpBase);
+  mkdirRecurse(tmpBase);
+  scope (exit) rmTree(tmpBase);
+
+  auto local = new LocalRepo(tmpBase);
+  auto resolver = new Resolver(local, [], false);
+
+  // release 构件：本地缺件且无远程时不下载，dependencyPath 仍是仓库布局路径。
+  auto rel = parseGav("org.test:demo:1.0", "org.test:demo:1.0");
+  auto missing = resolver.ensureDependencies([rel], 1);
+  assert(missing.length == 1, "release 缺件应报 Missing");
+  assert(resolver.dependencyPath(rel) == local.filePath(rel));
+
+  // SNAPSHOT：快照库中放时间戳文件后，dependencyPath 指向该时间戳文件。
+  auto snap = parseGav("org.test:demo:1.0-SNAPSHOT", "org.test:demo:1.0-SNAPSHOT");
+  auto dir = buildPath(tmpBase, "org/test/demo/1.0-SNAPSHOT");
+  mkdirRecurse(dir);
+  auto tsFile = buildPath(dir, "demo-1.0-20260101.010101-2.jar");
+  write(tsFile, "snapshot-bytes");
+  missing = resolver.ensureDependencies([snap], 1);
+  assert(missing.length == 0, "本地时间戳命中不下载");
+  assert(resolver.dependencyPath(snap) == tsFile,
+      "classpath 应指向时间戳文件: " ~ resolver.dependencyPath(snap));
 }

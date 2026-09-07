@@ -6,7 +6,8 @@ jstart 的下载只发生在"本地仓库缺构件"时。因此可以在一台�
 ## 场景一：联网机器上准备离线仓库
 
 ```bash
-# 1. 先让应用的所有依赖进入 ~/.m2/repository
+# 1. 联网机器上把 release 依赖集齐到 ~/.m2/repository
+#    （SNAPSHOT 时间戳构件在独立的 ~/.m2/snapshots，不在此目录，见下方注意事项）
 jstart --quiet resolve /path/to/app.jar
 
 # 2. 整合到独立离线目录（默认源为 ~/.m2/repository）
@@ -47,6 +48,12 @@ exec java -cp "$cp" "$main" --port=8080
   启动时的工作目录。
 - 拷贝时请连同 `.sha1` 一起复制：一旦离线机器上 jar 与 `.sha1` 不一致，jstart 会删除
   构件并尝试重下（离线时即失败并报 Missing）。
+- **快照库与 repository 不混合**：`repo` 整合只覆盖本地仓库（release 布局）；SNAPSHOT
+  时间戳构件平时在独立的 `~/.m2/snapshots`，不会被 `repo` 复制。若应用依赖 SNAPSHOT
+  且目标机无外网，请把联网机上快照库对应时间戳文件（默认
+  `~/.m2/snapshots/g/a/1.0-SNAPSHOT/a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）拷贝到目标机
+  相同位置；使用 `--local=/opt/offline-repo` 时，放到该目录下对应的快照路径即可
+  （显式 `--local` 后快照文件定位在同一 base，不再另设 `~/.m2/snapshots`）。
 
 ## 常见流程示例
 
