@@ -19,6 +19,9 @@ jstart 是用 D 语言实现的轻量级 jar/war 启动器：以轻量方式解�
   转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 用通用命名
   （`[app] runtime`/`[runtime]`，见 [docs/launch-spec.md](docs/launch-spec.md)），为后续
   非 java 运行时预留。
+- war 目标用内置引擎启动：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
+  tomcat）；引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
+  见 [docs/war-engine.md](docs/war-engine.md)）。
 - 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 
@@ -32,6 +35,9 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 
 # 准备依赖环境并启动（进程即 java，参数原样透传）
 ./target/jstart run /path/to/app.jar --port=8080 --path=/base
+
+# war 走内置引擎：爆炸后启动内嵌 tomcat（--port/--path 透传给引擎）
+./target/jstart run /path/to/app.war --port=8080 --path=/base
 
 # 只准备依赖环境，输出应用绝对路径（供脚本使用）
 app=$(./target/jstart --quiet resolve /path/to/app.jar)

@@ -33,11 +33,12 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 |------|------|
 | `test/jstart/archive_test.d` | gav 3/4/5 段解析、classifier/打包类型识别、Maven2 布局、依赖行解析 |
 | `test/jstart/repo_test.d` | 本地仓库展开、sha1 文本解析、远程列表（Central 恒在末尾） |
-| `test/jstart/zipfile_test.d` | jar/war 条目读取、Manifest `Main-Class` 解析 |
+| `test/jstart/zipfile_test.d` | jar/war 条目读取、Manifest `Main-Class` 解析、爆炸解压（嵌套/目录条目/zip-slip 穿越条目跳过） |
 | `test/jstart/resolver_test.d` | jar/war/解压目录/文本文件的依赖解析、去重、空行、无描述 jar、dependencyPath（快照时间戳路径） |
 | `test/jstart/consolidate_test.d` | repo 整合：复制 jar+sha1、本地已有跳过、双缺失报告 |
 | `test/jstart/download_test.d` | 并行下载（--jobs 并发/串行可观测）与 Range 分段下载合并、内容校验 |
-| `test/jstart/spec_test.d` | launch spec 识别/完整解析（含 [app] runtime 与旧 java/[jvm] 告警）、行号告警、未知段、deps 原样保留等 |
+| `test/jstart/spec_test.d` | launch spec 识别/完整解析（含 [app] runtime/engine 与旧 java/[jvm] 告警）、行号告警、未知段、deps/engine 段原样保留等 |
+| `test/jstart/engine_test.d` | 引擎主类映射、tomcat 内置默认依赖、上下文路径/爆炸目录推导、--path/--base 扫描、引擎依赖去重合并 |
 
 ## 冒烟测试
 
@@ -48,7 +49,13 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 - classpath：输出含 `Main-Class@` 与依赖路径；
 - 二次 resolve：本地缓存命中（无网络请求）；
 - run：参数（`--port=8080`、普通参数）透传并 exec 成功；
-- gav 目标 resolve。
+- gav 目标 resolve；
+- war 引擎：真实下载 tomcat 三件套，`run --print` 输出 Bootstrap 命令、验证
+  `<base>/webapps/<ctx>` 爆炸布局与参数透传；
+- 真实组件运行测试（可选，联网+大下载+java 17+）：`bash test/war-run-test.sh`
+  用 `org.beangle.otk:beangle-otk-ws:war:0.0.29` 端到端启动并验证 HTTP 响应与
+  docBase 清理；`--engine=undertow` 切换 undertow 引擎（默认复用
+  `~/.m2/repository` 缓存）。
 
 ```bash
 dub build -b release --compiler=ldc2

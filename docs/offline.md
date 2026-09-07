@@ -65,6 +65,27 @@ tar czf offline-bundle.tgz jstart app.jar offline-repo/
 ./jstart --local=./offline-repo run app.jar --port=8080
 ```
 
+## war 目标与引擎依赖的离线
+
+`run <war>` 除了应用自身依赖，还需要**引擎 jar**（tomcat/undertow 内置默认目录或
+spec `[engine]` 罗列），两者都要在联网机上先集齐：
+
+```bash
+# 联网机：解析并下载（run --print 也会下载后只打印命令，不启动）
+jstart --quiet run --print app.launch --local=/opt/offline-repo
+
+# 校验：退出码 0 表示含引擎依赖在内全部齐备
+jstart --local=/opt/offline-repo --quiet resolve app.war && echo ready
+```
+
+注意：
+
+- `repo` 子命令**只整合应用依赖**（war 内置清单或 spec `[deps]`），不读取 `[engine]`
+  段，也不会复制引擎 jar；引擎依赖请用上面的 `run --print`（或 `resolve` 后手工
+  `repo` 引擎 spec 的 `[deps]`）预下载进离线仓库；
+- 引擎 jar 是 release 构件，落在普通本地仓库布局，随仓库一起拷贝即可，无需处理
+  快照库。
+
 ## 多应用共享离线仓库
 
 离线仓库目录结构与 maven 本地仓库一致，可同时容纳多个应用的依赖：

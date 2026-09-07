@@ -57,10 +57,13 @@ jstart [options] run <target> [args...]
 ```
 
 流程：解析目标 → 准备依赖 → 读 `Main-Class` → `execvp` 把自身替换为运行时
-（当前 `run` 的运行时即 java）：
+（jar 目标 exec 应用 `Main-Class`；war 目标 exec 内置引擎 Bootstrap，见
+[war-engine.md](war-engine.md)）：
 
 ```text
-java <runtime-options> -cp <classpath> <Main-Class> [app-args...]
+java <runtime-options> -cp <classpath> <Main-Class> [app-args...]        # jar
+java <runtime-options> -cp <classpath> org.beangle.sas.engine.tomcat.Bootstrap \
+     --base=<base> [--port=8080 --path=/ ...]                           # war
 ```
 
 target 为 launch spec（`.launch`/`.jstart`，见 [launch-spec.md](launch-spec.md)）时，
@@ -76,6 +79,17 @@ target 为 launch spec（`.launch`/`.jstart`，见 [launch-spec.md](launch-spec.
 - 需在 classpath 前置追加路径时用环境变量 `CLASSPATH_EXTRA`（或小写
   `classpath_extra`，小写优先）。
 
+war 目标（本地 `app.war`、gav/url 落盘为 `.war`）自动进入内置引擎流程：解析并
+爆炸到 `<base>/webapps/<ctx>`（`base` 默认 `${TMPDIR:-/tmp}/jstart-sas`，可用
+`--base=` 覆盖；`--path=` 决定 contextPath，缺省 `ROOT`），classpath 为爆炸目录的
+`WEB-INF/classes`+`WEB-INF/lib`+应用依赖+引擎依赖，然后 exec
+`org.beangle.sas.engine.<name>.Bootstrap`。引擎依赖有内置默认目录（tomcat 三件套 /
+undertow 十四件套，等价 sas.sh 两个分支），需要固定或改版本时用 launch spec 的
+`[engine]` 段显式罗列（权威，不依赖内置行）；选择引擎用 `[app] engine = tomcat|undertow`
+（war 缺省 tomcat）。
+war 的引擎模式只读取 `--path=`/`--base=` 用于爆炸布局，其余参数（含 `--port=`）
+原样透传给引擎——详见 [war-engine.md](war-engine.md)。
+
 `--print`：不 exec，把将执行的命令打印到 stdout（逐参数 POSIX 单引号，可直接复制
 执行），用于审计与调试：
 
@@ -90,6 +104,8 @@ jstart run --print app.jar --port=8080
 jstart run /path/to/app.jar --port=8080 --path=/base
 jstart run org.beangle.sqlplus:beangle-sqlplus:0.0.46 data.xml
 jstart --local=/opt/repo --quiet run app.jar --port=9090
+jstart run /path/to/app.war --port=8080 --path=/base   # 内置 tomcat 引擎
+jstart run --print app.launch                          # spec：war 时含 [engine] 段
 ```
 
 ## resolve —— 只准备依赖环境
@@ -167,7 +183,8 @@ jstart [options] repo <target> [--source=<dir>]
 解压目录或 launch spec（其 `entry` 必须是本地文件/目录）。
 逻辑：
 
-1. 解析 target 的依赖描述；
+1. 解析 target 的依赖描述（war/spec 的 `[engine]` 引擎依赖**不参与**整合，见
+   [war-engine.md](war-engine.md)）；
 2. 只处理 gav 构件：`--local` 仓库已有则跳过；
 3. 缺失的从 `--source` 仓库复制 jar 与 `.sha1`（源里有才复制）；
 4. 全部齐备则输出 `--local` 仓库基目录并 exit 0；否则打 `Missing: ...` 并 exit 1。
@@ -193,10 +210,10 @@ jstart --local=/opt/offline-repo --quiet resolve /path/to/app.jar
 | 形态 | 说明 |
 |------|------|
 | `/path/to/app.jar` | 瘦 jar，内含依赖描述（无描述时按自包含 jar 处理） |
-| `/path/to/app.war` | war，读取 `WEB-INF/classes/...` 依赖描述 |
+| `/path/to/app.war` | war：`resolve`/`repo` 读取 `WEB-INF/classes/...` 依赖描述；`run` 走内置引擎流程（见 [war-engine.md](war-engine.md)） |
 | `/path/dir` | 解压后的 war 目录 |
 | `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[deps]` |
-| `/path/app.launch` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
+| `/path/app.launch` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
 | `group:artifact:version` | gav；含 `:` 且无 `/`、`\` 时识别为 gav |
 | `gav://group:artifact:version` | 显式 gav |
 | `http(s)://host/path/app.jar` | 按主机路径缓存到本地仓库后使用 |

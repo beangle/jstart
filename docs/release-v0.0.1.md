@@ -19,6 +19,9 @@
 - 下载：宿主 curl 命令（仿 micdn），`.sha1` 校验，坏件删除重下
 - 启动：`run` 解析后 `execvp` 为 java（POSIX；Windows 退化为子进程等待）；launch spec
   采用通用运行时命名（`[app] runtime` + `[runtime]` 段，旧 `[app] java`/`[jvm]` 已移除并告警）
+- war 引擎：`run` 对 war 目标爆炸到 `<base>/webapps/<ctx>` 后 exec 内嵌引擎 Bootstrap
+  （tomcat/undertow，均有内置默认依赖目录；`[app] engine` 选择、`[engine]` 段罗列引擎
+  依赖用于覆盖内置默认；`--path`/`--base` 例外解析，见 [war-engine.md](war-engine.md)）
 - 打包：`scripts/build_rpm.sh`、`scripts/build_deb.sh`（含 `build_common.sh`）
 - 工程：零 dub 第三方依赖；单元测试独立于 `test/jstart/`（仿 micdn）+ `test/smoke.sh`
   端到端冒烟
@@ -33,7 +36,9 @@
 
 ## 已知限制
 
-- `run` 只支持带 `Main-Class` 的 jar；war 的引擎启动（对标 beangle sas）未实现。
+- `run` jar 目标需带 `Main-Class`；war 目标走内置引擎（tomcat/undertow 均有内置默认
+  目录，锁版本/换镜像用 launch spec `[engine]` 段覆盖）。可执行 war（自带
+  Main-Class）与"解压目录目标走引擎"暂不支持。
 - 原生可执行二进制目标未接入（`launcher.runNativeApp` 入口已预留）；launch spec 的
   `[app] runtime` 取非 java 值（python3/node 等）仅为结构与文档预留，当前 `run` 仍只
   exec java（jar 目标）。
@@ -48,9 +53,11 @@
 ## 路线图
 
 - v0.1.0：launch spec 启动说明文件（`docs/launch-spec.md`）、`run --print` 与
-  `info` 结构化输出命令均已随 v0.0.1 落地；后续 war run 与原生二进制启动。
-- war run（内嵌 undertow/tomcat 引擎；含"war 无 Main-Class 时指定引擎运行"场景，
-  单独设计）与任意原生可执行二进制启动。
+  `info` 结构化输出命令均已随 v0.0.1 落地；war 引擎 run（tomcat/undertow）已实现
+  （见 [war-engine.md](war-engine.md)），后续任意原生可执行二进制启动。
+- war run：tomcat 与 undertow 引擎均已落地（爆炸布局/内置默认依赖/`[app] engine`+
+  `[engine]`），两种引擎均已用 `org.beangle.otk:beangle-otk-ws:war:0.0.29` 完成真实
+  运行验证；后续：解压目录目标走引擎。
 - 多依赖并行下载（`--jobs`）与单文件 Range 分段并行（远端支持且 ≥1MB，最多 4 段）
   已实现；后续：跨次运行断点续传。
 - 下载进度显示：**明确不做**——下载期间不输出进度条，只在单个文件下载完成后输出

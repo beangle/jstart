@@ -23,6 +23,7 @@ jstart 用四个子命令覆盖同一职责：
 | `classpath` | `launcher.Classpath` | 输出 `Main-Class@classpath` |
 | `repo` | `launcher.Repo` | 离线仓库整合（复制缺失构件） |
 | `run` | `resolve.sh` + `launch.sh` | 准备环境后 exec 成 java |
+| war 引擎 run | `sas.sh` | 爆炸 war 到 `<base>/webapps/<ctx>`，exec `org.beangle.sas.engine.<name>.Bootstrap`（[war-engine.md](war-engine.md)） |
 
 保留 `resolve`/`classpath` 是为了兼容 launch.sh 式的脚本解耦；`run` 则把两步合并进
 单个进程。
@@ -47,8 +48,9 @@ source/app.d                    命令入口与参数解析
 source/jstart/archive.d         依赖模型：Artifact/LocalFile/RemoteFile、gav、Maven2 布局
 source/jstart/repo.d            本地仓库 LocalRepo、远程仓库列表、sha1 工具
 source/jstart/http.d            调用宿主 curl 下载（仿 micdn）
-source/jstart/zipfile.d         jar/war 条目读取、Manifest Main-Class 解析
-source/jstart/spec.d             launch spec 解析（[app]/[runtime]/[args]/[deps]，通用运行时命名）
+source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的爆炸解压）、Manifest Main-Class 解析
+source/jstart/engine.d           war 引擎：主类映射、内置默认依赖目录（tomcat/undertow）、爆炸布局/参数扫描
+source/jstart/spec.d             launch spec 解析（[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
 source/jstart/launcher.d        exec 运行时（当前即 java）/ 原生启动器
@@ -82,7 +84,9 @@ launch spec target（`.launch`/`.jstart`，见
    `java <runtime-options> -cp <cp> <Main-Class> [app-args...]`。运行时可执行文件取
    spec `[app] runtime`（缺省 `$JAVA_HOME`/PATH 的 java，JVM 家目录自动补 `bin/java`），
    运行时参数取 `[runtime]` 段与命令行 `-D`/`-X` 追加，应用参数取 `[args]` 段与
-   命令行其余透传参数；启动命令的 java 目前是唯一运行时。
+   命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class：
+   解析（可选）`[app] engine` 与 `[engine]` 依赖后，爆炸 war 到
+   `<base>/webapps/<ctx>` 并 exec 引擎 Bootstrap，见 [war-engine.md](war-engine.md)。
 
 ## 仓库与校验策略
 
@@ -116,8 +120,11 @@ launch spec target（`.launch`/`.jstart`，见
 
 - **不解析传递依赖**：依赖描述文件是唯一来源，只逐行处理显式依赖（见流程第 3 步），
   不读 POM、不展开传递依赖；全部运行期依赖须由构建期插件写全，漏写以 Missing 失败。
-- `run` 目前只支持带 `Main-Class` 的 jar；war 需要内嵌 servlet 引擎（对应 beangle sas），
-  属于路线图。
+- `run` jar 目标支持带 `Main-Class` 的瘦 jar；war 目标走内置引擎（对应 beangle sas
+  `sas.sh`）：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap，tomcat/undertow
+  都有内置默认依赖目录、可被 launch spec `[engine]` 段显式罗列覆盖（详见
+  [war-engine.md](war-engine.md)）；可执行 war（自带 Main-Class）与"解压目录目标走
+  引擎"暂不支持。
 - 并发粒度："跨依赖"由 `--jobs` 控制，单文件 Range 分段由远端支持与文件大小自动
   决定（≥1MB 最多 4 段）；不做跨次运行的断点续传，也不实现 boot 的 `.diff`
   增量补丁（按取舍决定）。
