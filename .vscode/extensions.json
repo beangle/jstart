@@ -1,0 +1,6 @@
+{
+  "recommendations": [
+    "EditorConfig.editorconfig",
+    "webfreak.code-d" // D语言支持
+  ]
+}

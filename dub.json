@@ -1,0 +1,23 @@
+{
+  "name": "jstart",
+  "version": "0.0.1",
+  "description": "jstart is a lightweight booter written in D. It resolves jar/war applications, prepares the dependency environment by downloading missing artifacts, and launches the application with forwarded arguments. Native binaries will be supported as targets too.",
+  "authors": ["chaostone"],
+  "homepage": "https://github.com/beangle/jstart",
+  "license": "GPL-3.0-or-later",
+  "copyright": "Copyright (C) 2026, The Beangle Software.",
+  "targetType": "executable",
+  "targetName": "jstart",
+  "sourcePaths": ["source"],
+  "importPaths": ["source"],
+  "mainSourceFile": "source/app.d",
+  "configurations": [
+    { "name": "application", "targetType": "executable", "targetPath": "target" },
+    {
+      "name": "unittest",
+      "targetPath": "target",
+      "sourcePaths": ["source", "test"],
+      "importPaths": ["source", "test"]
+    }
+  ]
+}

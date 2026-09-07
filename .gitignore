@@ -1,0 +1,17 @@
+*~
+
+# Build output directories
+/.dub/
+/target/
+/jstart
+jstart-test-application
+*.lst
+*.o
+*.obj
+
+# Editor / idea files
+*.log
+*.iml
+*.ipr
+*.iws
+.idea
