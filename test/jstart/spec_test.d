@@ -209,3 +209,50 @@ unittest {
   assert(warnings[0].startsWith("line 2: unknown [app] key java"), warnings[0]);
   assert(warnings[1].startsWith("line 4: unknown section [jvm]"), warnings[1]);
 }
+
+unittest {
+  // [app] engine 短键 + [engine] 段：war 引擎选择与引擎依赖罗列（每行同 [deps] 语法）。
+  enum text = "[app]\n" ~
+    "entry = app.war\n" ~
+    "engine = tomcat\n" ~
+    "[engine]\n" ~
+    "org.beangle.sas:beangle-sas-engine:0.13.10\n" ~
+    "org.apache.tomcat.embed:tomcat-embed-core:11.0.21\n" ~
+    "[args]\n" ~
+    "--port=8080\n";
+  string[] warnings;
+  auto spec = parseLaunchSpec(text, warnings);
+  assert(warnings.length == 0, warnings.join(","));
+  assert(spec.engine == "tomcat");
+  assert(spec.hasEngineDeps);
+  assert(spec.engineDeps.length == 2, spec.engineDeps.join(","));
+  assert(spec.engineDeps[0] == "org.beangle.sas:beangle-sas-engine:0.13.10");
+  assert(spec.engineDeps[1] == "org.apache.tomcat.embed:tomcat-embed-core:11.0.21");
+  assert(spec.args.length == 1 && spec.args[0] == "--port=8080");
+}
+
+unittest {
+  // 空 [engine] 段：显式声明"引擎无额外依赖/以罗列为准"，hasEngineDeps 为 true。
+  string[] warnings;
+  auto spec = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n[engine]\n", warnings);
+  assert(spec.engine == "tomcat");
+  assert(spec.hasEngineDeps);
+  assert(spec.engineDeps.length == 0);
+  assert(warnings.length == 0);
+
+  // 没有 [engine] 段：hasEngineDeps 为 false（回退内置默认目录）。
+  auto spec2 = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n", warnings);
+  assert(spec2.engine == "tomcat");
+  assert(!spec2.hasEngineDeps);
+  assert(spec2.engineDeps.length == 0);
+}
+
+unittest {
+  // jar 目标可以不声明 engine：[app] engine 缺省为空，由 run 层按目标类型决定。
+  enum text = "[app]\nentry = app.jar\nmain = org.example.Main\n";
+  string[] warnings;
+  auto spec = parseLaunchSpec(text, warnings);
+  assert(spec.engine.length == 0);
+  assert(!spec.hasEngineDeps);
+  assert(warnings.length == 0);
+}

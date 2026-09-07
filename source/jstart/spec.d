@@ -3,9 +3,10 @@
  *
  * A spec declares the main class (Java only), the application entry
  * (gav/http/file/dir), the runtime executable and its options, application
- * args and an optional explicit dependency list, turning `run` into a
- * complete "how to start" description. See docs/launch-spec.md for the
- * format and design decisions.
+ * args, an optional explicit dependency list and, for war entries, the
+ * built-in engine (see docs/war-engine.md), turning `run` into a complete
+ * "how to start" description. See docs/launch-spec.md for the format and
+ * design decisions.
  */
 module jstart.spec;
 
@@ -37,6 +38,14 @@ struct LaunchSpec {
   string[] deps;
   /// Whether an explicit [deps] section was present (even when empty).
   bool hasDeps;
+  /// Engine selection ([app] engine), meaningful only for war entries.
+  /// Empty defaults to "tomcat" at run time; jar/other targets ignore it.
+  string engine;
+  /// Engine dependency lines ([engine] section), same syntax as deps.
+  string[] engineDeps;
+  /// Whether an [engine] section was present (even when empty); when
+  /// present its lines are authoritative and no built-in catalog is used.
+  bool hasEngineDeps;
 }
 
 /** Whether the file name carries a launch spec extension. */
@@ -82,6 +91,8 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
       section = raw[1 .. $ - 1].strip;
       if (section == "deps") {
         spec.hasDeps = true; // 空 [deps] 段也是"显式无依赖"的声明
+      } else if (section == "engine") {
+        spec.hasEngineDeps = true; // [engine] 段存在即为准
       } else if (section != "app" && section != "runtime" && section != "args") {
         warnings ~= format("line %d: unknown section [%s]", i + 1, section);
         section = ""; // 未知段内容整段跳过
@@ -113,6 +124,9 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
           case "runtime":
             spec.runtime = value;
             break;
+          case "engine":
+            spec.engine = value;
+            break;
           default:
             warnings ~= format("line %d: unknown [app] key %s", i + 1, key);
         }
@@ -125,6 +139,9 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
         break;
       case "deps":
         spec.deps ~= raw;
+        break;
+      case "engine":
+        spec.engineDeps ~= raw;
         break;
       default:
         break;

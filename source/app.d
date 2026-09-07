@@ -10,15 +10,20 @@ module app;
 
 import std.algorithm : endsWith;
 import std.array : join;
-import std.file : exists, isFile, readText;
+import std.file : dirEntries, exists, isDir, isFile, mkdirRecurse, readText, remove,
+  SpanMode;
+import std.path : buildPath;
 import std.stdio : stderr, writeln;
 import std.string : startsWith, strip;
 
 import jstart.archive : Archive, expandLocalPath;
+import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engineMainClass,
+  scanEngineArgs, warDocBaseDir, warDocBaseName;
 import jstart.launcher : printJavaCommand, runJarApp;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
 import jstart.resolver : Resolver;
 import jstart.spec : LaunchSpec, isLaunchSpecText, isSpecFile, parseLaunchSpec;
+import jstart.zipfile : explodeZip;
 
 /// Version of the jstart binary.
 enum jstartVersion = "0.0.1";
@@ -93,10 +98,11 @@ void usage() {
   writeln("Usage:");
   writeln("  jstart [options] run <target> [args...]");
   writeln("      Prepare dependencies then exec the runtime: the process");
-  writeln("      becomes the runtime itself (java for jar targets).");
+  writeln("      becomes the runtime itself (java for jar targets; war targets");
+  writeln("      run with the built-in tomcat engine, see docs/war-engine.md).");
   writeln("      Unrecognized args (like --port=8080) are passed to the");
   writeln("      application; -D/-X* args go to the runtime. <target> may");
-  writeln("      also be a launch spec (.launch) declaring main/entry/runtime/args.");
+  writeln("      also be a launch spec (.launch) declaring main/entry/runtime/args");
   writeln("  jstart [options] resolve <target>");
   writeln("      Prepare dependencies and print the resolved app path.");
   writeln("  jstart [options] classpath <target>");
@@ -180,6 +186,10 @@ int main(string[] args) {
   if (appPath.length == 0) {
     return 1;
   }
+  if (specMode && !appPath.endsWith(".war")
+      && (spec.engine.length > 0 || spec.hasEngineDeps) && !opts.quiet) {
+    stderr.writeln("Warning: [app] engine / [engine] applies to war targets only, ignored.");
+  }
   Archive[] deps;
   if (specMode && spec.hasDeps) {
     // 显式 [deps] 段是唯一来源，不再回退读取 entry 内置依赖清单。
@@ -215,8 +225,7 @@ int main(string[] args) {
 
   // command == "run"
   if (appPath.endsWith(".war")) {
-    stderr.writeln("War targets need an embedded engine, which is a future feature.");
-    return 1;
+    return runWar(opts, resolver, appPath, deps, specMode, spec);
   }
   if (mainClass.length == 0) {
     stderr.writeln("Cannot find Main-Class in MANIFEST.MF of " ~ appPath);
@@ -254,6 +263,128 @@ int main(string[] args) {
     return printJavaCommand(classpath, mainClass, runtimeOptions, appArgs, runtimeCmd);
   }
   return runJarApp(classpath, mainClass, runtimeOptions, appArgs, !opts.quiet, runtimeCmd);
+}
+
+/**
+ * run 的 war 引擎分支：把 war 爆炸到 <base>/webapps/<name>，用应用 classpath +
+ * 引擎依赖 exec 引擎 Bootstrap（进程仍变为 java，无父子等待）。
+ *
+ * - 引擎选择：launch spec [app] engine（war 缺省 tomcat；jar/其它运行时忽略）；
+ * - 引擎依赖：[engine] 段逐行罗列（存在即为准，不依赖内置行），缺省回退 tomcat
+ *   内置默认（等价 sas.sh 的三个 download 行）；undertow 依赖较多，须显式罗列；
+ * - --path=/--base= 被"读取"用于爆炸布局（最后一次出现生效，与引擎 CmdOptions
+ *   一致），之后仍原样转发给引擎；--port 等参数不读取、直接透传；
+ * - 默认 base 为 ${TMPDIR:-/tmp}/jstart-sas；爆炸目录每次运行前重建（引擎关闭时
+ *   会自行删除 docBase，与 sas.sh 的 rm -rf 语义一致）。
+ */
+private int runWar(BootArgs opts, Resolver resolver, string warPath,
+    Archive[] appDeps, bool specMode, LaunchSpec spec) {
+  auto engine = specMode && spec.engine.length > 0 ? spec.engine : "tomcat";
+  string engineMain;
+  try {
+    engineMain = engineMainClass(engine);
+  } catch (Exception e) {
+    stderr.writeln(e.msg);
+    return 1;
+  }
+
+  // 引擎依赖：[engine] 段罗列为准；没有则用内置默认（仅 tomcat）。
+  Archive[] engineDeps;
+  if (specMode && spec.hasEngineDeps) {
+    engineDeps = resolver.parseDependencyText(spec.engineDeps.join("
+"));
+  } else {
+    try {
+      engineDeps = defaultEngineDeps(engine);
+    } catch (Exception e) {
+      stderr.writeln(e.msg);
+      return 1;
+    }
+  }
+  auto merged = appendEngineDeps(appDeps, engineDeps);
+  auto missing = resolver.ensureDependencies(merged, opts.jobs);
+  if (missing.length > 0) {
+    stderr.writeln("Missing: " ~ missing.join(","));
+    return 1;
+  }
+
+  // 运行时参数与 app args 拆分（与 jar 分支一致）。
+  string[] runtimeOptions = specMode ? spec.runtimeOptions.dup : null;
+  string[] appArgs = specMode ? spec.args.dup : null;
+  foreach (a; opts.rest) {
+    if (a.startsWith("-D") || a.startsWith("-X")) {
+      runtimeOptions ~= a; // -D/-X 是 java 运行时参数，仍归运行时
+    } else {
+      appArgs ~= a;
+    }
+  }
+
+  if (!opts.print && specMode && spec.workingDir.length > 0) {
+    auto dir = expandLocalPath(spec.workingDir);
+    if (!changeDir(dir)) {
+      stderr.writeln("Cannot chdir to " ~ dir);
+      return 1;
+    }
+  }
+
+  // --path=/--base= 例外读取：仅用于决定爆炸位置，参数本身原样转发。
+  string ctxPath;
+  string base;
+  scanEngineArgs(appArgs, ctxPath, base);
+  if (base.length == 0) {
+    base = defaultWarBase();
+  }
+  auto name = warDocBaseName(ctxPath);
+  if (name.length == 0) {
+    stderr.writeln("Unsafe context path for war explosion: --path=" ~ ctxPath);
+    return 1;
+  }
+  auto docBase = warDocBaseDir(base, name);
+
+  if (!opts.quiet) {
+    writeln("Exploding " ~ warPath ~ " -> " ~ docBase);
+  }
+  rmTree(docBase);
+  mkdirRecurse(docBase);
+  auto extracted = explodeZip(warPath, docBase);
+  if (extracted == 0) {
+    stderr.writeln("Cannot explode " ~ warPath ~ " into " ~ docBase);
+    return 1;
+  }
+  // 引擎（sas Server.Config.guessDocBase）会探测 classpath 上的目录资源；war
+  // 没有 WEB-INF/classes 时补一个空目录，避免 getResource("") 为 null。
+  auto classesDir = docBase ~ "/WEB-INF/classes";
+  if (!exists(classesDir)) {
+    mkdirRecurse(classesDir);
+  }
+
+  auto classpath = resolver.buildClasspath(docBase, merged);
+  auto runtimeCmd = specMode && spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "";
+  // --base 已消费（决定爆炸位置）：不再重复转发，统一放到 --base=<最终值>。
+  string[] restArgs;
+  foreach (a; appArgs) {
+    if (!a.startsWith("--base=")) {
+      restArgs ~= a;
+    }
+  }
+  auto engineArgs = ["--base=" ~ base] ~ restArgs;
+  if (opts.print) {
+    return printJavaCommand(classpath, engineMain, runtimeOptions, engineArgs, runtimeCmd);
+  }
+  return runJarApp(classpath, engineMain, runtimeOptions, engineArgs, !opts.quiet, runtimeCmd);
+}
+
+/** 递归删除目录/文件（爆炸前清理历史残留）。 */
+private void rmTree(string path) {
+  if (!exists(path)) {
+    return;
+  }
+  if (isDir(path)) {
+    foreach (e; dirEntries(path, SpanMode.shallow)) {
+      rmTree(e.name);
+    }
+  }
+  remove(path);
 }
 
 /**

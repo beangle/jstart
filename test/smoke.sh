@@ -82,6 +82,18 @@ echo "== gav target =="
 out="$("$JSTART" --local="$REPO" --quiet resolve org.slf4j:slf4j-api:2.0.17)"; code=$?
 check "gav resolve" "$code" 0 "slf4j-api-2.0.17.jar"
 
+echo "== war engine --print (downloads engine jars) =="
+mkdir -p "$T/war/WEB-INF"
+printf '<web-app/>\n' > "$T/war/WEB-INF/web.xml"
+(cd "$T/war" && zip -qr "$T/app.war" .)
+out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.war" --port=8080 --path=/demo --base="$T/sas")"; code=$?
+check "war print exit" "$code" 0 "org.beangle.sas.engine.tomcat.Bootstrap"
+check "war engine jar" "$code" 0 "tomcat-embed-core-11.0.21.jar"
+check "war port" "$code" 0 "'--port=8080'"
+check "war context" "$code" 0 "'--path=/demo'"
+printf '%s' "$out" | grep -q -- "--base=$T/sas" || { echo "FAIL war --base layout" >&2; failures=$((failures + 1)); }
+[ -f "$T/sas/webapps/demo/WEB-INF/web.xml" ] || { echo "FAIL war exploded layout" >&2; failures=$((failures + 1)); }
+
 echo
 echo "temp dir: $T"
 if [ "$failures" -gt 0 ]; then
