@@ -365,7 +365,7 @@ final class Resolver {
         paths ~= classes;
       }
       auto lib = appPath ~ "/WEB-INF/lib";
-      if (isDir(lib)) {
+      if (exists(lib) && isDir(lib)) {
         string[] libs;
         foreach (e; dirEntries(lib, SpanMode.shallow)) {
           if (e.isFile && e.name.endsWith(".jar")) {
