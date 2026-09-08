@@ -48,7 +48,8 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 
 目标（target）支持：
 
-- 本地 jar/war、解压后的 war 目录（`run` 的声明式目标用 `.launch`/`.jstart` spec）
+- 本地 jar/war、解压后的 war 目录
+- launch spec `.jstart`（本地路径，或 `http(s)://host/path/app.jstart` 远程 spec）
 - `group:artifact:version`、`gav://group:artifact:version`、`http(s)://host/path/app.jar`
 
 主要选项：

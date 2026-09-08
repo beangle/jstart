@@ -66,11 +66,11 @@ java <runtime-options> -cp <classpath> org.beangle.sas.engine.tomcat.Bootstrap \
      --base=<base> [--port=8080 --path=/ ...]                           # war
 ```
 
-target 为 launch spec（`.launch`/`.jstart`，见 [launch-spec.md](launch-spec.md)）时，
-主类（`[app] main`）、运行时/解释器可执行文件（`[app] runtime`）、运行时参数
-（`[runtime]` 段）与应用参数（`[args]` 段）取自 spec；命令行上追加的参数排在 spec
-之后（`-D`/`-X` 开头归运行时）。spec 声明 `[deps]` 时它是依赖唯一来源，否则回退
-读取 entry 内置依赖清单。
+target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
+[launch-spec.md](launch-spec.md)）时，主类（`[app] main`）、运行时/解释器可执行
+文件（`[app] runtime`）、运行时参数（`[runtime]` 段）与应用参数（`[args]` 段）
+取自 spec；命令行上追加的参数排在 spec 之后（`-D`/`-X` 开头归运行时）。spec
+声明 `[deps]` 时它是依赖唯一来源，否则回退读取 entry 内置依赖清单。
 
 参数分配：
 
@@ -95,7 +95,7 @@ war 的引擎模式只读取 `--path=`/`--base=` 用于爆炸布局，其余参�
 执行），用于审计与调试：
 
 ```bash
-jstart run --print app.launch
+jstart run --print app.jstart
 jstart run --print app.jar --port=8080
 ```
 
@@ -106,7 +106,8 @@ jstart run /path/to/app.jar --port=8080 --path=/base
 jstart run org.beangle.sqlplus:beangle-sqlplus:0.0.46 data.xml
 jstart --local=/opt/repo --quiet run app.jar --port=9090
 jstart run /path/to/app.war --port=8080 --path=/base   # 内置 tomcat 引擎
-jstart run --print app.launch                          # spec：war 时含 [engine] 段
+jstart run --print app.jstart                          # spec：war 时含 [engine] 段
+jstart run https://repo.example.com/app.jstart         # 远程 spec：下载后按 entry 解析
 ```
 
 ## resolve —— 只准备依赖环境
@@ -181,7 +182,8 @@ jstart [options] repo <target> [--source=<dir>]
 ```
 
 对应原 `org.beangle.boot.launcher.Repo`。target 必须是**已存在于本地**的 jar/war/
-解压目录或 launch spec（其 `entry` 必须是本地文件/目录）。
+解压目录或 launch spec（只接受本地 `.jstart`，其 `entry` 必须是本地文件/目录；
+不做联网下载）。
 逻辑：
 
 1. 解析 target 的依赖描述（war/spec 的 `[engine]` 引擎依赖**不参与**整合，见
@@ -214,7 +216,8 @@ jstart --local=/opt/offline-repo --quiet resolve /path/to/app.jar
 | `/path/to/app.war` | war：`resolve`/`repo` 读取 `WEB-INF/classes/...` 依赖描述；`run` 走内置引擎流程（见 [war-engine.md](war-engine.md)） |
 | `/path/dir` | 解压后的 war 目录 |
 | `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[deps]` |
-| `/path/app.launch` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
+| `/path/app.jstart` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
 | `group:artifact:version` | gav；含 `:` 且无 `/`、`\` 时识别为 gav |
 | `gav://group:artifact:version` | 显式 gav |
 | `http(s)://host/path/app.jar` | 按主机路径缓存到本地仓库后使用 |
+| `http(s)://host/path/app.jstart` | 远程 launch spec：下载并缓存后解析，`run` 按 spec 的 entry 继续 |

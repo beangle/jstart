@@ -7,7 +7,7 @@ jstart 是用 D 语言实现的轻量级 jar/war 启动器：以轻量方式解�
 ## 特性
 
 - 目标支持：本地 jar/war、解压 war 目录、`g:a:v`/`gav://`、`http(s)://` url；
-  `run` 的声明式目标为 launch spec（`.launch`/`.jstart`，见 [docs/launch-spec.md](docs/launch-spec.md)）。
+  `run` 的声明式目标为 launch spec（`.jstart`，支持本地路径或 http(s) url，见 [docs/launch-spec.md](docs/launch-spec.md)）。
 - 读取应用内置依赖清单（jar：`META-INF/beangle/dependencies`；war：`WEB-INF/classes/...`），
   逐行准备 gav/本地文件/远程文件三类依赖。
 - 缺失依赖下载到本地 Maven 仓库（默认 `~/.m2/repository`），`.sha1` 校验、损坏删除重下；

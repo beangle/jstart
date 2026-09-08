@@ -22,7 +22,7 @@ import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engi
 import jstart.launcher : printJavaCommand, runJarApp;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
 import jstart.resolver : Resolver;
-import jstart.spec : LaunchSpec, isLaunchSpecText, isSpecFile, parseLaunchSpec;
+import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec;
 import jstart.zipfile : explodeZip;
 
 /// Version of the jstart binary.
@@ -102,7 +102,7 @@ void usage() {
   writeln("      run with the built-in tomcat engine, see docs/war-engine.md).");
   writeln("      Unrecognized args (like --port=8080) are passed to the");
   writeln("      application; -D/-X* args go to the runtime. <target> may");
-  writeln("      also be a launch spec (.launch) declaring main/entry/runtime/args");
+  writeln("      also be a launch spec (.jstart) declaring main/entry/runtime/args");
   writeln("  jstart [options] resolve <target>");
   writeln("      Prepare dependencies and print the resolved app path.");
   writeln("  jstart [options] classpath <target>");
@@ -117,12 +117,13 @@ void usage() {
   writeln("");
   writeln("target:");
   writeln("  /path/to/app.jar | app.war | exploded-war-dir");
-  writeln("  /path/to/app.launch | app.jstart  launch spec declaring main/entry/runtime/args");
+  writeln("  /path/to/app.jstart                launch spec declaring main/entry/runtime/args");
   writeln("  group:artifact:version | gav://group:artifact:version");
   writeln("  http(s)://host/path/to/app.jar");
+  writeln("  http(s)://host/path/to/app.jstart  remote launch spec (downloaded and parsed)");
   writeln("");
   writeln("  run 需要可启动的应用本体：jar/gav/url/解压目录，或写成 launch spec");
-  writeln("  （.launch/.jstart，见 docs/launch-spec.md）。本地文件 target 只接受");
+  writeln("  （.jstart，支持本地或 http(s)，见 docs/launch-spec.md）。本地文件 target 只接受");
   writeln("  jar/war/解压目录；纯文本依赖清单已不支持。");
   writeln("");
   writeln("options:");
@@ -167,9 +168,18 @@ int main(string[] args) {
   auto remotes = buildRemotes(opts.remote);
   auto resolver = new Resolver(localRepo, remotes, !opts.quiet, opts.preferWar);
 
-  // launch spec：本地文件按扩展名或内容特征识别；其余 target 走原流程。
+  // launch spec：target 必须以 .jstart 结尾（本地路径或 http(s) url）。
+  // http(s) spec 先下载并缓存到本地仓库，再按本地文件解析。
+  auto specLocal = opts.target;
+  if (isSpecFile(opts.target)
+      && (opts.target.startsWith("http://") || opts.target.startsWith("https://"))) {
+    specLocal = resolver.fetchTarget(opts.target);
+    if (specLocal.length == 0) {
+      return 1;
+    }
+  }
   LaunchSpec spec;
-  auto specMode = tryLoadSpec(opts, spec);
+  auto specMode = tryLoadSpec(opts, specLocal, spec);
   if (specMode && spec.entry.length == 0) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
@@ -230,7 +240,7 @@ int main(string[] args) {
   if (mainClass.length == 0) {
     stderr.writeln("Cannot find Main-Class in MANIFEST.MF of " ~ appPath);
     stderr.writeln(
-        "Launch a jar/gav/url target, or write a launch spec (.launch/.jstart) with");
+        "Launch a jar/gav/url target, or write a launch spec (.jstart) with");
     stderr.writeln("[app] main and entry to describe how to start (see docs/launch-spec.md).");
     return 1;
   }
@@ -473,26 +483,26 @@ private string plainTargetReject(BootArgs opts) {
   }
   return "Unsupported target " ~ opts.target ~ ": plain text dependency lists are no "
     ~ "longer supported. Use a jar/war/exploded-dir target, or write a launch spec "
-    ~ "(.launch/.jstart) declaring [app] main and entry.";
+    ~ "(.jstart) declaring [app] main and entry.";
 }
 
 /**
- * Read opts.target as a launch spec when the file is one (by extension or
- * content sniffing). Returns true and fills spec when in spec mode; parse
- * warnings are printed unless quiet.
+ * Read a launch spec from its local file. Only `.jstart` targets are
+ * specs (local paths, or http(s) urls already downloaded to specPath);
+ * anything else returns false so the caller falls through to the plain
+ * jar/war/gav/url flow. Parse warnings are printed unless quiet.
  */
-private bool tryLoadSpec(BootArgs opts, out LaunchSpec spec) {
-  auto path = expandLocalPath(opts.target);
-  if (!exists(path) || !isFile(path)) { // gav/http 等非文件 target 快速返回
+private bool tryLoadSpec(BootArgs opts, string specPath, out LaunchSpec spec) {
+  if (!isSpecFile(opts.target)) {
+    return false;
+  }
+  if (!exists(specPath) || !isFile(specPath)) {
     return false;
   }
   string content;
   try {
-    content = readText(path); // 二进制 jar/war 等按文本读取会抛异常
+    content = readText(specPath); // 二进制文件按文本读取会抛异常
   } catch (Exception e) {
-    return false;
-  }
-  if (!isSpecFile(path) && !isLaunchSpecText(content)) {
     return false;
   }
   string[] warnings;
@@ -556,9 +566,10 @@ private int runRepo(BootArgs opts) {
     }
     return 1;
   }
-  // launch spec：entry 必须是本地 jar/war/目录（repo 是离线整合，不做联网下载）。
+  // launch spec：target 必须是本地 .jstart 文件，entry 必须是本地 jar/war/目录
+  // （repo 是离线整合，不做联网下载，http(s) spec 在此处先行拒绝）。
   LaunchSpec spec;
-  auto specMode = tryLoadSpec(opts, spec);
+  auto specMode = tryLoadSpec(opts, target, spec);
   if (specMode && spec.entry.length == 0) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;

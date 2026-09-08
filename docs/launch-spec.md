@@ -14,10 +14,15 @@ Java 主类（main）、应用本体来源（entry）、运行时/解释器（ru
 
 ## 文件识别
 
-- 扩展名为 `.launch`（建议；别名 `.jstart`）的文件直接按 launch spec 解析；
-- 其余文本文件若首个非空、非注释行以 `[` 段头开头，也按 launch spec 解析；
-- 都不是则不是 launch spec：普通文本文件**不再支持**为依赖清单 target
-  （依赖清单只来自 jar/war 内置描述或本文件的 `[deps]` 段）。
+- 命令行 target 为 launch spec 时**必须以 `.jstart` 结尾**：本地路径
+  `/path/app.jstart` 或 `http(s)://host/path/app.jstart` 均可。http(s) spec 先
+  下载并缓存到本地仓库（按主机路径缓存，与远程 jar 一致），再按本地文件解析；
+- 其它后缀、以及"内容看起来像 ini/段头"的普通文本文件**都不再**判定为 spec——
+  普通文本文件**不支持**为依赖清单 target（依赖清单只来自 jar/war 内置描述或
+  本文件的 `[deps]` 段）。
+
+> 远程 spec 与远程 jar 一样按主机路径缓存、无过期判定：要取更新版请清理本地仓库
+> 对应缓存条目（或换一个 url）。
 
 ## 格式
 
@@ -134,11 +139,15 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 spec 文件可作为 `run`/`resolve`/`classpath`/`repo` 的 target：
 
 ```bash
-jstart run app.launch                    # 解析 spec → 准备依赖 → exec java
-jstart resolve app.launch                # 解析并下载依赖，输出 entry 落盘绝对路径
-jstart classpath app.launch              # 输出 Main-Class@classpath（main 取 spec 或 Manifest）
-jstart repo app.launch --local=/opt/offline-repo   # 离线整合（取 [deps] 或内置清单）
+jstart run app.jstart                    # 解析 spec → 准备依赖 → exec java
+jstart resolve app.jstart                # 解析并下载依赖，输出 entry 落盘绝对路径
+jstart classpath app.jstart              # 输出 Main-Class@classpath（main 取 spec 或 Manifest）
+jstart repo app.jstart --local=/opt/offline-repo   # 离线整合（取 [deps] 或内置清单）
+jstart run https://repo.example.com/app.jstart     # 远程 spec：下载后按 entry 解析
 ```
+
+`repo` 是离线整合命令，只接受**本地** `.jstart`（spec 的 `entry` 也必须是本地
+文件/目录），不下载远程 spec。
 
 内部实现上，spec 被解析为"entry + 依赖清单 + 启动参数"的合成目标，之后的依赖准备、
 classpath 装配、exec 流程与现有 jar 目标共用同一套代码。`run` 的可启动目标就是
@@ -147,7 +156,7 @@ target**（任何命令都不接受），依赖清单只来自 jar/war 内置描
 
 ## --print：只打印将要执行的命令
 
-`jstart run --print app.launch`（对 jar 目标同样可用）：
+`jstart run --print app.jstart`（对 jar 目标同样可用）：
 
 - 照常解析、下载并装配 classpath（与 `run` 的准备工作一致）；
 - 不 exec，而是把将要执行的命令行打印到 stdout，每个参数按 POSIX 单引号规则转义，
@@ -155,7 +164,7 @@ target**（任何命令都不接受），依赖清单只来自 jar/war 内置描
 - 用于审计、脚本包装与 CI 调试；对 deps 不齐等准备失败，退出码与 `run` 一致。
 
 ```bash
-$ jstart run --print app.launch
+$ jstart run --print app.jstart
 java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.app.Main '--port=8080' '--path=/base'
 ```
 

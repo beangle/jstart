@@ -10,19 +10,18 @@ module test.jstart.spec_test;
 import std.array : join;
 import std.string : startsWith;
 
-import jstart.spec : LaunchSpec, isLaunchSpecText, isSpecFile, parseLaunchSpec;
+import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec;
 
 unittest {
-  assert(isSpecFile("app.launch"));
+  // spec 识别：唯一形式是 .jstart 后缀（本地路径或 http(s) url，url 忽略查询串）。
+  assert(isSpecFile("app.jstart"));
   assert(isSpecFile("/opt/x/app.jstart"));
+  assert(isSpecFile("https://repo.example.com/app.jstart"));
+  assert(isSpecFile("https://repo.example.com/app.jstart?token=abc"));
+  assert(!isSpecFile("app.launch"));
   assert(!isSpecFile("deps.txt"));
   assert(!isSpecFile("app.jar"));
-
-  assert(isLaunchSpecText("[app]\nentry = x.jar\n"));
-  assert(isLaunchSpecText("# comment\n\n[app]\n"));
-  assert(!isLaunchSpecText("org.slf4j:slf4j-api:2.0.17\n"));
-  assert(!isLaunchSpecText("# only comments\n\n"));
-  assert(!isLaunchSpecText(""));
+  assert(!isSpecFile("https://repo.example.com/app.jar"));
 }
 
 unittest {
@@ -131,23 +130,6 @@ unittest {
   assert(spec.entry == "x.jar");
   assert(spec.hasDeps);
   assert(spec.deps.length == 1 && spec.deps[0] == "org.slf4j:slf4j-api:2.0.17");
-}
-
-unittest {
-  // sniffing 边界：首行空白/注释后可判定；首个内容行非段头则判为普通清单。
-  assert(isLaunchSpecText("\n\n[args]\n-x\n"));
-  assert(isLaunchSpecText("; comment\n; more\n[app]\n"));
-  assert(isLaunchSpecText("[app]"));
-  assert(!isLaunchSpecText("  org.slf4j:slf4j-api:2.0.17\n"));
-  assert(!isLaunchSpecText("entry = x.jar\n[app]\n"));
-  assert(!isLaunchSpecText("--port=8080\n[app]\n"));
-}
-
-unittest {
-  // 常见两种依赖行前缀在 sniffing 时都不会被误判为 spec。
-  assert(!isLaunchSpecText("gav://org.slf4j:slf4j-api:2.0.17\n"));
-  assert(!isLaunchSpecText("https://repo.example.com/lib.jar\n"));
-  assert(!isLaunchSpecText("/opt/lib/x.jar\n"));
 }
 
 unittest {

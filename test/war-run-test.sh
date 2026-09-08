@@ -81,7 +81,7 @@ check "resolve outputs .war" "printf '%s' \"$out\" | grep -q 'beangle-otk-ws-0.0
 
 echo "== run with built-in $ENGINE engine =="
 echo "port=$PORT path=$CPATH repo=$REPO engine=$ENGINE"
-cat > "$T/app.launch" <<INI
+cat > "$T/app.jstart" <<INI
 [app]
 entry = $GAV
 engine = $ENGINE
@@ -89,7 +89,7 @@ engine = $ENGINE
 [args]
 --path=$CPATH
 INI
-"$JSTART" --local="$REPO" run "$T/app.launch" --port="$PORT" --base="$BASE" >"$LOG" 2>&1 &
+"$JSTART" --local="$REPO" run "$T/app.jstart" --port="$PORT" --base="$BASE" >"$LOG" 2>&1 &
 JPID=$!
 
 code=000

@@ -15,8 +15,8 @@ import std.array : split;
 import std.format : format;
 import std.string : indexOf, startsWith, strip;
 
-/// Launch spec file name suffixes.
-immutable string[] specExtensions = [".launch", ".jstart"];
+/// Launch spec suffix: a spec target must be named <name>.jstart.
+immutable string[] specExtensions = [".jstart"];
 
 /// A parsed launch spec.
 struct LaunchSpec {
@@ -48,27 +48,21 @@ struct LaunchSpec {
   bool hasEngineDeps;
 }
 
-/** Whether the file name carries a launch spec extension. */
+/**
+ * Whether the target is a launch spec: the only accepted form is a
+ * `.jstart` suffix, on a local path or an http(s) url (a query string on
+ * the url is ignored). Content sniffing and other extensions are not
+ * treated as spec markers anymore.
+ */
 bool isSpecFile(string path) {
+  auto q = path.indexOf("?");
+  if (q >= 0) {
+    path = path[0 .. q];
+  }
   foreach (ext; specExtensions) {
     if (path.endsWith(ext)) {
       return true;
     }
-  }
-  return false;
-}
-
-/**
- * Content sniffing: a launch spec starts with a section header after
- * blank/comment lines; plain dependency files never do.
- */
-bool isLaunchSpecText(string content) {
-  foreach (lineRaw; content.split("\n")) {
-    auto line = lineRaw.strip;
-    if (line.length == 0 || line.startsWith("#") || line.startsWith(";")) {
-      continue;
-    }
-    return line.startsWith("[");
   }
   return false;
 }

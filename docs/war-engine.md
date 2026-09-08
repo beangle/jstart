@@ -195,7 +195,7 @@ https://repo.example.com/sas/beangle-sas-engine.jar
 --path=/
 ```
 
-5. **检查装配**：`jstart run --print app.launch` 打印将执行的
+5. **检查装配**：`jstart run --print app.jstart` 打印将执行的
    `java ... Bootstrap --base=...` 命令行（引擎 jar、透传参数一目了然），用于定制
    前后对照。
 
@@ -238,7 +238,7 @@ docBase。也可以手工跑（war 缺省 tomcat；undertow 需 launch spec）�
 
 ```bash
 jstart run org.beangle.otk:beangle-otk-ws:war:0.0.29 --port=8080 --path=/
-jstart run app.launch --port=8080      # [app] engine = undertow
+jstart run app.jstart --port=8080      # [app] engine = undertow
 ```
 
 ## 限制

@@ -72,7 +72,7 @@ spec `[engine]` 罗列），两者都要在联网机上先集齐：
 
 ```bash
 # 联网机：解析并下载（run --print 也会下载后只打印命令，不启动）
-jstart --quiet run --print app.launch --local=/opt/offline-repo
+jstart --quiet run --print app.jstart --local=/opt/offline-repo
 
 # 校验：退出码 0 表示含引擎依赖在内全部齐备
 jstart --local=/opt/offline-repo --quiet resolve app.war && echo ready
@@ -85,6 +85,9 @@ jstart --local=/opt/offline-repo --quiet resolve app.war && echo ready
   `repo` 引擎 spec 的 `[deps]`）预下载进离线仓库；
 - 引擎 jar 是 release 构件，落在普通本地仓库布局，随仓库一起拷贝即可，无需处理
   快照库。
+
+无外网机请使用**本地** `.jstart`：远程 spec 需要联网下载（`run` 才支持；
+`repo` 只接受本地 target，远程 spec 在进入流程前即被拒绝）。
 
 ## 多应用共享离线仓库
 

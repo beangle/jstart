@@ -60,11 +60,12 @@ source/jstart/launcher.d        exec 运行时（当前即 java）/ 原生启动
 
 ## 依赖准备流程
 
-launch spec target（`.launch`/`.jstart`，见
+launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 [launch-spec.md](launch-spec.md)）在进入本流程前由 `app.d` 经 `spec.d` 解析成
 "entry + 可选显式依赖 + 启动参数"：`[deps]` 存在时它是依赖唯一来源（跳过第 2 步的
 内置清单），否则 entry 仍走内置依赖描述；`[app] main`/`[app] runtime`/`[runtime]`/`[args]`
-用于最后一步启动。
+用于最后一步启动。http(s) spec 先经 `fetchTarget` 下载、按主机路径缓存到本地仓库，
+再按本地文件读取解析（repo 是离线整合命令，仍只接受本地 `.jstart`）。
 
 1. **定位应用**（`fetchTarget`）：本地文件/目录直接使用；`g:a:v`/`gav://` 先按 gav
    下载主包；`http(s)` url 按主机路径缓存到本地仓库镜像目录。
