@@ -59,5 +59,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 - `--remote=<urls>` 逗号分隔远程仓库（默认阿里云 public、华为云 maven、Maven Central）
 - `--source=<dir>` repo 命令的源仓库（默认 `~/.m2/repository`，须与 `--local` 不同）
 - `--preferwar` gav 目标优先 war 打包；`--quiet` 关闭过程输出
+- `--print` 仅 run：打印将执行的命令行（逐参数引号）而不 exec；`--jobs=N` 并行下载
+  并发数（默认 10，1 = 串行）
 
 更多细节见各篇文档。

@@ -49,8 +49,10 @@ source/jstart/archive.d         依赖模型：Artifact/LocalFile/RemoteFile、g
 source/jstart/repo.d            本地仓库 LocalRepo、远程仓库列表、sha1 工具
 source/jstart/http.d            调用宿主 curl 下载（仿 micdn）
 source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的爆炸解压）、Manifest Main-Class 解析
-source/jstart/engine.d           war 引擎：主类映射、内置默认依赖目录（tomcat/undertow）、爆炸布局/参数扫描
-source/jstart/spec.d             launch spec 解析（[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
+source/jstart/engine.d           war 引擎：主类映射、内置默认依赖目录（tomcat/undertow，
+                                 tomcat 可带版本后缀）、爆炸布局/参数扫描、[engine] 行占位符展开
+source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
+                                 （[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
 source/jstart/launcher.d        exec 运行时（当前即 java）/ 原生启动器

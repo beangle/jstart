@@ -44,6 +44,18 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 # 只准备依赖环境，输出应用绝对路径（供脚本使用）
 app=$(./target/jstart --quiet resolve /path/to/app.jar)
 
+# 声明式启动：launch spec（.jstart，本地路径或 http(s) url）
+cat > app.jstart <<'EOF'
+[app]
+entry = /path/to/app.war
+engine = tomcat-11.0.24        # 指定 tomcat 版本；engine = tomcat 则用内置默认版本
+
+[args]
+--port=8080
+EOF
+./target/jstart run app.jstart
+./target/jstart run https://repo.example.com/app.jstart   # 远程 spec：下载后按 entry 解析
+
 # 输出 Main-Class@classpath，供 launch.sh 式脚本自行 exec java
 meta=$(./target/jstart --quiet classpath "$app")
 
