@@ -21,7 +21,9 @@ jstart 是用 D 语言实现的轻量级 jar/war 启动器：以轻量方式解�
   非 java 运行时预留。
 - war 目标用内置引擎启动：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
   tomcat）；引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
-  见 [docs/war-engine.md](docs/war-engine.md)）。
+  见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
+  `engine = tomcat-11.0.24` 直接指定 tomcat 版本；`[engine]` 行支持
+  `{tomcat.version}`/`{sas.version}` 占位符引用内置版本，不必手写重复版本号。
 - 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 

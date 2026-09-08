@@ -18,7 +18,7 @@ import std.string : startsWith, strip;
 
 import jstart.archive : Archive, expandLocalPath;
 import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engineMainClass,
-  scanEngineArgs, warDocBaseDir, warDocBaseName;
+  expandEngineDeps, parseEngineSel, scanEngineArgs, warDocBaseDir, warDocBaseName;
 import jstart.launcher : printJavaCommand, runJarApp;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
 import jstart.resolver : Resolver;
@@ -270,8 +270,11 @@ int main(string[] args) {
  * 引擎依赖 exec 引擎 Bootstrap（进程仍变为 java，无父子等待）。
  *
  * - 引擎选择：launch spec [app] engine（war 缺省 tomcat；jar/其它运行时忽略）；
- * - 引擎依赖：[engine] 段逐行罗列（存在即为准，不依赖内置行），缺省回退 tomcat
- *   内置默认（等价 sas.sh 的三个 download 行）；undertow 依赖较多，须显式罗列；
+ *   tomcat 可带版本后缀 tomcat-<版本>，无后缀用内置默认版本；
+ * - 引擎依赖：[engine] 段逐行罗列（存在即为准，不依赖内置行；行内可用
+ *   {tomcat.version}/{sas.version} 占位符引用内置版本），缺省回退 tomcat
+ *   内置默认（等价 sas.sh 的三个 download 行，engine = tomcat-<版本> 时用指定
+ *   版本重钉两个 tomcat-embed jar）；undertow 依赖较多，须显式罗列；
  * - --path=/--base= 被"读取"用于爆炸布局（最后一次出现生效，与引擎 CmdOptions
  *   一致），之后仍原样转发给引擎；--port 等参数不读取、直接透传；
  * - 默认 base 为 ${TMPDIR:-/tmp}/jstart-sas；爆炸目录每次运行前重建（引擎关闭时
@@ -279,23 +282,34 @@ int main(string[] args) {
  */
 private int runWar(BootArgs opts, Resolver resolver, string warPath,
     Archive[] appDeps, bool specMode, LaunchSpec spec) {
-  auto engine = specMode && spec.engine.length > 0 ? spec.engine : "tomcat";
+  // 引擎选择：war 缺省 tomcat；tomcat 后可带版本（tomcat-11.0.24），无后缀或
+  // 非 tomcat 引擎用内置默认版本。
+  auto engineSel = specMode && spec.engine.length > 0 ? spec.engine : "tomcat";
+  string engineName;
+  string engineVersion;
   string engineMain;
   try {
-    engineMain = engineMainClass(engine);
+    auto sel = parseEngineSel(engineSel);
+    engineName = sel.name;
+    engineVersion = sel.ver;
+    engineMain = engineMainClass(engineName);
   } catch (Exception e) {
     stderr.writeln(e.msg);
     return 1;
   }
 
-  // 引擎依赖：[engine] 段罗列为准；没有则用内置默认（仅 tomcat）。
+  // 引擎依赖：[engine] 段罗列为准（占位符先展开）；没有则用内置默认目录
+  // （tomcat 支持 engine = tomcat-<版本> 重钉内置 embed jar）。
   Archive[] engineDeps;
   if (specMode && spec.hasEngineDeps) {
-    engineDeps = resolver.parseDependencyText(spec.engineDeps.join("
-"));
+    auto lines = spec.engineDeps.dup;
+    foreach (i, line; lines) {
+      lines[i] = expandEngineDeps(line, engineVersion);
+    }
+    engineDeps = resolver.parseDependencyText(lines.join("\n"));
   } else {
     try {
-      engineDeps = defaultEngineDeps(engine);
+      engineDeps = defaultEngineDeps(engineName, engineVersion);
     } catch (Exception e) {
       stderr.writeln(e.msg);
       return 1;

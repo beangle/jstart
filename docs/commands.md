@@ -86,7 +86,8 @@ war 目标（本地 `app.war`、gav/url 落盘为 `.war`）自动进入内置引
 `org.beangle.sas.engine.<name>.Bootstrap`。引擎依赖有内置默认目录（tomcat 三件套 /
 undertow 十四件套，等价 sas.sh 两个分支），需要固定或改版本时用 launch spec 的
 `[engine]` 段显式罗列（权威，不依赖内置行）；选择引擎用 `[app] engine = tomcat|undertow`
-（war 缺省 tomcat）。
+（war 缺省 tomcat），tomcat 可带版本后缀 `tomcat-11.0.24` 直接换内置 tomcat 版本，
+`[engine]` 行内支持 `{tomcat.version}`/`{sas.version}` 占位符引用内置版本。
 war 的引擎模式只读取 `--path=`/`--base=` 用于爆炸布局，其余参数（含 `--port=`）
 原样透传给引擎——详见 [war-engine.md](war-engine.md)。
 

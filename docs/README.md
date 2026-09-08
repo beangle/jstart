@@ -35,6 +35,10 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 - `run <target> [args...]`：解析并准备依赖，然后 **exec 为运行时**（当前即 java，进程即
   应用本身，无 jstart 父子等待）；`--port=8080` 等参数原样传给应用，`-D`/`-X` 开头参数归
   运行时（java 即 JVM 参数）。launch spec target 用 `[app] runtime`/`[runtime]` 通用命名。
+- `run <war>`：war 目标自动进入内置引擎流程（爆炸到 `<base>/webapps/<ctx>` 后 exec
+  `org.beangle.sas.engine.<name>.Bootstrap`，缺省 tomcat）。`[app] engine` 选引擎、
+  `engine = tomcat-11.0.24` 可直接指定 tomcat 版本、`[engine]` 段罗列引擎依赖并支持
+  `{tomcat.version}`/`{sas.version}` 占位符（见 [war-engine.md](war-engine.md)）。
 - `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件
   走独立的 `~/.m2/snapshots`，不与 repository 混合），成功输出应用绝对路径。
 - `classpath <target>`：输出 `Main-Class@classpath`，供 launch.sh 风格脚本解耦使用。

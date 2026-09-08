@@ -11,7 +11,8 @@ import std.conv : to;
 
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile;
 import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engineMainClass,
-  normalizeContextPath, scanEngineArgs, warDocBaseDir, warDocBaseName;
+  expandEngineDeps, normalizeContextPath, parseEngineSel, scanEngineArgs, warDocBaseDir,
+  warDocBaseName;
 
 unittest {
   assert(engineMainClass("tomcat") == "org.beangle.sas.engine.tomcat.Bootstrap");
@@ -76,6 +77,61 @@ unittest {
   } catch (Exception e) {
     assert(e.msg.canFind("[engine]"), e.msg);
   }
+}
+
+unittest {
+  // engine 选择解析：tomcat / tomcat-<版本> / undertow。
+  auto sel = parseEngineSel("tomcat");
+  assert(sel.name == "tomcat" && sel.ver.length == 0);
+  sel = parseEngineSel("tomcat-11.0.24");
+  assert(sel.name == "tomcat");
+  assert(sel.ver == "11.0.24");
+  sel = parseEngineSel("undertow");
+  assert(sel.name == "undertow" && sel.ver.length == 0);
+  try {
+    parseEngineSel("jetty");
+    assert(false, "unknown engine should throw");
+  } catch (Exception e) {
+    assert(e.msg.canFind("tomcat") && e.msg.canFind("undertow"), e.msg);
+  }
+  try {
+    parseEngineSel("undertow-2.4.3.Final");
+    assert(false, "non-tomcat version suffix should throw");
+  } catch (Exception e) {
+    assert(e.msg.canFind("[engine]"), e.msg);
+  }
+}
+
+unittest {
+  // engine = tomcat-11.0.24：内置目录里两个 tomcat-embed jar 用指定版本，
+  // beangle-sas-engine 保持内置默认版本。
+  auto deps = defaultEngineDeps("tomcat", "11.0.24");
+  assert(deps.length == 3);
+  string[string] expected;
+  expected["org.beangle.sas:beangle-sas-engine"] = "0.13.10";
+  expected["org.apache.tomcat.embed:tomcat-embed-core"] = "11.0.24";
+  expected["org.apache.tomcat.embed:tomcat-embed-websocket"] = "11.0.24";
+  foreach (d; deps) {
+    auto a = cast(Artifact) d;
+    assert(a !is null);
+    auto key = a.groupId ~ ":" ~ a.artifactId;
+    assert(key in expected);
+    assert(a.ver == expected[key]);
+  }
+}
+
+unittest {
+  // [engine] 行占位符：{tomcat.version} / {sas.version}，无占位符行原样返回。
+  assert(expandEngineDeps("org.apache.tomcat.embed:tomcat-embed-core:{tomcat.version}")
+      == "org.apache.tomcat.embed:tomcat-embed-core:11.0.21");
+  assert(expandEngineDeps("org.apache.tomcat.embed:tomcat-embed-core:{tomcat.version}",
+      "11.0.24") == "org.apache.tomcat.embed:tomcat-embed-core:11.0.24");
+  assert(expandEngineDeps("org.apache.tomcat.embed:tomcat-embed-websocket:{tomcat.version}",
+      "11.0.24") == "org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24");
+  assert(expandEngineDeps("org.beangle.sas:beangle-sas-engine:{sas.version}")
+      == "org.beangle.sas:beangle-sas-engine:0.13.10");
+  assert(expandEngineDeps("/opt/tomcat-embed-core-11.0.21.jar")
+      == "/opt/tomcat-embed-core-11.0.21.jar");
 }
 
 unittest {

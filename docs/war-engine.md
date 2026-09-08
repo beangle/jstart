@@ -63,11 +63,13 @@ launch spec 用两个字段描述"如何用引擎跑这个 war"：
 [app]
 entry = gav://org.example:webapp:0.0.1:war
 engine = tomcat                  # 可选 tomcat|undertow；war 缺省 tomcat
+                                 # tomcat 可带版本：tomcat-11.0.24
 
 [engine]                         # 可选段：引擎依赖逐行罗列（同 [deps] 语法）
 org.beangle.sas:beangle-sas-engine:0.13.10
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
+                                 # 行内可用占位符：{tomcat.version}/{sas.version}
 
 [args]
 --port=8080
@@ -76,10 +78,14 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
 - `[app] engine`：引擎名。已知映射
   `org.beangle.sas.engine.<name>.Bootstrap`（tomcat/undertow）；war 缺省 `tomcat`，
-  未知引擎名在 `run` 时报错。
+  未知引擎名在 `run` 时报错。tomcat 可带版本后缀（如 `tomcat-11.0.24`）：不带
+  `[engine]` 段时，内置目录里两个 `tomcat-embed-*` jar 自动用该版本
+  （`beangle-sas-engine` 仍用内置默认版本）；不带后缀用内置默认版本。
 - `[engine]` 段：引擎 jar 清单，每行与 `[deps]` 完全同语法（gav/本地文件/远程 url）。
   **段存在即为权威，jstart 不内置依赖行**——引擎版本随 spec 走，升级/换源/改
-  undertow 只改文件，不重新发版。
+  undertow 只改文件，不重新发版。行内可用版本占位符 `{tomcat.version}`（`engine =
+  tomcat-<版本>` 时用该版本，否则内置默认）与 `{sas.version}`（内置默认），由
+  jstart 展开后再装配。
 - `[engine]` 与 `[deps]` 相互独立：`[deps]` 是应用自身依赖（存在时替换 war 内置
   清单），`[engine]` 是引擎启动器依赖，两者都进 classpath。
 - jar / 非 java 运行时目标**不要求** engine 声明；spec 里写了 `[app] engine` 或
@@ -114,23 +120,44 @@ undertow（14 个 jar：sas 引擎 + undertow/xnio/wildfly/smallrye）：
 
 内置目录的价值是**开箱即用**（与 sas.sh 一致），但版本随 jstart 发版固定；要锁
 其它版本、换镜像或离线定制时用 `[engine]` 段显式罗列——段存在即为权威（见下节）。
+只换 tomcat 版本（不动 sas 引擎、不换镜像）时不必写 `[engine]`：
+`engine = tomcat-11.0.24` 即可让内置目录按该版本装配。版本后缀目前仅 tomcat 支持：
+undertow 换版本请写 `[engine]` 段并同步其伴随 jar（xnio/wildfly/smallrye 等，见
+示例 2）。
 
 ### 定制场景示例
 
-`[engine]` 段是引擎定制的唯一入口（存在即权威，优先级高于内置默认目录）。
+引擎定制有两个入口：
 
-1. **固定 / 升级引擎版本**：改 `[engine]` 行的版本号即可，不依赖 jstart 发版：
+- 仅换 tomcat 版本（不动其它行）：直接 `[app] engine = tomcat-<版本>`（见上节）；
+- 固定 sas 引擎版本、换镜像、引用本地引擎 jar、切换/改 undertow 等：写 `[engine]`
+  段逐行罗列——段存在即权威，优先级高于内置默认目录。
+
+1. **换 tomcat 版本**：只改版本、其余行都不动时，直接给 `[app] engine` 带版本后缀，
+   无 `[engine]` 段也能让内置目录按该版本装配（`beangle-sas-engine` 仍用内置默认）：
 
 ```ini
 [app]
 entry = /path/app.war
-engine = tomcat
+engine = tomcat-11.0.24        # tomcat-embed-core/-websocket 用 11.0.24
+```
+
+   要同时固定 sas 引擎或本地镜像等其它行，写 `[engine]` 段并用占位符跟随该版本
+   （`{tomcat.version}` 按 `engine = tomcat-11.0.24` 展开为 11.0.24；不带版本写
+   `engine = tomcat` 时展开为内置默认版本）：
+
+```ini
+[app]
+entry = /path/app.war
+engine = tomcat-11.0.24
 
 [engine]
-org.beangle.sas:beangle-sas-engine:0.13.10
-org.apache.tomcat.embed:tomcat-embed-core:11.0.21   # 升级时改这里
-org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
+org.beangle.sas:beangle-sas-engine:{sas.version}
+org.apache.tomcat.embed:tomcat-embed-core:{tomcat.version}
+org.apache.tomcat.embed:tomcat-embed-websocket:{tomcat.version}
 ```
+
+   完全锁死某个版本（不随 `[app] engine`/jstart 变化）时，把版本号直接写进行里即可。
 
 2. **切换到 undertow**：`engine = undertow`。不写 `[engine]` 用内置默认目录；写了
    就完全按罗列行装配（行数不足可能缺容器类，需自行写全）：

@@ -10,11 +10,15 @@
  *
  *   [app]
  *   engine = tomcat            # 可选：war 目标默认 tomcat；jar/其它运行时忽略
+ *   engine = tomcat-11.0.24    # 可选：指定 tomcat 版本；无后缀用内置默认版本
  *
  *   [engine]                   # 可选段：引擎依赖，每行与 [deps] 同语法；
  *   org.beangle.sas:beangle-sas-engine:0.13.10
  *   org.apache.tomcat.embed:tomcat-embed-core:11.0.21
  *   org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
+ *   # 行内可用占位符引用内置版本：
+ *   #   {tomcat.version}  tomcat 版本（engine = tomcat-<版本> 时用该版本，否则内置默认）
+ *   #   {sas.version}     beangle-sas-engine 内置默认版本
  *
  * When the [engine] section is present its lines are authoritative and no
  * built-in catalog is consulted. Without a spec (or without [engine]) a
@@ -28,12 +32,17 @@ import std.algorithm : canFind;
 import std.array : join, split;
 import std.path : buildPath;
 import std.process : environment;
-import std.string : endsWith, replace, startsWith, strip;
+import std.string : endsWith, indexOf, replace, startsWith, strip;
 
 import jstart.archive : Archive, Artifact;
 
 /// Engine names known to jstart with a fixed bootstrap main class.
 immutable string[] builtinEngineNames = ["tomcat", "undertow"];
+
+private string unknownEngineMsg(string name) {
+  return "Unknown engine " ~ name
+      ~ ", built-in engines: " ~ builtinEngineNames.join(", ");
+}
 
 /**
  * Bootstrap main class of an engine: both beangle/sas engines follow
@@ -46,9 +55,44 @@ string engineMainClass(string name) {
     case "undertow":
       return "org.beangle.sas.engine.undertow.Bootstrap";
     default:
-      throw new Exception("Unknown engine " ~ name
-          ~ ", built-in engines: " ~ builtinEngineNames.join(", "));
+      throw new Exception(unknownEngineMsg(name));
   }
+}
+
+/// A parsed [app] engine selection.
+struct EngineSel {
+  /// Engine name (tomcat/undertow).
+  string name;
+  /// Version requested via name-<ver>; "" selects the built-in default.
+  string ver;
+}
+
+/**
+ * Parse an [app] engine value: "tomcat", "undertow" or "tomcat-11.0.24".
+ * The version suffix only matters when no [engine] section is present: it
+ * re-pins the engine's own built-in catalog jars (and {tomcat.version}
+ * placeholders) to that version. Bare "tomcat" uses the built-in default
+ * version. Only tomcat carries a version suffix today; unknown engine
+ * names throw here with the same message as engineMainClass.
+ */
+EngineSel parseEngineSel(string sel) {
+  auto dash = sel.indexOf("-");
+  EngineSel r;
+  if (dash < 0) {
+    r.name = sel;
+  } else {
+    r.name = sel[0 .. dash];
+    r.ver = sel[dash + 1 .. $];
+  }
+  if (!builtinEngineNames.canFind(r.name)) {
+    throw new Exception(unknownEngineMsg(r.name));
+  }
+  if (r.ver.length > 0 && r.name != "tomcat") {
+    throw new Exception("Engine " ~ sel
+        ~ ": version suffix is only supported for tomcat (e.g. tomcat-11.0.24);"
+        ~ " pin " ~ r.name ~ " jars in the [engine] section instead");
+  }
+  return r;
 }
 
 /// Engine catalog versions, pinned like the sas.sh export lines.
@@ -70,13 +114,15 @@ private Artifact gav(string g, string a, string v) {
 
 /**
  * The engine jar set listed by beangle/boot sas.sh for the tomcat branch:
- * the sas engine plus the two tomcat embed jars.
+ * the sas engine plus the two tomcat embed jars. The embed jars use the
+ * requested tomcat version or, when empty, the built-in default.
  */
-private Archive[] tomcatCatalog() {
+private Archive[] tomcatCatalog(string ver) {
+  auto v = ver.length > 0 ? ver : tomcatEmbedVersion;
   return [
     gav("org.beangle.sas", "beangle-sas-engine", beangleSasVersion),
-    gav("org.apache.tomcat.embed", "tomcat-embed-core", tomcatEmbedVersion),
-    gav("org.apache.tomcat.embed", "tomcat-embed-websocket", tomcatEmbedVersion),
+    gav("org.apache.tomcat.embed", "tomcat-embed-core", v),
+    gav("org.apache.tomcat.embed", "tomcat-embed-websocket", v),
   ];
 }
 
@@ -107,17 +153,40 @@ private Archive[] undertowCatalog() {
  * Default engine jars used when no [engine] section declares them. Both
  * built-in engines mirror the sas.sh download lines; an [engine] section
  * is still the authoritative way to pin other versions or mirrors.
+ *
+ * For tomcat the caller passes the version of an engine = tomcat-<version>
+ * selection; "" keeps the built-in default. Undertow takes no version.
  */
-Archive[] defaultEngineDeps(string name) {
+Archive[] defaultEngineDeps(string name, string ver = "") {
   switch (name) {
     case "tomcat":
-      return tomcatCatalog();
+      return tomcatCatalog(ver);
     case "undertow":
+      if (ver.length > 0) {
+        throw new Exception("Engine " ~ name ~ "-" ~ ver
+            ~ ": version suffix is only supported for tomcat (e.g. tomcat-11.0.24);"
+            ~ " pin undertow jars in the [engine] section instead");
+      }
       return undertowCatalog();
     default:
       throw new Exception("Engine " ~ name
           ~ " has no built-in default dependencies: declare them in the [engine] section of the launch spec");
   }
+}
+
+/**
+ * Expand engine version placeholders in one [engine] dependency line
+ * before it is parsed as a gav/path/url:
+ *
+ *   {tomcat.version}  tomcat embed 版本：engine = tomcat-<版本> 时用该版本，
+ *                     否则内置默认版本（tomcatEmbedVersion）；
+ *   {sas.version}     beangle-sas-engine 内置默认版本（beangleSasVersion）。
+ *
+ * Lines without placeholders are returned unchanged.
+ */
+string expandEngineDeps(string line, string tomcatVer = "") {
+  auto v = tomcatVer.length > 0 ? tomcatVer : tomcatEmbedVersion;
+  return line.replace("{tomcat.version}", v).replace("{sas.version}", beangleSasVersion);
 }
 
 /**

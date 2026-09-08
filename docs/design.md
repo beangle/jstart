@@ -85,8 +85,10 @@ launch spec target（`.launch`/`.jstart`，见
    spec `[app] runtime`（缺省 `$JAVA_HOME`/PATH 的 java，JVM 家目录自动补 `bin/java`），
    运行时参数取 `[runtime]` 段与命令行 `-D`/`-X` 追加，应用参数取 `[args]` 段与
    命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class：
-   解析（可选）`[app] engine` 与 `[engine]` 依赖后，爆炸 war 到
-   `<base>/webapps/<ctx>` 并 exec 引擎 Bootstrap，见 [war-engine.md](war-engine.md)。
+   解析（可选）`[app] engine`（tomcat 可带版本后缀，如 `tomcat-11.0.24`）与
+   `[engine]` 段（行内 `{tomcat.version}`/`{sas.version}` 占位符先展开；段存在即为
+   权威，否则回退内置默认目录）后，爆炸 war 到 `<base>/webapps/<ctx>` 并 exec 引擎
+   Bootstrap，见 [war-engine.md](war-engine.md)。
 
 ## 仓库与校验策略
 

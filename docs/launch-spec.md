@@ -51,11 +51,11 @@ org.slf4j:slf4j-api:2.0.17
 | | `entry` | 必填。取值同现有 target：`g:a:v`/`gav://`、`http(s)://`、本地 jar/war/解压目录/文件路径 |
 | | `working_dir` | 可选。exec 前切换工作目录，沿用 `~`/`${VAR}` 展开 |
 | | `runtime` | 可选。运行时/解释器可执行文件（`java`/`python3`/`node`/...）或 java 安装目录（自动补 `bin/java`）；支持 `~`/`${VAR}` 展开；缺省按 entry 推断（jar → `$JAVA_HOME`/PATH 的 java） |
-| | `engine` | 可选（仅 war）。内嵌引擎名 `tomcat`/`undertow`（war 缺省 `tomcat`）；jar/其它运行时不需要、写了则告警忽略（见 [war-engine.md](war-engine.md)） |
+| | `engine` | 可选（仅 war）。内嵌引擎名 `tomcat`/`undertow`（war 缺省 `tomcat`）；tomcat 可带版本后缀 `tomcat-11.0.24`（无后缀用内置默认版本）；jar/其它运行时不需要、写了则告警忽略（见 [war-engine.md](war-engine.md)） |
 | `[runtime]` | 行列表 | 每个非注释行是一个运行时参数（Java 的 `-D`/`-X`/`--add-opens`、Python 的 `-O` 等），按书写顺序拼接 |
 | `[args]` | 行列表 | 每个非注释行是一个应用参数，**整行**作为一个 argv：不切分、不展开变量，值含空格可直接书写 |
 | `[deps]` | 行列表 | 可选。每行语法与依赖描述文件一致（gav/本地文件/远程 url） |
-| `[engine]` | 行列表 | 可选（仅 war）。引擎启动器依赖逐行罗列，语法同 `[deps]`（gav/本地文件/远程 url）；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [war-engine.md](war-engine.md)） |
+| `[engine]` | 行列表 | 可选（仅 war）。引擎启动器依赖逐行罗列，语法同 `[deps]`（gav/本地文件/远程 url），行内可用占位符 `{tomcat.version}`/`{sas.version}` 引用内置版本；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [war-engine.md](war-engine.md)） |
 
 ### 语义约定
 
@@ -88,11 +88,13 @@ war 没有 `Main-Class`，`run` 对 war 目标（或 entry 为 war 的 spec）�
 [app]
 entry = /path/app.war          # war 目标（本地文件/gav/http 均可）
 engine = tomcat                # 可选：tomcat | undertow；war 缺省 tomcat
+                               # tomcat 可带版本：tomcat-11.0.24
 
 [engine]                       # 可选：引擎启动器依赖，每行与 [deps] 同语法
 org.beangle.sas:beangle-sas-engine:0.13.10
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
+                               # 行内可用占位符：{tomcat.version}/{sas.version}
 
 [runtime]                      # 引擎 JVM 参数（jar/war 通用）
 -Xmx1g
@@ -106,12 +108,17 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
 - **选择引擎**：`[app] engine` 只接受内置名 `tomcat`/`undertow`（主类分别映射
   `org.beangle.sas.engine.tomcat.Bootstrap` 与 `org.beangle.sas.engine.undertow.Bootstrap`）；
-  war 缺省 `tomcat`；未知名在 `run` 时报错。jar / 非 java 运行时目标**不要求**
-  engine 声明，写了会告警并忽略。
+  war 缺省 `tomcat`；未知名在 `run` 时报错。tomcat 可带版本后缀 `tomcat-11.0.24`：
+  不写 `[engine]` 段时内置目录的 `tomcat-embed-*` 自动用该版本（`beangle-sas-engine`
+  仍用内置默认版本）。jar / 非 java 运行时目标**不要求** engine 声明，写了会告警并忽略。
 - **罗列引擎依赖**：`[engine]` 段存在即为权威，jstart 不内置依赖行——锁版本、升级、
   换镜像、引用本地引擎 jar 都只改本文件；没有 `[engine]` 段时回退**内置默认目录**
   （tomcat 3 个 / undertow 14 个 jar，等价 sas.sh 两个分支的 download 行，版本随
-  jstart 固定）。想用其它版本就写 `[engine]` 覆盖，不必等 jstart 发版。
+  jstart 固定）。行内可用占位符：`{tomcat.version}` 取 `engine = tomcat-<版本>` 的
+  版本、否则内置默认，`{sas.version}` 取内置默认——例如
+  `org.apache.tomcat.embed:tomcat-embed-core:{tomcat.version}`。只换 tomcat 版本可写
+  `engine = tomcat-<版本>`；覆盖其它（undertow、镜像、sas 引擎等）就写 `[engine]`
+  段，都不必等 jstart 发版。
 - **与应用依赖互不影响**：`[deps]`（或 war 内置清单）负责应用本体，`[engine]` 只负责
   引擎启动器；classpath 顺序为"应用 classes/lib + 应用依赖 → 引擎依赖"，引擎 gav 与
   应用依赖按 `g:a:v` 去重。
