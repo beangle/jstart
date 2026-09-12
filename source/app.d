@@ -1,5 +1,5 @@
 /**
- * jstart - a lightweight jar/war booter written in D.
+ * jstart - a lightweight launcher for Java artifacts (jar/war) written in D.
  *
  * It resolves a jar/war application, prepares the dependency environment by
  * downloading missing artifacts into the local maven repository, then
@@ -93,7 +93,7 @@ BootArgs parseArgs(string[] args) {
 
 /// Print usage to stdout or stderr.
 void usage() {
-  writeln("jstart " ~ jstartVersion ~ " - a lightweight booter for jar/war applications");
+  writeln("jstart " ~ jstartVersion ~ " - a lightweight launcher for Java artifacts (jar/war)");
   writeln("");
   writeln("Usage:");
   writeln("  jstart [options] run <target> [args...]");

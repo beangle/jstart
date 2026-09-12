@@ -4,10 +4,10 @@
  * `run` follows the beangle/boot idea: after jstart resolves the application
  * and prepares the dependency environment, the process replaces itself with
  * the real application process via exec(). The running process afterwards is
- * `java` (or a native binary in the future), not jstart, and there is no
- * parent/child waiting between them.
+ * `java`, not jstart, and there is no parent/child waiting between them.
  *
- * Native executables will be launched through the same exec based entry.
+ * jstart focuses on Java artifacts (jar/war) while keeping this exec entry
+ * generic; the native executable launcher below is reserved for later use.
  */
 module jstart.launcher;
 
