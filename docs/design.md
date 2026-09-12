@@ -55,7 +55,7 @@ source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/htt
                                  （[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
-source/jstart/launcher.d        exec 运行时（当前即 java）/ 原生启动器
+source/jstart/launcher.d        exec 为 java（native 入口仅预留）
 ```
 
 依赖关系：`app.d → spec.d（解析 launch spec）/ resolver / consolidate / launcher → archive / repo / http / zipfile`。
@@ -133,4 +133,6 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 - 并发粒度："跨依赖"由 `--jobs` 控制，单文件 Range 分段由远端支持与文件大小自动
   决定（≥1MB 最多 4 段）；不做跨次运行的断点续传，也不实现 boot 的 `.diff`
   增量补丁（按取舍决定）。
-- 原生可执行目标：`launcher.runNativeApp` 已预留同形 exec 入口，等后续接入。
+- 以 Java 工件为主、保留通用扩展：`run` 当前终点是 java（jar 走 `Main-Class`，war 走内置
+  引擎）；`launcher.runNativeApp` 已预留同形 exec 入口、launch spec 用通用运行时命名，
+  后续可扩展到其他运行时，但尚未实现，也未列入已承诺的路线图项。

@@ -1,8 +1,13 @@
-# jstart - 轻量级 jar/war 启动器（D 语言）
+# jstart - 轻量级 Java 工件（jar/war）启动器（D 语言）
 
-jstart 是用 D 语言实现的轻量级 jar/war 启动器：以轻量方式解析应用、下载缺失依赖、准备依赖环境，
-并 exec 成 `java` 启动应用。它本身是独立的原生可执行文件，定位是**命令**而非常驻服务；后续也可
-作为通用启动器拉起其他原生可执行二进制。
+jstart 是用 D 语言实现的轻量级 Java 工件启动器：面向 jar/war，以轻量方式解析应用、下载缺失的
+Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身是独立的原生可执行文件，定位是
+**命令**而非常驻服务。
+
+> **定位**：以 Java 工件为主——jar（带 `Main-Class` 的瘦 jar）与 war（内置 tomcat/undertow
+> 引擎）。同时保留通用组件的扩展能力：launch spec 的目标与运行时字段（entry/runtime/
+> `[runtime]`）采用通用命名、`launcher.runNativeApp` 预留同形 exec 入口，后续可扩展到其他
+> 运行时；当前只实现并验证 java。
 
 ## 特性
 
@@ -16,9 +21,9 @@ jstart 是用 D 语言实现的轻量级 jar/war 启动器：以轻量方式解�
   缺失才下载；
   远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖。
 - `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待；`--port=8080` 等参数原样
-  转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 用通用命名
-  （`[app] runtime`/`[runtime]`，见 [docs/launch-spec.md](docs/launch-spec.md)），为后续
-  非 java 运行时预留。
+  转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 的 `[app] runtime`/
+  `[runtime]` 用通用命名，便于替换 JDK/引擎，并为后续其他运行时预留
+  （见 [docs/launch-spec.md](docs/launch-spec.md)）。
 - war 目标用内置引擎启动：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
   tomcat）；引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
   见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，

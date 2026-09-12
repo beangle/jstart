@@ -1,7 +1,9 @@
 # jstart 文档
 
 jstart 是用 D 语言实现的轻量 jar/war booter，功能对标
-[beangle/boot](https://github.com/beangle/boot)（Scala 版）。本目录存放项目文档。
+[beangle/boot](https://github.com/beangle/boot)（Scala 版）。以**启动 Java 工件（jar/war）
+为主**，同时保留通用组件的扩展能力（通用运行时命名与同形 exec 入口），当前只实现并验证
+java。本目录存放项目文档。
 
 ## 文档索引
 
@@ -32,9 +34,10 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 
 ## 命令与功能一览
 
-- `run <target> [args...]`：解析并准备依赖，然后 **exec 为运行时**（当前即 java，进程即
-  应用本身，无 jstart 父子等待）；`--port=8080` 等参数原样传给应用，`-D`/`-X` 开头参数归
-  运行时（java 即 JVM 参数）。launch spec target 用 `[app] runtime`/`[runtime]` 通用命名。
+- `run <target> [args...]`：解析并准备依赖，然后 **exec 为 java**（进程即应用本身，无 jstart
+  父子等待）；`--port=8080` 等参数原样传给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。
+  launch spec target 用 `[app] runtime`/`[runtime]` 通用命名，便于替换 JDK，也为后续其他
+  运行时预留。
 - `run <war>`：war 目标自动进入内置引擎流程（爆炸到 `<base>/webapps/<ctx>` 后 exec
   `org.beangle.sas.engine.<name>.Bootstrap`，缺省 tomcat）。`[app] engine` 选引擎、
   `engine = tomcat-11.0.24` 可直接指定 tomcat 版本、`[engine]` 段罗列引擎依赖并支持

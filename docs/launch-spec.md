@@ -9,8 +9,9 @@ Java 主类（main）、应用本体来源（entry）、运行时/解释器（ru
 - 应用"怎么启动"（含 `--port=8080` 这类参数、运行时参数）从散落的命令行/脚本收敛为
   一份可提交、可评审、可复用的文件——`run` 的声明式目标就是 launch spec。
 
-> runtime 取 java 之外的值（如 `python3`、`node`）是为后续接入原生/解释型目标预留：
-> 当前 `run` 仍只 exec java（jar 目标），但 spec 结构已不再绑定 Java 术语。
+> spec 用 `runtime` 这类通用命名是为让 JDK 可替换（而不是绑定某个 java 路径），也避免文件
+> 格式绑定 Java 术语，从而保留后续接入其他运行时的扩展能力。当前以 Java 为主：`run` 只
+> exec java（jar 目标），取 java 之外的值（如 `python3`、`node`）仅为结构与文档预留。
 
 ## 文件识别
 

@@ -54,7 +54,8 @@
 
 - v0.1.0：launch spec 启动说明文件（`docs/launch-spec.md`）、`run --print` 与
   `info` 结构化输出命令均已随 v0.0.1 落地；war 引擎 run（tomcat/undertow）已实现
-  （见 [war-engine.md](war-engine.md)），后续任意原生可执行二进制启动。
+  （见 [war-engine.md](war-engine.md)）。项目以 Java 工件（jar/war）为主，同时保留
+  通用运行时的扩展能力。
 - war run：tomcat 与 undertow 引擎均已落地（爆炸布局/内置默认依赖/`[app] engine`+
   `[engine]`），两种引擎均已用 `org.beangle.otk:beangle-otk-ws:war:0.0.29` 完成真实
   运行验证；后续：解压目录目标走引擎。
