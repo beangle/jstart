@@ -124,7 +124,7 @@ jstart_prepare_release_build
     echo -e 'Name: jstart
     Version: '$VERSION'
     Release: '$REVISION'
-    Summary: Lightweight jar/war booter written in D
+    Summary: Lightweight Java artifact (jar/war) launcher written in D
     Group: Development/Tools
     License: GPL-3.0-or-later
     URL: https://github.com/beangle/jstart
@@ -134,7 +134,7 @@ jstart_prepare_release_build
     Requires: '$DEPEND'
     Provides: jstart('$ARCH') = '$VERSION-$REVISION'
     %description
-    Lightweight jar/war booter written in D.
+    Lightweight launcher for Java artifacts (jar/war) written in D.
     Resolve jar/war applications, download missing dependencies into the
     local maven repository, prepare the runtime environment and launch
     applications by executing java.

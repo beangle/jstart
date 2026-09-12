@@ -68,7 +68,7 @@ Architecture: ${ARCH}
 Maintainer: ${MAINTAINER}
 Homepage: https://github.com/beangle/jstart
 Depends: curl
-Description: Lightweight jar/war booter written in D
+Description: Lightweight Java artifact (jar/war) launcher written in D
  Resolve jar/war applications, download missing dependencies into the
  local maven repository, prepare the runtime environment and launch
  applications by exec'ing java.
