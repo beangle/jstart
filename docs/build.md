@@ -18,7 +18,9 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 
 `dub.json` 约定：
 
-- `name`: jstart，`version`: 0.0.1，`targetName`: jstart；
+- `name`: jstart，`targetName`: jstart；**不写 `version`** —— dub 的版本号来自
+  git tag（正式版本 `vX.Y.Z`、分支为 `~分支名` 滚动版本），写在 recipe 里属过时
+  写法，registry 还会因此拒收分支版本；
 - `targetPath`: target → 所有产物进 `target/`（与 micdn 布局一致）。
 - 配置：`application`（默认 release 构建）与 `unittest`（`sourcePaths`/`importPaths`
   含 `source` 与 `test`，供 `dub test` 自动采用，仿 micdn）。
@@ -72,6 +74,9 @@ bash test/smoke.sh
 | `scripts/build_rpm.sh` | Fedora/RHEL：产出 `target/jstart-<v>-<r>.<arch>.rpm`，Revision 自动取 `1.fcNN`/`1.elNN`，`%changelog` 从 `CHANGELOG.md` 生成 |
 | `scripts/build_deb.sh` | Debian/Ubuntu：产出 `target/jstart_<v>-<r>_amd64.deb`（需 `dpkg-deb`、`fakeroot`） |
 
+文件名中的 `<v>` 由 `jstart_package_version`（`scripts/build_common.sh`）取**最近的
+git tag**（`v0.0.1` → `0.0.1`），不再从 `dub.json` 读取；仓库里没有任何 tag 时直接报错。
+
 两个脚本都会先做 release 构建，然后：
 
 - 复制 `target/jstart` → `usr/bin/jstart`，`strip --strip-unneeded`；
@@ -89,7 +94,8 @@ bash scripts/build_deb.sh          # Debian/Ubuntu → target/jstart_0.0.1-1_amd
 ## 发布核对单
 
 1. `CHANGELOG.md` 增加版本条目，并在条目末尾链接 `docs/release-vX.Y.Z.md`；
-2. 同步 `dub.json` 与 `source/app.d` 里的版本号；
+2. 同步 `source/app.d` 的 `jstartVersion`（`-V` 输出的版本），并打 tag `vX.Y.Z`——
+   包版本号由 tag 决定，dub 不再从 `dub.json` 读取；
 3. `dub test` + `bash test/smoke.sh` 全绿；
 4. 各平台打包：`scripts/build_rpm.sh`、`scripts/build_deb.sh`；
 5. 用 `rpm -qpl`/`dpkg-deb -c` 抽查包内容。

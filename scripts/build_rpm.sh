@@ -49,7 +49,7 @@ jstart_prepare_release_build
   # assign variables
   MAINTAINER="duantihua <duantihua@163.com>"
   VENDOR="Beangle"
-  VERSION=`awk -F'"' '/"version"/{print $4; exit}' $JSTART_HOME/dub.json`
+  VERSION=$(jstart_package_version)
   REVISION=""
   if [ "$REVISION" == "" ]
   then

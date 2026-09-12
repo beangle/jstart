@@ -35,7 +35,7 @@ fi
 jstart_prepare_release_build
 
 MAINTAINER="duantihua <duantihua@163.com>"
-VERSION=`awk -F'"' '/"version"/{print $4; exit}' $JSTART_HOME/dub.json`
+VERSION=$(jstart_package_version)
 REVISION="1"
 [[ -n "$1" ]] && REVISION="$1"
 DESTDIR="$JSTART_HOME/target"

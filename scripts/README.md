@@ -12,6 +12,9 @@
 - `target/jstart_<v>-<r>_amd64.deb`：Debian/Ubuntu 安装包
 - `target/jstart-<v>-<r>.<arch>.rpm`：Fedora/RHEL 安装包
 
+`<v>` 取自**最近的 git tag**（`v0.0.1` → `0.0.1`，见 `build_common.sh` 的
+`jstart_package_version`）；`dub.json` 不再写 `version`。
+
 `.deb`/`.rpm` 仅安装 `/usr/bin/jstart`。jstart 定位为**命令**而非系统服务（区别于
 micdn 的常驻服务打包：无 systemd 单元、无服务启停脚本、无默认配置、无独立用户），
 运行时依赖宿主 `curl` 命令完成依赖下载。
