@@ -26,6 +26,8 @@ import jstart.distrepo : fetchDist;
 import jstart.engine : appendEngineDeps, defaultEngineDeps, engineMainClass, expandEngineDeps,
   parseEngineSel, scanEngineArgs, warDocBaseDir, warDocBaseName;
 import jstart.launcher : printCommand, printJavaCommand, runJarApp, runNativeApp;
+import jstart.mainclass : MainClass, MainSource, isPlausibleMainClass, pickMainClass,
+  sourceName;
 import jstart.native : extractTarGz, findExecutable, isNativeTarget, targetGav;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
 import jstart.resolver : Resolver;
@@ -50,6 +52,10 @@ struct BootArgs {
   string base;
   /// --instance: 命名组件目录（<根>/<name>-<组件指纹>），同一组件跑多副本时用
   string instance;
+  /// --main: 覆盖 java 主类（优先于 [app] main 与 MANIFEST.MF 的 Main-Class）
+  string mainClass;
+  /// --main 是否出现过（空值要报错，不能当成"没给"）
+  bool hasMain;
   /// --timeout: stop 等待进程退出的秒数（默认 15）
   int stopTimeout = 15;
   /// --force: run 时忽略已在运行的实例；stop 时超时后用 SIGKILL
@@ -102,6 +108,9 @@ BootArgs parseArgs(string[] args) {
       r.base = a["--base=".length .. $];
     } else if (a.startsWith("--instance=")) {
       r.instance = a["--instance=".length .. $];
+    } else if (a.startsWith("--main=")) {
+      r.mainClass = a["--main=".length .. $].strip;
+      r.hasMain = true;
     } else if (a.startsWith("--timeout=")) {
       auto n = 0;
       try {
@@ -180,6 +189,8 @@ void usage() {
   writeln("  run 需要可启动的应用本体：jar/gav/url/解压目录，或写成 launch spec");
   writeln("  （.jstart，支持本地或 http(s)，见 docs/launch-spec.md）。本地文件 target 只接受");
   writeln("  jar/war/解压目录；纯文本依赖清单已不支持。");
+  writeln("  java 目标的主类按 --main > launch spec [app] main > jar 内 MANIFEST.MF");
+  writeln("  Main-Class 的顺序确定（解压目录没有 manifest，只能靠前两者）。");
   writeln("  tar.gz（native）目标：取发行包（同 fetch，gav 时含增量补丁）后解压到");
   writeln("  <base>/app（base = <base 根>/<组件键>，根默认 /var/tmp/jstart），");
   writeln("  exec 解压出的可执行文件，[args]/命令行参数按序附加在其后；resolve 输出该");
@@ -204,6 +215,10 @@ void usage() {
   writeln("  --instance=<name>  run/stop: name the component directory");
   writeln("                   (<根>/<name>-<组件指纹>) instead of using the");
   writeln("                   target's file name; needs no --base=<dir>");
+  writeln("  --main=<class>   run/classpath/info: java main class, overriding");
+  writeln("                   [app] main and the jar's Main-Class manifest");
+  writeln("                   entry; only for jar/dir targets, ignored for");
+  writeln("                   war/native");
   writeln("  --timeout=<sec>  stop: seconds to wait after SIGTERM (default 15)");
   writeln("  --force          run: start even if the pid file says it is running;");
   writeln("                   stop: SIGKILL after the timeout");
@@ -227,6 +242,15 @@ int main(string[] args) {
   }
   if (opts.target.length == 0) {
     usage();
+    return 2;
+  }
+
+  // --main 是 jstart 选项（只在本地消费、不转发给应用）：空值或明显不是类名
+  // （路径/url/带空格）时立刻报错，避免留到 JVM 报一句难懂的错误。
+  if (opts.hasMain && !isPlausibleMainClass(opts.mainClass)) {
+    stderr.writeln("Invalid --main value"
+        ~ (opts.mainClass.length ? " `" ~ opts.mainClass ~ "`" : "")
+        ~ ": expected a java class name, e.g. --main=com.example.Main.");
     return 2;
   }
 
@@ -388,11 +412,11 @@ int main(string[] args) {
   }
 
   auto manifestMain = resolver.mainClassOf(appPath);
-  auto mainClass = specMode && spec.main.length > 0 ? spec.main : manifestMain;
+  auto mainClass = pickMainClass(opts.mainClass, specMode ? spec.main : "", manifestMain);
   auto classpath = resolver.buildClasspath(appPath, deps);
 
   if (opts.command == "classpath") {
-    auto main = mainClass.length ? mainClass : "none";
+    auto main = mainClass.name.length ? mainClass.name : "none";
     writeln(main ~ "@" ~ classpath);
     return 0;
   }
@@ -403,13 +427,17 @@ int main(string[] args) {
 
   // command == "run"
   if (appPath.endsWith(".war")) {
+    if (!opts.quiet && (opts.hasMain || (specMode && spec.main.length > 0))) {
+      warnIgnoredMain(opts, specMode, spec, "war");
+      stderr.writeln("Note: a war runs the engine's bootstrap class; "
+          ~ "pick the engine with [app] engine (see docs/war-engine.md).");
+    }
     return runWar(opts, resolver, appPath, deps, specMode, spec, base);
   }
-  if (mainClass.length == 0) {
+  if (mainClass.empty) {
     stderr.writeln("Cannot find Main-Class in MANIFEST.MF of " ~ appPath);
-    stderr.writeln(
-        "Launch a jar/gav/url target, or write a launch spec (.jstart) with");
-    stderr.writeln("[app] main and entry to describe how to start (see docs/launch-spec.md).");
+    stderr.writeln("Pass --main=<class>, write a launch spec (.jstart) with [app] main, "
+        ~ "or keep a Main-Class in the jar manifest.");
     return 1;
   }
 
@@ -438,9 +466,9 @@ int main(string[] args) {
   auto runtimeCmd = specMode && spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "";
 
   if (opts.print) {
-    return printJavaCommand(classpath, mainClass, runtimeOptions, appArgs, runtimeCmd);
+    return printJavaCommand(classpath, mainClass.name, runtimeOptions, appArgs, runtimeCmd);
   }
-  return runJarApp(classpath, mainClass, runtimeOptions, appArgs, !opts.quiet, runtimeCmd);
+  return runJarApp(classpath, mainClass.name, runtimeOptions, appArgs, !opts.quiet, runtimeCmd);
 }
 
 /**
@@ -581,12 +609,31 @@ private void rmTree(string path) {
 }
 
 /**
+ * 主类只对 java（jar/gav-jar/解压目录）目标有意义：war 跑引擎的 Bootstrap 类
+ * （用 [app] engine 选引擎），native（tar.gz）跑 [app] exec。这两种目标上给出
+ * --main 或 [app] main 时告警忽略，不静默吞掉。
+ */
+private void warnIgnoredMain(BootArgs opts, bool specMode, LaunchSpec spec, string kind) {
+  if (opts.quiet) {
+    return;
+  }
+  if (opts.hasMain) {
+    stderr.writeln("Warning: --main is for jar targets, ignored for " ~ kind ~ " targets.");
+  }
+  if (specMode && spec.main.length > 0) {
+    stderr.writeln("Warning: [app] main is for java targets, ignored for " ~ kind
+        ~ " targets.");
+  }
+}
+
+/**
  * info 子命令：依赖准备完成后输出结构化信息（target/entry/落盘路径/main/每个依赖
  * 的来源、本地路径与体积/仓库位置），供审计与 IDE/CI 集成。输出为稳定的
- * "key: value" 文本；依赖以 "dep <n>: ..." 行给出，可直接 grep。
+ * "key: value" 文本（含 main 来源 cli/spec/manifest/none）；依赖以
+ * "dep <n>: ..." 行给出，可直接 grep。
  */
 private int printInfo(BootArgs opts, Resolver resolver, string appPath,
-    Archive[] deps, string mainClass, bool specMode, LaunchSpec spec,
+    Archive[] deps, MainClass mainClass, bool specMode, LaunchSpec spec,
     string nativeArchive = "", string nativeRoot = "") {
   import std.conv : to;
   import std.file : getSize, isDir;
@@ -611,7 +658,8 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
   writeln("entry: " ~ (specMode ? spec.entry : opts.target));
   writeln("app: " ~ appPath);
   writeln("type: " ~ type);
-  writeln("main: " ~ (mainClass.length ? mainClass : "none"));
+  writeln("main: " ~ (mainClass.name.length ? mainClass.name : "none"));
+  writeln("main source: " ~ sourceName(mainClass.source));
   if (nativeArchive.length) {
     writeln("archive: " ~ nativeArchive);
     writeln("root: " ~ nativeRoot);
@@ -944,9 +992,10 @@ private int runNative(BootArgs opts, Resolver resolver, string execPath, Archive
     return 2;
   }
   if (opts.command == "info") {
-    return printInfo(opts, resolver, execPath, deps, "", specMode, spec, archive,
+    return printInfo(opts, resolver, execPath, deps, MainClass.init, specMode, spec, archive,
         root);
   }
+  warnIgnoredMain(opts, specMode, spec, "native (tar.gz)");
   if (specMode && spec.runtimeOptions.length > 0 && !opts.quiet) {
     stderr.writeln(
         "Warning: [runtime] options are for java targets, ignored for native (tar.gz) targets.");

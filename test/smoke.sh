@@ -96,6 +96,37 @@ else
   echo "skip run test (javac/java missing)"
 fi
 
+echo "== custom main class (--main) =="
+if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
+  # 没有 Main-Class 的 jar：主类只能靠 --main 指定（解压目录同理）
+  mkdir -p "$T/nomain/META-INF"
+  printf 'Manifest-Version: 1.0\r\n\r\n' > "$T/nomain/META-INF/MANIFEST.MF"
+  cp -r "$T/classes/." "$T/nomain/"
+  (cd "$T/nomain" && zip -qr "$T/nomain.jar" .)
+
+  out="$("$JSTART" run "$T/nomain.jar" --main=org.jstarttest.Hello 2>&1)"; code=$?
+  sweep "$(printf '%s' "$out" | sed -n 's/^Pid file \(.*\) (pid .*/\1/p')"
+  check "run --main" "$code" 0 "hello-from-jar"
+  out="$("$JSTART" --quiet run "$T/nomain.jar" 2>&1)"; code=$?
+  check "no main is an error" "$code" 1 "Pass --main=<class>"
+
+  # --main 优先于 manifest，并同步反映在 classpath/info
+  out="$("$JSTART" --quiet --main=org.jstarttest.Hello classpath "$T/nomain.jar")"; code=$?
+  check "classpath --main" "$code" 0 "org.jstarttest.Hello@"
+  out="$("$JSTART" --quiet --main=org.jstarttest.Hello info "$T/nomain.jar")"; code=$?
+  check "info main source" "$code" 0 "main source: cli"
+  out="$("$JSTART" --quiet info "$T/nomain.jar")"; code=$?
+  check "info main none" "$code" 0 "main source: none"
+
+  # 空值/非法值立刻报错（--main 由 jstart 消费，不转发给应用）
+  out="$("$JSTART" --quiet run "$T/app.jar" --main= 2>&1)"; code=$?
+  check "empty --main rejected" "$code" 2 "Invalid --main value"
+  out="$("$JSTART" --quiet run "$T/app.jar" --main=/tmp/App.java 2>&1)"; code=$?
+  check "path --main rejected" "$code" 2 "Invalid --main value"
+else
+  echo "skip --main test (javac/java missing)"
+fi
+
 echo "== gav target =="
 out="$("$JSTART" --local="$REPO" --quiet resolve org.slf4j:slf4j-api:2.0.17)"; code=$?
 check "gav resolve" "$code" 0 "slf4j-api-2.0.17.jar"
@@ -104,11 +135,12 @@ echo "== war engine --print (downloads engine jars) =="
 mkdir -p "$T/war/WEB-INF"
 printf '<web-app/>\n' > "$T/war/WEB-INF/web.xml"
 (cd "$T/war" && zip -qr "$T/app.war" .)
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.war" --port=8080 --path=/demo --base="$T/sas")"; code=$?
+out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.war" --port=8080 --path=/demo --base="$T/sas" 2>&1)"; code=$?
 check "war print exit" "$code" 0 "org.beangle.sas.engine.tomcat.Bootstrap"
 check "war engine jar" "$code" 0 "tomcat-embed-core-11.0.21.jar"
 check "war port" "$code" 0 "'--port=8080'"
 check "war context" "$code" 0 "'--path=/demo'"
+check "war ignores --main" "$code" 0 "ignored for war targets"
 # --base 是根：组件目录 <根>/<组件键> 由 jstart 建，引擎拿到的是组件目录
 warBase="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
 case "$warBase" in
