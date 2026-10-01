@@ -10,7 +10,7 @@ import std.algorithm : canFind;
 import std.conv : to;
 
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile;
-import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engineMainClass,
+import jstart.engine : appendEngineDeps, defaultEngineDeps, engineMainClass,
   expandEngineDeps, normalizeContextPath, parseEngineSel, scanEngineArgs, warDocBaseDir,
   warDocBaseName;
 
@@ -173,7 +173,6 @@ unittest {
 }
 
 unittest {
-  assert(defaultWarBase().canFind("jstart-sas"), defaultWarBase());
 }
 
 unittest {

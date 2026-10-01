@@ -1,26 +1,32 @@
 /**
- * jstart - a lightweight launcher for Java artifacts (jar/war) written in D.
+ * jstart - a lightweight launcher for jar/war and native (tar.gz) artifacts
+ * written in D.
  *
- * It resolves a jar/war application, prepares the dependency environment by
- * downloading missing artifacts into the local maven repository, then
- * launches the application. Arguments such as --port=8080 are passed to the
- * application untouched.
+ * It resolves a jar/war application or a GraalVM native distribution (tar.gz),
+ * prepares the dependency environment by downloading missing artifacts into
+ * the local maven repository, then launches the application. Arguments such as
+ * --port=8080 are passed to the application untouched.
  */
 module app;
 
-import std.algorithm : canFind, endsWith;
+import std.algorithm : endsWith;
 import std.array : join;
+import std.conv : to;
 import std.file : dirEntries, exists, isDir, isFile, mkdirRecurse, readText, remove,
   SpanMode;
 import std.path : buildPath;
 import std.stdio : stderr, writeln;
 import std.string : startsWith, strip;
 
-import jstart.archive : Archive, expandLocalPath;
-import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engineMainClass,
-  expandEngineDeps, parseEngineSel, scanEngineArgs, warDocBaseDir, warDocBaseName;
+import jstart.archive : Archive, expandLocalPath, parseGav;
+import jstart.base : PidInfo, currentPid, nativeDirName, pidFilePath, processAlive,
+  processStartTime, readPidFile, removePidFile, resolveBase, stopApplication, stopNotRunning,
+  writePidFile;
 import jstart.distrepo : fetchDist;
-import jstart.launcher : printJavaCommand, runJarApp;
+import jstart.engine : appendEngineDeps, defaultEngineDeps, engineMainClass, expandEngineDeps,
+  parseEngineSel, scanEngineArgs, warDocBaseDir, warDocBaseName;
+import jstart.launcher : printCommand, printJavaCommand, runJarApp, runNativeApp;
+import jstart.native : extractTarGz, findExecutable, isNativeTarget, targetGav;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
 import jstart.resolver : Resolver;
 import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec;
@@ -40,6 +46,14 @@ struct BootArgs {
   string remote;
   /// --from: fetch 的增量补丁基线版本
   string from;
+  /// --base: base 根目录（默认 /var/tmp/jstart；组件目录为 <base>/<组件键>）
+  string base;
+  /// --instance: 命名组件目录（<根>/<name>-<组件指纹>），同一组件跑多副本时用
+  string instance;
+  /// --timeout: stop 等待进程退出的秒数（默认 15）
+  int stopTimeout = 15;
+  /// --force: run 时忽略已在运行的实例；stop 时超时后用 SIGKILL
+  bool force;
   /// --source: 源仓库目录（repo 命令从该仓库复制依赖）
   string source;
   bool preferWar;
@@ -84,8 +98,24 @@ BootArgs parseArgs(string[] args) {
       r.source = a["--source=".length .. $];
     } else if (a.startsWith("--from=")) {
       r.from = a["--from=".length .. $];
+    } else if (a.startsWith("--base=")) {
+      r.base = a["--base=".length .. $];
+    } else if (a.startsWith("--instance=")) {
+      r.instance = a["--instance=".length .. $];
+    } else if (a.startsWith("--timeout=")) {
+      auto n = 0;
+      try {
+        import std.conv : to;
+
+        n = to!int(a["--timeout=".length .. $].strip);
+      } catch (Exception e) {
+        n = 0;
+      }
+      r.stopTimeout = n < 1 ? 1 : n;
+    } else if (a == "--force") {
+      r.force = true;
     } else if (r.target.length == 0 && (a == "resolve" || a == "classpath" || a == "info"
-        || a == "run" || a == "repo" || a == "fetch")) {
+        || a == "run" || a == "repo" || a == "fetch" || a == "stop")) {
       r.command = a;
     } else if (r.target.length == 0 && !a.startsWith("-")) {
       r.target = a;
@@ -98,13 +128,15 @@ BootArgs parseArgs(string[] args) {
 
 /// Print usage to stdout or stderr.
 void usage() {
-  writeln("jstart " ~ jstartVersion ~ " - a lightweight launcher for Java artifacts (jar/war)");
+  writeln("jstart " ~ jstartVersion
+      ~ " - a lightweight launcher for jar/war and native (tar.gz) artifacts");
   writeln("");
   writeln("Usage:");
   writeln("  jstart [options] run <target> [args...]");
   writeln("      Prepare dependencies then exec the runtime: the process");
   writeln("      becomes the runtime itself (java for jar targets; war targets");
-  writeln("      run with the built-in tomcat engine, see docs/war-engine.md).");
+  writeln("      run with the built-in tomcat engine, see docs/war-engine.md;");
+  writeln("      tar.gz targets are extracted and their executable is run).");
   writeln("      Unrecognized args (like --port=8080) are passed to the");
   writeln("      application; -D/-X* args go to the runtime. <target> may");
   writeln("      also be a launch spec (.jstart) declaring main/entry/runtime/args");
@@ -128,25 +160,55 @@ void usage() {
   writeln("      the patch is applied differs (tar.gz: gunzip -> bspatch -> gzip).");
   writeln("      <gav> accepts a classifier, e.g.");
   writeln("      org.beangle:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT");
+  writeln("  jstart [options] stop <target> [--base=<dir>] [--timeout=<sec>] [--force]");
+  writeln("      Stop the application started by `run <target>`: read the pid");
+  writeln("      file in the component base, send SIGTERM and wait for it to");
+  writeln("      exit (--force sends SIGKILL after the timeout). No application");
+  writeln("      arguments are needed: an instance is identified by component +");
+  writeln("      base. Exits 0 when stopped, 3 when nothing was running");
+  writeln("      (missing/stale pid file).");
   writeln("");
   writeln("target:");
   writeln("  /path/to/app.jar | app.war | exploded-war-dir");
   writeln("  /path/to/app.jstart                launch spec declaring main/entry/runtime/args");
+  writeln("  /path/to/app.tar.gz                native-image distribution (extracted and run)");
   writeln("  group:artifact:version | gav://group:artifact:version");
+  writeln("  group:artifact:tar.gz:<classifier>:version   native distribution (see fetch)");
   writeln("  http(s)://host/path/to/app.jar");
   writeln("  http(s)://host/path/to/app.jstart  remote launch spec (downloaded and parsed)");
   writeln("");
   writeln("  run 需要可启动的应用本体：jar/gav/url/解压目录，或写成 launch spec");
   writeln("  （.jstart，支持本地或 http(s)，见 docs/launch-spec.md）。本地文件 target 只接受");
   writeln("  jar/war/解压目录；纯文本依赖清单已不支持。");
+  writeln("  tar.gz（native）目标：取发行包（同 fetch，gav 时含增量补丁）后解压到");
+  writeln("  <base>/app（base = <base 根>/<组件键>，根默认 /var/tmp/jstart），");
+  writeln("  exec 解压出的可执行文件，[args]/命令行参数按序附加在其后；resolve 输出该");
+  writeln("  可执行文件路径，可执行文件位置用 launch spec [app] exec= 指定。");
+  writeln("  base：组件的运行基目录（pid 文件、native 解压、war 爆炸都在其中）。一个组件");
+  writeln("  的一个 base 只能跑一个实例——跑多个副本请给每个副本不同的 --base/--instance；");
+  writeln("  参数不参与实例身份，因此 run/stop 不需要给同样的参数。");
   writeln("");
   writeln("options:");
   writeln("  --local=<dir>    local repository (default ~/.m2/repository)");
   writeln("  --source=<dir>   source repository for the repo command");
   writeln("                   (default ~/.m2/repository, must differ from --local)");
   writeln("  --remote=<urls>  comma separated remote repositories");
+  writeln("  --from=<version> fetch/native gav: delta baseline version (default: the");
+  writeln("                   newest local version lower than the requested one)");
+  writeln("  --base=<dir>     run/stop: the base root, replacing the default");
+  writeln("                   /var/tmp/jstart. A component's state lives in");
+  writeln("                   <base>/<组件键>/: app.pid, app/ (native");
+  writeln("                   extraction) and webapps/ (war explosion). One");
+  writeln("                   component + base runs one instance; copies");
+  writeln("                   need their own base");
+  writeln("  --instance=<name>  run/stop: name the component directory");
+  writeln("                   (<根>/<name>-<组件指纹>) instead of using the");
+  writeln("                   target's file name; needs no --base=<dir>");
+  writeln("  --timeout=<sec>  stop: seconds to wait after SIGTERM (default 15)");
+  writeln("  --force          run: start even if the pid file says it is running;");
+  writeln("                   stop: SIGKILL after the timeout");
   writeln("  --preferwar      for gav targets, prefer the war packaging");
-  writeln("  --print          run only: print the java command without executing");
+  writeln("  --print          run only: print the command to execute (no exec)");
   writeln("  --jobs=N         parallel dependency downloads (default 10, 1 = serial)");
   writeln("  --quiet          suppress info output");
   writeln("  -h, --help       show this help");
@@ -201,7 +263,7 @@ int main(string[] args) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
   }
-  if (!specMode) {
+  if (!specMode && opts.command != "stop") {
     auto reject = plainTargetReject(opts);
     if (reject.length > 0) {
       stderr.writeln(reject);
@@ -209,9 +271,94 @@ int main(string[] args) {
     }
   }
 
-  auto appPath = resolver.fetchTarget(specMode ? spec.entry : opts.target);
-  if (appPath.length == 0) {
-    return 1;
+  // stop：只按 base 里的 pid 文件停应用——不取包、不准备依赖、也不需要应用参数
+  // （实例身份 = 组件 + base），因此包被清理或网络不可用时照样能停。
+  if (opts.command == "stop") {
+    auto base = resolveBase(opts.target, baseOption(opts, specMode ? spec : LaunchSpec.init),
+        opts.instance);
+    if (base.length == 0) {
+      stderr.writeln("Cannot prepare the component base for " ~ opts.target
+          ~ "; pass a writable --base=<dir>.");
+      return 1;
+    }
+    auto pidPath = pidFilePath(base);
+    auto existed = exists(pidPath);
+    auto code = stopApplication(pidPath, opts.stopTimeout, opts.force, !opts.quiet);
+    if (code == stopNotRunning && !existed && !opts.quiet) {
+      stderr.writeln("Hint: an instance is identified by component + base; if it was "
+          ~ "started with --base=<dir> or --instance=<name>, pass the same one here.");
+    }
+    if (opts.rest.length && !opts.quiet) {
+      stderr.writeln("Note: application arguments are ignored by stop "
+          ~ "(identity = component + base).");
+    }
+    return code;
+  }
+
+  // native（GraalVM tar.gz）目标：取包 -> 解压 -> 定位可执行文件，后面直接
+  // exec 它（没有 JVM，也没有单独的运行时）。
+  auto target = specMode ? spec.entry : opts.target;
+  auto nativeMode = isNativeTarget(target);
+  string nativeArchive;
+  string nativeRoot;
+  string appPath;
+  // base：组件的运行基目录（pid 文件、native 解压、war 爆炸都在其中）。run 需要，
+  // native 的 resolve/info 因为要解压也需要。
+  string base;
+  if (opts.command == "run" || nativeMode) {
+    base = resolveBase(opts.target, baseOption(opts, specMode ? spec : LaunchSpec.init),
+        opts.instance);
+    if (base.length == 0) {
+      stderr.writeln("Cannot prepare the component base for " ~ opts.target
+          ~ "; pass a writable --base=<dir>.");
+      return 1;
+    }
+  }
+  // pid 文件：run 在 exec 前写入（exec 后本进程就是应用，pid 即应用 pid）。
+  string pidPath;
+  if (opts.command == "run" && !opts.print) {
+    bool fatal;
+    pidPath = preparePidFile(opts, base, target, fatal);
+    if (fatal) {
+      return 1;
+    }
+  }
+  // 启动失败（没能 exec 成应用）时清掉刚写的 pid 文件；exec 成功后本进程
+  // 就是应用，这段代码不会再执行，pid 文件留给 stop 使用。
+  scope (exit) removePidOnExit(pidPath);
+  if (nativeMode) {
+    nativeArchive = fetchArtifact(opts, resolver, target);
+    if (nativeArchive.length == 0) {
+      return 1;
+    }
+    auto execHint = specMode ? spec.exec : "";
+    auto artifactId = nativeArtifactId(target);
+    // 解压到 <base>/app：base 按组件（--base/--instance 可换），不用包旁目录兜底。
+    auto extractDir = buildPath(base, nativeDirName);
+    string[] candidates;
+    auto extracted = extractTarGz(nativeArchive, !opts.quiet, false, extractDir);
+    if (extracted.ok) {
+      appPath = findExecutable(extracted.dir, execHint, artifactId, candidates);
+    }
+    if (appPath.length == 0 && extracted.ok && extracted.reused) {
+      // 复用的解压目录不完整/被改动：强制重解一次
+      extracted = extractTarGz(nativeArchive, !opts.quiet, true, extractDir);
+      if (extracted.ok) {
+        appPath = findExecutable(extracted.dir, execHint, artifactId, candidates);
+      }
+    }
+    if (appPath.length == 0) {
+      if (extracted.ok) {
+        reportNativeExecMissing(nativeArchive, candidates, execHint);
+      }
+      return 1;
+    }
+    nativeRoot = extracted.dir;
+  } else {
+    appPath = resolver.fetchTarget(target);
+    if (appPath.length == 0) {
+      return 1;
+    }
   }
   if (specMode && !appPath.endsWith(".war")
       && (spec.engine.length > 0 || spec.hasEngineDeps) && !opts.quiet) {
@@ -221,7 +368,7 @@ int main(string[] args) {
   if (specMode && spec.hasDeps) {
     // 显式 [deps] 段是唯一来源，不再回退读取 entry 内置依赖清单。
     deps = resolver.parseDependencyText(spec.deps.join("\n"));
-  } else {
+  } else if (!nativeMode) {
     deps = resolver.resolveDependencies(appPath);
   }
   auto missing = resolver.ensureDependencies(deps, opts.jobs);
@@ -234,6 +381,10 @@ int main(string[] args) {
   if (missing.length > 0) {
     stderr.writeln("Missing: " ~ missing.join(","));
     return 1;
+  }
+
+  if (nativeMode) {
+    return runNative(opts, resolver, appPath, deps, specMode, spec, nativeArchive, nativeRoot);
   }
 
   auto manifestMain = resolver.mainClassOf(appPath);
@@ -252,7 +403,7 @@ int main(string[] args) {
 
   // command == "run"
   if (appPath.endsWith(".war")) {
-    return runWar(opts, resolver, appPath, deps, specMode, spec);
+    return runWar(opts, resolver, appPath, deps, specMode, spec, base);
   }
   if (mainClass.length == 0) {
     stderr.writeln("Cannot find Main-Class in MANIFEST.MF of " ~ appPath);
@@ -302,13 +453,15 @@ int main(string[] args) {
  *   {tomcat.version}/{sas.version} 占位符引用内置版本），缺省回退 tomcat
  *   内置默认（等价 sas.sh 的三个 download 行，engine = tomcat-<版本> 时用指定
  *   版本重钉两个 tomcat-embed jar）；undertow 依赖较多，须显式罗列；
- * - --path=/--base= 被"读取"用于爆炸布局（最后一次出现生效，与引擎 CmdOptions
- *   一致），之后仍原样转发给引擎；--port 等参数不读取、直接透传；
- * - 默认 base 为 ${TMPDIR:-/tmp}/jstart-sas；爆炸目录每次运行前重建（引擎关闭时
- *   会自行删除 docBase，与 sas.sh 的 rm -rf 语义一致）。
+ * - base 就是组件的 base（--base/--instance/[app] base）：引擎的 --base 也用它，
+ *   爆炸到 <base>/webapps/<name>，pid 文件是 <base>/app.pid -- 一个 base 一个实例；
+ * - --path= 被"读取"用于爆炸布局（最后一次出现生效，与引擎 CmdOptions 一致），之后
+ *   仍原样转发给引擎；[args] 里的 --base= 不再作为 base（会被丢弃，避免与注入的
+ *   --base=<base> 冲突），--port 等参数不读取、直接透传；
+ * - 爆炸目录每次运行前重建（引擎关闭时会自行删除 docBase，与 sas.sh 的 rm -rf 语义一致）。
  */
 private int runWar(BootArgs opts, Resolver resolver, string warPath,
-    Archive[] appDeps, bool specMode, LaunchSpec spec) {
+    Archive[] appDeps, bool specMode, LaunchSpec spec, string base) {
   // 引擎选择：war 缺省 tomcat；tomcat 后可带版本（tomcat-11.0.24），无后缀或
   // 非 tomcat 引擎用内置默认版本。
   auto engineSel = specMode && spec.engine.length > 0 ? spec.engine : "tomcat";
@@ -368,13 +521,12 @@ private int runWar(BootArgs opts, Resolver resolver, string warPath,
     }
   }
 
-  // --path=/--base= 例外读取：仅用于决定爆炸位置，参数本身原样转发。
+  // --path= 例外读取：仅用于决定爆炸位置，参数本身原样转发。--base 已是 jstart
+  // 选项（不再从 [args] 里读；[args] 里的 --base 在下面被丢弃，避免与注入的
+  // --base=<base> 冲突）。
   string ctxPath;
-  string base;
-  scanEngineArgs(appArgs, ctxPath, base);
-  if (base.length == 0) {
-    base = defaultWarBase();
-  }
+  string ignoredBase;
+  scanEngineArgs(appArgs, ctxPath, ignoredBase);
   auto name = warDocBaseName(ctxPath);
   if (name.length == 0) {
     stderr.writeln("Unsafe context path for war explosion: --path=" ~ ctxPath);
@@ -434,7 +586,8 @@ private void rmTree(string path) {
  * "key: value" 文本；依赖以 "dep <n>: ..." 行给出，可直接 grep。
  */
 private int printInfo(BootArgs opts, Resolver resolver, string appPath,
-    Archive[] deps, string mainClass, bool specMode, LaunchSpec spec) {
+    Archive[] deps, string mainClass, bool specMode, LaunchSpec spec,
+    string nativeArchive = "", string nativeRoot = "") {
   import std.conv : to;
   import std.file : getSize, isDir;
   import std.format : format;
@@ -442,7 +595,9 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
   import jstart.archive : Artifact, LocalFile, RemoteFile;
 
   string type;
-  if (isDir(appPath)) {
+  if (nativeArchive.length) {
+    type = "native";
+  } else if (isDir(appPath)) {
     type = "dir";
   } else if (appPath.endsWith(".war")) {
     type = "war";
@@ -457,6 +612,10 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
   writeln("app: " ~ appPath);
   writeln("type: " ~ type);
   writeln("main: " ~ (mainClass.length ? mainClass : "none"));
+  if (nativeArchive.length) {
+    writeln("archive: " ~ nativeArchive);
+    writeln("root: " ~ nativeRoot);
+  }
   writeln("local: " ~ resolver.local.base);
   writeln("snapshots: " ~ resolver.local.snapshotBase);
   string[] remotes;
@@ -493,10 +652,78 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
  * 纯文本依赖清单已不支持：本地文件 target 只接受 jar/war（解压目录/launch spec
  * 由调用方各自处理）。返回拒绝消息，空串表示放行。
  */
+/// --base 优先，其次 launch spec [app] base，都没有则用组件默认 base。
+private string baseOption(BootArgs opts, LaunchSpec spec) {
+  return opts.base.length ? opts.base : spec.base;
+}
+
+/**
+ * 运行前准备 pid 文件：固定为 <base>/app.pid（base 由 --base/--instance/[app] base
+ * 决定，见 jstart.base）。实例身份 = 组件 + base，参数不参与。
+ *
+ * 若文件指向一个真实存在（且 start 时间匹配，排除 pid 复用）的进程，说明这个 base
+ * 上已经有实例在跑：报错不启动（除非 --force）；fatal 置 true 由调用方退出。
+ *
+ * 文件在准备阶段就写入（并发启动会被拒绝，而不是等到依赖下载完才发现），
+ * 启动失败或应用退出后由调用方删除。
+ */
+private string preparePidFile(BootArgs opts, string base, string app, out bool fatal) {
+  fatal = false;
+  auto path = pidFilePath(base);
+  if (path.length == 0) {
+    if (!opts.quiet) {
+      stderr.writeln("Warning: no base for pid files; pass --base=<dir> to keep one.");
+    }
+    return "";
+  }
+  PidInfo info;
+  if (readPidFile(path, info) && processAlive(info.pid)) {
+    auto start = processStartTime(info.pid);
+    auto recycled = info.start.length && start.length && info.start != start;
+    if (!recycled) {
+      if (!opts.force) {
+        stderr.writeln("Already running: pid " ~ to!string(info.pid)
+            ~ (info.app.length ? " (" ~ info.app ~ ")" : "") ~ ".");
+        stderr.writeln("Pid file: " ~ path ~ "; stop it with `jstart stop " ~ opts.target
+            ~ "`, start another copy with its own `--base=<dir>`/--instance=<name>`"
+            ~ ", or override with --force.");
+        fatal = true;
+        return "";
+      }
+      if (!opts.quiet) {
+        stderr.writeln("Warning: pid " ~ to!string(info.pid) ~ " is still running; overwriting "
+            ~ path ~ " (--force).");
+      }
+    }
+  }
+  string err;
+  if (!writePidFile(path, opts.target, app, err)) {
+    stderr.writeln("Cannot write pid file " ~ path ~ ": " ~ err);
+    fatal = true;
+    return "";
+  }
+  if (!opts.quiet) {
+    writeln("Pid file " ~ path ~ " (pid " ~ to!string(currentPid()) ~ ")");
+  }
+  return path;
+}
+
+/**
+ * Remove the pid file after the launcher returns. A successful exec never
+ * returns (the process becomes the application), so this only runs when the
+ * launch failed or the application already exited.
+ */
+private void removePidOnExit(string pidPath) {
+  if (pidPath.length) {
+    removePidFile(pidPath);
+  }
+}
+
 private string plainTargetReject(BootArgs opts) {
   auto t = expandLocalPath(opts.target);
-  if (!exists(t) || !isFile(t) || t.endsWith(".jar") || t.endsWith(".war")) {
-    return ""; // gav/http/目录等非本地普通文件 target 放行
+  if (!exists(t) || !isFile(t) || t.endsWith(".jar") || t.endsWith(".war")
+      || isNativeTarget(t)) {
+    return ""; // gav/http/目录/native 发行包等非本地普通文件 target 放行
   }
   return "Unsupported target " ~ opts.target ~ ": plain text dependency lists are no "
     ~ "longer supported. Use a jar/war/exploded-dir target, or write a launch spec "
@@ -659,20 +886,7 @@ private int runFetch(BootArgs opts) {
   return 0;
 }
 
-/// The gav text when the target is a gav (optionally `gav://` prefixed).
-private string targetGav(string target) {
-  auto s = target.strip;
-  if (s.startsWith("http://") || s.startsWith("https://")) {
-    return "";
-  }
-  if (s.startsWith("gav://")) {
-    s = s["gav://".length .. $];
-  }
-  if (s.canFind(":") && !s.canFind("/") && !s.canFind("\\")) {
-    return s;
-  }
-  return "";
-}
+// ------------------------------------------------------------------ native
 
 /**
  * 取回一个文件目标：gav 走发行仓库逻辑（含增量补丁，即 fetch 的核心），
@@ -685,4 +899,74 @@ private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
     return r.ok ? r.path : "";
   }
   return resolver.fetchTarget(target);
+}
+
+/// gav 目标的 artifactId（用于在解压树里找同名可执行文件）；非 gav 返回 ""。
+private string nativeArtifactId(string target) {
+  auto gav = targetGav(target);
+  if (gav.length == 0) {
+    return "";
+  }
+  try {
+    return parseGav(gav, gav).artifactId;
+  } catch (Exception e) {
+    return "";
+  }
+}
+
+/// 解压后找不到可执行文件时的诊断输出。
+private void reportNativeExecMissing(string archive, string[] candidates, string hint) {
+  stderr.writeln("Cannot find the executable in " ~ archive);
+  auto shown = candidates.length > 5 ? candidates[0 .. 5] : candidates;
+  foreach (c; shown) {
+    stderr.writeln("  candidate: " ~ c);
+  }
+  if (hint.length) {
+    stderr.writeln("[app] exec = " ~ hint ~ " does not exist in the extracted tree.");
+  } else {
+    stderr.writeln(
+        "Declare it in a launch spec: [app] exec = <path relative to the extraction root>.");
+  }
+}
+
+/**
+ * run 的 native 分支：可执行文件已从 tar.gz 解压出来，直接 exec 它。
+ *
+ * native 目标没有 JVM，也就没有独立的"运行时参数"：[args] 段与命令行参数一律
+ * 按顺序跟在可执行文件之后（-D/-X 也不例外）；[runtime] 段与 [app] runtime 对
+ * native 无意义，给出时告警忽略。classpath 对 native 无意义，报错退出。
+ */
+private int runNative(BootArgs opts, Resolver resolver, string execPath, Archive[] deps,
+    bool specMode, LaunchSpec spec, string archive, string root) {
+  if (opts.command == "classpath") {
+    stderr.writeln(
+        "classpath needs a jar/war target; use resolve to get the native executable path");
+    return 2;
+  }
+  if (opts.command == "info") {
+    return printInfo(opts, resolver, execPath, deps, "", specMode, spec, archive,
+        root);
+  }
+  if (specMode && spec.runtimeOptions.length > 0 && !opts.quiet) {
+    stderr.writeln(
+        "Warning: [runtime] options are for java targets, ignored for native (tar.gz) targets.");
+  }
+  if (specMode && spec.runtime.length > 0 && !opts.quiet) {
+    stderr.writeln(
+        "Warning: [app] runtime is ignored for native (tar.gz) targets, use [app] exec.");
+  }
+  string[] appArgs = specMode ? spec.args.dup : null;
+  appArgs ~= opts.rest;
+  if (!opts.print && specMode && spec.workingDir.length > 0) {
+    auto dir = expandLocalPath(spec.workingDir);
+    if (!changeDir(dir)) {
+      stderr.writeln("Cannot chdir to " ~ dir);
+      return 1;
+    }
+  }
+  auto cmd = [execPath] ~ appArgs;
+  if (opts.print) {
+    return printCommand(cmd);
+  }
+  return runNativeApp(execPath, appArgs, !opts.quiet);
 }

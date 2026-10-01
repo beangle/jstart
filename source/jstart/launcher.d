@@ -73,6 +73,13 @@ int printJavaCommand(string classpath, string mainClass, string[] jvmOptions,
     string[] appArgs, string java = "") {
   auto cmd = [resolveJava(java)] ~ jvmOptions ~ ["-cp", classpath] ~
     [mainClass] ~ appArgs;
+  return printCommand(cmd);
+}
+
+/**
+ * Print an argv as a POSIX-quoted command line, without executing it.
+ */
+int printCommand(string[] cmd) {
   string[] quoted;
   foreach (a; cmd) {
     quoted ~= shellQuote(a);
@@ -88,8 +95,9 @@ private string shellQuote(string arg) {
 }
 
 /**
- * Launch a native executable, replacing the current process with it.
- * Reserved for future native binary targets.
+ * Launch a native executable (the executable extracted from a tar.gz
+ * distribution), replacing the current process with it; arguments are
+ * appended after the executable.
  */
 int runNativeApp(string executable, string[] args, bool verbose = true) {
   return execCmd([executable] ~ args, verbose);

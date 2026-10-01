@@ -29,6 +29,14 @@ struct LaunchSpec {
   /// Runtime/interpreter executable (java, python3, node, ...); "" makes
   /// the launcher infer one from the entry (a jar runs with java).
   string runtime;
+  /// Executable inside a native (tar.gz) entry, relative to its extraction
+  /// root; "" makes the launcher look for the usual <name>/bin/<executable>
+  /// layout. Ignored by jar/war entries.
+  string exec;
+  /// Component base directory ("" = the default under the jstart base root):
+  /// the pid file, the native extraction and the war explosion all live below
+  /// it. One base runs one instance of a component.
+  string base;
   /// Runtime options, in order (each spec line is one option; java -X/-D,
   /// python -O, ...).
   string[] runtimeOptions;
@@ -117,6 +125,12 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
             break;
           case "runtime":
             spec.runtime = value;
+            break;
+          case "exec":
+            spec.exec = value;
+            break;
+          case "base":
+            spec.base = value;
             break;
           case "engine":
             spec.engine = value;

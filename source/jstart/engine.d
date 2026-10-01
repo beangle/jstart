@@ -228,18 +228,6 @@ string warDocBaseName(string contextPath) {
   return name;
 }
 
-/// Default engine base dir, mirroring sas.sh's /tmp/sas.
-string defaultWarBase() {
-  auto t = environment.get("TMPDIR");
-  if (t.length == 0) {
-    t = "/tmp";
-  }
-  while (t.length > 1 && t[$ - 1] == '/') {
-    t = t[0 .. $ - 1];
-  }
-  return t ~ "/jstart-sas";
-}
-
 /**
  * Scan run args for --path=/--base= so the explode location matches what
  * the engine will compute (CmdOptions semantics: the last occurrence
