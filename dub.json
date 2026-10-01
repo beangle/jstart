@@ -1,6 +1,6 @@
 {
   "name": "beangle-jstart",
-  "description": "jstart is a lightweight launcher for Java artifacts (jar/war) written in D. It resolves an application, prepares the dependency environment by downloading missing Maven artifacts, and launches it as java with forwarded arguments.",
+  "description": "jstart is a lightweight launcher for jar/war and native (tar.gz) artifacts, written in D. It resolves an application, prepares the dependency environment by downloading missing Maven artifacts, and launches it as java (jar/war) or as the extracted native executable with forwarded arguments.",
   "authors": ["chaostone"],
   "homepage": "https://github.com/beangle/jstart",
   "license": "GPL-3.0-or-later",
