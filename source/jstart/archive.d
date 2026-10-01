@@ -20,7 +20,7 @@ import std.string : indexOf, replace, startsWith, strip;
 
 /** Maven packaging types recognized in the third part of a 4-part gav. */
 immutable string[] mavenPackagings = [
-  "jar", "war", "pom", "zip", "ear", "rar", "ejb", "ejb3", "tar", "tar.gz"
+  "jar", "war", "pom", "zip", "ear", "rar", "ejb", "ejb3", "tar", "tar.gz", "tgz"
 ];
 
 /** Base class of every archive described in a dependencies file. */
@@ -65,6 +65,20 @@ final class Artifact : Archive {
     return new Artifact(raw, groupId, artifactId, ver, classifier, p);
   }
 
+  /// A copy with another version, e.g. the local baseline of a delta.
+  Artifact withVersion(string v) const {
+    return new Artifact(raw, groupId, artifactId, v, classifier, packaging);
+  }
+
+  /// File name inside the version directory, e.g. demo-1.0-linux-amd64.tar.gz.
+  string fileName() const {
+    auto file = artifactId ~ "-" ~ ver;
+    if (classifier.length) {
+      file ~= "-" ~ classifier;
+    }
+    return file ~ "." ~ packaging;
+  }
+
   /// The companion .sha1 artifact stored beside this artifact.
   Artifact sha1() const {
     return new Artifact(raw, groupId, artifactId, ver, classifier, packaging ~ ".sha1");
@@ -72,12 +86,7 @@ final class Artifact : Archive {
 
   /// Maven2 repository relative path, e.g. /org/slf4j/slf4j-api/2.0.17/slf4j-api-2.0.17.jar
   string layoutPath() const {
-    auto file = artifactId ~ "-" ~ ver;
-    if (classifier.length) {
-      file ~= "-" ~ classifier;
-    }
-    return "/" ~ groupId.replace(".", "/") ~ "/" ~ artifactId ~ "/" ~ ver ~ "/"
-      ~ file ~ "." ~ packaging;
+    return "/" ~ groupId.replace(".", "/") ~ "/" ~ artifactId ~ "/" ~ ver ~ "/" ~ fileName;
   }
 }
 

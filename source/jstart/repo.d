@@ -11,7 +11,7 @@ import std.digest.sha : SHA1;
 import std.file : dirEntries, exists, isDir, mkdirRecurse, read, readText, SpanMode;
 import std.path : baseName, dirName;
 import std.process : environment;
-import std.string : lastIndexOf, startsWith, strip, toLower;
+import std.string : indexOf, lastIndexOf, startsWith, strip, toLower;
 
 import jstart.archive : Artifact, expandLocalPath;
 
@@ -22,16 +22,25 @@ final class LocalRepo {
   /// Timestamped snapshot lookup base, ~/.m2/snapshots by default.
   string snapshotBase;
 
-  this(string base = "") {
+  this(string base = "", string snapshotBaseDir = "") {
     auto given = base.strip;
     string b = given.length ? expandLocalPath(given) : defaultLocalBase();
     while (b.length > 1 && b[$ - 1] == '/') {
       b = b[0 .. $ - 1];
     }
     this.base = b;
-    // 与 beangle/boot 一致：显式给出 base 时快照也放该 base；默认才是
-    // ~/.m2/snapshots。
-    this.snapshotBase = given.length ? b : defaultSnapshotBase();
+    auto givenSnapshot = snapshotBaseDir.strip;
+    if (givenSnapshot.length) {
+      auto snap = expandLocalPath(givenSnapshot);
+      while (snap.length > 1 && snap[$ - 1] == '/') {
+        snap = snap[0 .. $ - 1];
+      }
+      this.snapshotBase = snap;
+    } else {
+      // 与 beangle/boot 一致：显式给出 base 时快照也放该 base；默认才是
+      // ~/.m2/snapshots。
+      this.snapshotBase = given.length ? b : defaultSnapshotBase();
+    }
     if (!exists(this.base)) {
       mkdirRecurse(this.base);
     }
@@ -70,18 +79,25 @@ final class LocalRepo {
       if (!name.startsWith(prefix) || !name.endsWith(ext)) {
         continue;
       }
+      // <时间戳>-<构建号>[-<classifier>]，classifier 自身可含 '-'
       auto mid = name[prefix.length .. $ - ext.length];
-      auto dash = mid.lastIndexOf("-");
-      if (dash <= 0) {
+      if (mid.length < 16 || mid[8] != '.') {
         continue;
       }
-      auto ts = mid[0 .. dash];
-      if (!isTimestampVersion(ts)) {
+      auto ts = mid[0 .. 15];
+      if (!isTimestampVersion(ts) || mid[15] != '-') {
+        continue;
+      }
+      auto rest = mid[16 .. $];
+      auto dash = rest.indexOf("-");
+      auto buildText = dash < 0 ? rest : rest[0 .. dash];
+      auto classifier = dash < 0 ? "" : rest[dash + 1 .. $];
+      if (classifier != a.classifier) {
         continue;
       }
       auto build = -1;
       try {
-        build = to!int(mid[dash + 1 .. $]);
+        build = to!int(buildText);
       } catch (Exception e) {
         continue;
       }

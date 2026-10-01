@@ -8,7 +8,7 @@
  */
 module app;
 
-import std.algorithm : endsWith;
+import std.algorithm : canFind, endsWith;
 import std.array : join;
 import std.file : dirEntries, exists, isDir, isFile, mkdirRecurse, readText, remove,
   SpanMode;
@@ -19,6 +19,7 @@ import std.string : startsWith, strip;
 import jstart.archive : Archive, expandLocalPath;
 import jstart.engine : appendEngineDeps, defaultEngineDeps, defaultWarBase, engineMainClass,
   expandEngineDeps, parseEngineSel, scanEngineArgs, warDocBaseDir, warDocBaseName;
+import jstart.distrepo : fetchDist;
 import jstart.launcher : printJavaCommand, runJarApp;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
 import jstart.resolver : Resolver;
@@ -37,6 +38,8 @@ struct BootArgs {
   string[] rest;
   string local;
   string remote;
+  /// --from: fetch 的增量补丁基线版本
+  string from;
   /// --source: 源仓库目录（repo 命令从该仓库复制依赖）
   string source;
   bool preferWar;
@@ -79,8 +82,10 @@ BootArgs parseArgs(string[] args) {
       r.remote = a["--remote=".length .. $];
     } else if (a.startsWith("--source=")) {
       r.source = a["--source=".length .. $];
+    } else if (a.startsWith("--from=")) {
+      r.from = a["--from=".length .. $];
     } else if (r.target.length == 0 && (a == "resolve" || a == "classpath" || a == "info"
-        || a == "run" || a == "repo")) {
+        || a == "run" || a == "repo" || a == "fetch")) {
       r.command = a;
     } else if (r.target.length == 0 && !a.startsWith("-")) {
       r.target = a;
@@ -114,6 +119,15 @@ void usage() {
   writeln("      Offline consolidation: copy dependencies missing in the");
   writeln("      --local repo from the --source repo, then print the local");
   writeln("      repo base. <target> must be a local jar/war/exploded dir/launch spec.");
+  writeln("  jstart [options] fetch <target> [--from=<version>] [--remote=<base>]");
+  writeln("      Download a target and print its local path. <target> may be a");
+  writeln("      gav (dist artifact: native-image tar.gz / jar / war, preferring");
+  writeln("      a bsdiff delta from --from over the whole artifact), a local");
+  writeln("      file (printed as is) or an http(s) url (cached in the local repo).");
+  writeln("      tar.gz and plain jar/war share the same delta logic; only how");
+  writeln("      the patch is applied differs (tar.gz: gunzip -> bspatch -> gzip).");
+  writeln("      <gav> accepts a classifier, e.g.");
+  writeln("      org.beangle:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT");
   writeln("");
   writeln("target:");
   writeln("  /path/to/app.jar | app.war | exploded-war-dir");
@@ -162,6 +176,9 @@ int main(string[] args) {
 
   if (opts.command == "repo") {
     return runRepo(opts);
+  }
+  if (opts.command == "fetch") {
+    return runFetch(opts);
   }
 
   auto localRepo = new LocalRepo(opts.local);
@@ -611,4 +628,61 @@ private int runRepo(BootArgs opts) {
   }
   writeln(localRepo.base);
   return 0;
+}
+
+/**
+ * fetch 子命令：负责把目标取回本地并打印其路径。
+ *
+ * gav 目标从发行仓库（beangle native 仓库，maven2 布局）取构件：若本地存在基线
+ * 版本且远端发布了 `<old>_<new>` 的 bsdiff 补丁，则下载补丁重建并校验目标 sha1；
+ * 否则整包下载。补丁不存在是正常情况，不报错。
+ *
+ * http(s) url 直接下载并缓存到本地仓库；本地文件原样返回其绝对路径。
+ */
+private int runFetch(BootArgs opts) {
+  auto target = opts.target.strip;
+  auto isUrl = target.startsWith("http://") || target.startsWith("https://");
+  if (targetGav(target).length == 0 && !isUrl && !exists(expandLocalPath(target))) {
+    stderr.writeln("fetch expects a gav (e.g. "
+        ~ "org.beangle:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT), "
+        ~ "an http(s) url or an existing local file.");
+    return 2;
+  }
+  auto localRepo = new LocalRepo(opts.local);
+  auto remotes = buildRemotes(opts.remote);
+  auto resolver = new Resolver(localRepo, remotes, !opts.quiet, opts.preferWar);
+  auto path = fetchArtifact(opts, resolver, target);
+  if (path.length == 0) {
+    return 1;
+  }
+  writeln(path);
+  return 0;
+}
+
+/// The gav text when the target is a gav (optionally `gav://` prefixed).
+private string targetGav(string target) {
+  auto s = target.strip;
+  if (s.startsWith("http://") || s.startsWith("https://")) {
+    return "";
+  }
+  if (s.startsWith("gav://")) {
+    s = s["gav://".length .. $];
+  }
+  if (s.canFind(":") && !s.canFind("/") && !s.canFind("\\")) {
+    return s;
+  }
+  return "";
+}
+
+/**
+ * 取回一个文件目标：gav 走发行仓库逻辑（含增量补丁，即 fetch 的核心），
+ * http(s) url 下载并按主机路径缓存到本地仓库，本地文件返回绝对路径。
+ */
+private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
+  auto gav = targetGav(target);
+  if (gav.length) {
+    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, !opts.quiet);
+    return r.ok ? r.path : "";
+  }
+  return resolver.fetchTarget(target);
 }

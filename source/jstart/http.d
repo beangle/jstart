@@ -72,6 +72,25 @@ private ProbeResult probeHttp(string url) {
 }
 
 /**
+ * HEAD probe: true when the url answers 2xx (redirects followed). Used to
+ * detect optional resources such as binary deltas, where a 404 is a normal
+ * outcome rather than an error.
+ */
+bool remoteExists(string url, bool verbose = false) {
+  auto res = execute([
+    "curl", "-s", "-S", "-I", "-L", "-o", "/dev/null", "-w", "%{http_code}",
+    "--connect-timeout", "10", "--max-time", "60", url
+  ]);
+  if (res.status != 0) {
+    if (verbose) {
+      stderr.writeln("Probe failed " ~ url ~ ": " ~ res.output.strip);
+    }
+    return false;
+  }
+  return res.output.strip == "200";
+}
+
+/**
  * Download url into location. Uses parallel HTTP Range requests when the
  * server supports ranges and the payload is at least minRangeSize; the
  * parts are merged and renamed over location. Falls back to one plain
