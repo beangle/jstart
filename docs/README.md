@@ -13,7 +13,7 @@ java。本目录存放项目文档。
 | [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`/`fetch`、选项、退出码与示例 |
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
 | [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[deps]/[engine] 语义、run --print 与范围规划 |
-| [war-engine.md](war-engine.md) | war 内置引擎：爆炸布局、[app] engine 选择、[engine] 依赖罗列、参数语义与限制 |
+| [war-engine.md](war-engine.md) | war 内置引擎：解压布局、[app] engine 选择、[engine] 依赖罗列、参数语义与限制 |
 | [offline.md](offline.md) | 离线部署：仓库整合、无外网机器上的启动方式与注意事项 |
 | [build.md](build.md) | 构建、测试与打包：dub/release、单测与冒烟、deb/rpm 脚本、产物布局 |
 | [release-v0.0.1.md](release-v0.0.1.md) | v0.0.1 发布说明：范围、已知限制与路线图 |
@@ -44,7 +44,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   父子等待）；`--port=8080` 等参数原样传给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。
   launch spec target 用 `[app] runtime`/`[runtime]` 通用命名，便于替换 JDK，也为后续其他
   运行时预留。
-- `run <war>`：war 目标自动进入内置引擎流程（爆炸到 `<base>/webapps/<ctx>` 后 exec
+- `run <war>`：war 目标自动进入内置引擎流程（解压到 `<base>/webapps/<ctx>` 后 exec
   `org.beangle.sas.engine.<name>.Bootstrap`，缺省 tomcat）。`[app] engine` 选引擎、
   `engine = tomcat-11.0.24` 可直接指定 tomcat 版本、`[engine]` 段罗列引擎依赖并支持
   `{tomcat.version}`/`{sas.version}` 占位符（见 [war-engine.md](war-engine.md)）。
@@ -85,7 +85,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 - `--remote=<urls>` 逗号分隔远程仓库（默认阿里云 public、华为云 maven、Maven Central）
 - `--source=<dir>` repo 命令的源仓库（默认 `~/.m2/repository`，须与 `--local` 不同）
 - `--base=<dir>` base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是
-  `<base>/<组件键>`，`app.pid`、native 解压（`app/`）、war 爆炸（`webapps/`）都在其下；
+  `<base>/<组件键>`，`app.pid`、native 解压（`app/`）、war 解压（`webapps/`）都在其下；
   一个 base 只跑一个实例，缺省根不可用时必须显式指定
 - `--instance=<name>` 命名组件目录（`<根>/<name>-<组件指纹>`）：同一组件跑多个
   副本时给每个副本一个 base（实例身份 = 组件 + base，与应用参数无关）

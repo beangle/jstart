@@ -105,16 +105,16 @@ target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
   `classpath_extra`，小写优先）。
 
 war 目标（本地 `app.war`、gav/url 落盘为 `.war`）自动进入内置引擎流程：解析并
-爆炸到 `<base>/webapps/<ctx>`（`base` 是组件的运行目录 `<base 根>/<组件键>`，
+解压到 `<base>/webapps/<ctx>`（`base` 是组件的运行目录 `<base 根>/<组件键>`，
 根默认 `/var/tmp/jstart`，`--base=`/`--instance=`/`[app] base` 可换；
-`--path=` 决定 contextPath，缺省 `ROOT`），classpath 为爆炸目录的
+`--path=` 决定 contextPath，缺省 `ROOT`），classpath 为解压目录的
 `WEB-INF/classes`+`WEB-INF/lib`+应用依赖+引擎依赖，然后 exec
 `org.beangle.sas.engine.<name>.Bootstrap`。引擎依赖有内置默认目录（tomcat 三件套 /
 undertow 十四件套，等价 sas.sh 两个分支），需要固定或改版本时用 launch spec 的
 `[engine]` 段显式罗列（权威，不依赖内置行）；选择引擎用 `[app] engine = tomcat|undertow`
 （war 缺省 tomcat），tomcat 可带版本后缀 `tomcat-11.0.24` 直接换内置 tomcat 版本，
 `[engine]` 行内支持 `{tomcat.version}`/`{sas.version}` 占位符引用内置版本。
-war 的引擎模式只读取 `--path=` 用于爆炸布局（`--base` 已是 jstart 的 base 选项，引擎
+war 的引擎模式只读取 `--path=` 用于解压布局（`--base` 已是 jstart 的 base 选项，引擎
 拿到的是注入的 `--base=<base>`；`[args]` 里的 `--base=` 会被丢弃），其余参数
 （含 `--port=`）原样透传给引擎——详见 [war-engine.md](war-engine.md)。
 
@@ -410,7 +410,7 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
 | `<root>/<组件键>` | 一个组件一份 | 组件目录，jstart 创建为 0700 并校验属主（同一 target 永远同一个目录） |
 | `<base>/app.pid` | 一个 base 一份 | `run` 写、`stop` 读；检测到真实进程仍在运行即拒绝重复启动 |
 | `<base>/app/` | 一个 base 一份 | native（tar.gz）的解压树（`.jstart.stamp` 在内），标记匹配时复用 |
-| `<base>/webapps/<ctx>/` | 一个 base 一份 | war 的爆炸目录（引擎拿到的 `--base` 就是组件目录） |
+| `<base>/webapps/<ctx>/` | 一个 base 一份 | war 的解压目录（引擎拿到的 `--base` 就是组件目录） |
 
 - **组件键**：target 短名 + 短指纹（本地路径先绝对化；不含任何应用参数），因此同一个 target
   无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；
@@ -420,7 +420,7 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
   `Already running`（exit 1）；`--force` 可覆盖；
 - **要跑多个副本就给每个副本一个 base**：`--base=<dir>` 指定路径，或 `--instance=<name>`
   用命名组件目录（`<根>/<name>-<组件指纹>`），也可在 launch spec 里写
-  `[app] base = <dir>`。副本之间各自解压/爆炸，互不干扰；
+  `[app] base = <dir>`。副本之间各自解压，互不干扰；
 - **`stop` 不需要应用参数**：`jstart stop <target>`（或 `--base=`/`--instance=` 指定同一个 base）
   即可；多给的参数会被忽略并提示。base 对不上时报 `nothing to stop`（exit 3）。
 
@@ -461,8 +461,7 @@ jstart run /opt/app/portal.tar.gz --instance=portal-a --port=9999  # Already run
   此时 `run`/`stop` 都不需要额外参数；
 - 缺省根无法准备（不存在且创建失败、不是目录）时直接报错，用 `--base=<dir>` 指定别处；
 - 应用被 `kill -9` 等强杀时 pid 文件会残留，下次 `stop`/`run` 会按"进程已不存在"处理；
-- 一个 base 一份解压/爆炸，多副本 = 多 base（代价是各存一份解压产物）；jar 目标没有解压/
-  爆炸产物（jar 本体只读、可共用），但同样按 base 区分实例。
+- 一个 base 一份解压，多副本 = 多 base（代价是各存一份解压产物）；jar 目标没有解压产物（jar 本体只读、可共用），但同样按 base 区分实例。
 
 ## 目标（target）形态
 

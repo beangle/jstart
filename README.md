@@ -42,7 +42,7 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   `Main-Class` 确定：jar 的 Main-Class 不适用（或想跑 jar 里/依赖里的另一个类）时用
   `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎 Bootstrap 启动，
   native 用 `[app] exec`，给 `--main` 会告警忽略）。
-- war 目标用内置引擎启动：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
+- war 目标用内置引擎启动：解压到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
   tomcat；组件目录默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根）；
   引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
  见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
@@ -69,7 +69,7 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 # 准备依赖环境并启动（进程即 java，参数原样透传）
 ./target/jstart run /path/to/app.jar --port=8080 --path=/base
 
-# war 走内置引擎：爆炸后启动内嵌 tomcat（--port/--path 透传给引擎）
+# war 走内置引擎：解压后启动内嵌 tomcat（--port/--path 透传给引擎）
 ./target/jstart run /path/to/app.war --port=8080 --path=/base
 
 # 只准备依赖环境，输出应用绝对路径（供脚本使用）

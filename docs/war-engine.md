@@ -1,7 +1,7 @@
 # War 内置引擎运行
 
 war 没有 `Main-Class`，不能像 jar 那样 exec 应用主类。jstart 采用与 beangle/boot
-`sas.sh` 相同的模型：把 war **爆炸**到引擎约定的目录，拼好 classpath 后 exec
+`sas.sh` 相同的模型：把 war **解压**到引擎约定的目录，拼好 classpath 后 exec
 **内嵌 servlet 引擎**的 Bootstrap 类——最终进程仍是 `java`，无父子等待。
 
 ```text
@@ -22,10 +22,10 @@ jstart run /path/app.war --port=8080 --path=/
 launch spec 只在需要"声明引擎选择 / 固定引擎依赖版本 / 其它启动参数"时使用
 （见下）。
 
-## 爆炸布局（与 sas 引擎约定一致）
+## 解压布局（与 sas 引擎约定一致）
 
 引擎（beangle/sas `Server.Config.guessDocBase`）按固定公式推导 docBase，jstart 在
-exec 前把 war 爆炸到同一位置：
+exec 前把 war 解压到同一位置：
 
 | 参数 | 布局 |
 |------|------|
@@ -34,9 +34,9 @@ exec 前把 war 爆炸到同一位置：
 
 - `base` 就是组件的运行目录 `<base 根>/<组件键>`：根默认 `/var/tmp/jstart`，用
   `--base=<dir>` 换根、`--instance=<name>` / launch spec `[app] base` 命名；`<base>/app.pid`
-  是实例的 pid 文件，`<base>/webapps/<ctx>` 是爆炸目录（一个 base 一个实例，多副本各自
+  是实例的 pid 文件，`<base>/webapps/<ctx>` 是解压目录（一个 base 一个实例，多副本各自
   指定；也可指回 `${TMPDIR:-/tmp}/jstart-sas` 这类 sas.sh 风格的位置）；
-- 每次运行前**重建**爆炸目录（先删后炸）；引擎关闭（shutdown hook）时会自行删除
+- 每次运行前**重建**解压目录（先删后解压）；引擎关闭（shutdown hook）时会自行删除
   docBase，被 `kill -9` 留下的残骸由下一次运行清理；
 - 同一 `base` 上运行相同 context path 会冲突（与 sas.sh 相同）：默认已按组件隔离，
   多副本请各自指定 `--base`/`--instance`；
@@ -45,9 +45,9 @@ exec 前把 war 爆炸到同一位置：
 
 ## 参数语义（例外解析）
 
-引擎模式下 jstart 只**读取**两个参数用于布置爆炸位置，其余一律原样透传：
+引擎模式下 jstart 只**读取**两个参数用于布置解压位置，其余一律原样透传：
 
-- `--path=`：决定 contextPath 与爆炸目录，之后仍原样转发给引擎；
+- `--path=`：决定 contextPath 与解压目录，之后仍原样转发给引擎；
 - `--base=`：是 jstart 的 base 选项（`--base=` 或 launch spec `[app] base`，命令行优先），
   不再从 `[args]` 里读（`[args]` 里的 `--base=` 会被丢弃，避免与注入值冲突）；jstart
   统一以 `--base=<base>` 放在引擎参数首位；
@@ -217,7 +217,7 @@ CLASSPATH_EXTRA → WEB-INF/classes → WEB-INF/lib/*.jar（排序） → 应用
 - `resolve <war>`：只解析并准备 war 内置依赖，打印 war 落盘路径，**不含**引擎；
 - `classpath`/`info` 对 war 文件不展开、不涉及引擎；查看将执行的完整命令请用
   `run --print`；
-- `run --print <war>`：照常下载引擎依赖并爆炸，打印
+- `run --print <war>`：照常下载引擎依赖并解压，打印
   `java ... Bootstrap --base=...`（逐参数引号），不 exec；
 - `repo <war>` / `repo <spec>`：只整合**应用**依赖（war 内置清单或 spec `[deps]`），
   不读取 `[engine]` 段。离线机器需要引擎 jar 时，先在联网机上
@@ -235,7 +235,7 @@ bash test/war-run-test.sh --local=/opt/repo --port=18080 --path=/ --engine=tomca
 ```
 
 脚本启动 `org.beangle.otk:beangle-otk-ws:war:0.0.29`：解析并下载（首次约 100MB）、
-爆炸到 `<base>/webapps/ROOT`、exec 所选引擎的 Bootstrap，等待 HTTP 响应后检查
+解压到 `<base>/webapps/ROOT`、exec 所选引擎的 Bootstrap，等待 HTTP 响应后检查
 `Tomcat started`/`Undertow started` 与应用启动日志，最后优雅关闭并确认引擎清理
 docBase。也可以手工跑（war 缺省 tomcat；undertow 需 launch spec）：
 
@@ -247,7 +247,7 @@ jstart run app.jstart --port=8080      # [app] engine = undertow
 ## 限制
 
 - 解压走内存 zip 读取（std.zip），超大 war 有内存峰值；路径穿越/绝对路径条目在
-  爆炸时被跳过（zip-slip 防护）；
+  解压时被跳过（zip-slip 防护）；
 - 只支持 war **文件**目标；已解压的 war 目录作为 run 目标暂不走引擎流程；
 - "可执行 war"（自带 Main-Class 的 Spring Boot 式 fat war）不支持，war 一律按
   引擎模式运行；

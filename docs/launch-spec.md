@@ -76,7 +76,7 @@ working_dir = ${APP_HOME}
 
 | 段 | 键/内容 | 说明 |
 |----|---------|------|
-| `[app]` | `base` | 可选。base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是 `<base>/<组件键>`（pid 文件、native 解压、war 爆炸都在其下），`run`/`stop` 用同一个 base 找实例（见 [commands.md](commands.md)） |
+| `[app]` | `base` | 可选。base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是 `<base>/<组件键>`（pid 文件、native 解压、war 解压都在其下），`run`/`stop` 用同一个 base 找实例（见 [commands.md](commands.md)） |
 | `[app]` | `main` | 可选（Java）。主类全名，命令行 `--main=<class>` 优先于本键。缺省时回退：entry 为 jar 时读其 Manifest `Main-Class`；仍无则 run 报错（war/native 目标不需要主类，见下） |
 | | `entry` | 必填。取值同现有 target：`g:a:v`/`gav://`、native 的 `g:a:tar.gz:<classifier>:v`、`http(s)://`、本地 jar/war/tar.gz/解压目录/文件路径 |
 | | `working_dir` | 可选。exec 前切换工作目录，沿用 `~`/`${VAR}` 展开 |
@@ -115,7 +115,7 @@ working_dir = ${APP_HOME}
 ### war 目标与引擎定制（[app] engine / [engine]）
 
 war 没有 `Main-Class`，`run` 对 war 目标（或 entry 为 war 的 spec）自动进入内置引擎
-流程：爆炸到 `<base>/webapps/<ctx>` 后 exec `org.beangle.sas.engine.<name>.Bootstrap`，
+流程：解压到 `<base>/webapps/<ctx>` 后 exec `org.beangle.sas.engine.<name>.Bootstrap`，
 完整语义见 [war-engine.md](war-engine.md)。引擎的"选哪个、带哪些 jar"由 spec 定制：
 
 ```ini
@@ -157,7 +157,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
   引擎启动器；classpath 顺序为"应用 classes/lib + 应用依赖 → 引擎依赖"，引擎 gav 与
   应用依赖按 `g:a:v` 去重。
 - **运行参数**：引擎 JVM 参数写 `[runtime]`；`--port=8080`、`--path=/` 等引擎运行参数
-  写 `[args]`（或命令行透传）。引擎模式只**读取** `--path=`/`--base=` 用于爆炸布局，
+  写 `[args]`（或命令行透传）。引擎模式只**读取** `--path=`/`--base=` 用于解压布局，
   之后仍原样转发给引擎，不吞参数。
 - **不做定制**：引擎主类由引擎名固定，没有 CLI 覆盖（无 `--engine=`），`[engine]` 段
   也不解析 `main=...` 之类的键值行——每行就是一条依赖（与 `[deps]` 完全同构）。
@@ -206,7 +206,7 @@ java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.a
   详见 [commands.md](commands.md)。
 - **不规划** `prefetch` 预下载命令：它等于 `resolve` + 循环清单，价值有限；除非以后有
   "独立指定一组依赖清单批量预热"的明确场景再单独立项。
-- **war 引擎运行已实现**：`run` 对 war 目标爆炸后 exec 内嵌引擎（tomcat/undertow；
+- **war 引擎运行已实现**：`run` 对 war 目标解压后 exec 内嵌引擎（tomcat/undertow；
   launch spec 用 `[app] engine` 选择、`[engine]` 段罗列引擎依赖，两个引擎都有内置
   默认目录兜底），见 [war-engine.md](war-engine.md)。
 - 下载侧已排入路线图（跨版本，与 spec 无关）：Range 多线程分段下载与断点续传、

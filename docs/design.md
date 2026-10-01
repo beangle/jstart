@@ -23,7 +23,7 @@ jstart 用四个子命令覆盖同一职责：
 | `classpath` | `launcher.Classpath` | 输出 `Main-Class@classpath` |
 | `repo` | `launcher.Repo` | 离线仓库整合（复制缺失构件） |
 | `run` | `resolve.sh` + `launch.sh` | 准备环境后 exec 成 java |
-| war 引擎 run | `sas.sh` | 爆炸 war 到 `<base>/webapps/<ctx>`，exec `org.beangle.sas.engine.<name>.Bootstrap`（[war-engine.md](war-engine.md)） |
+| war 引擎 run | `sas.sh` | 解压 war 到 `<base>/webapps/<ctx>`，exec `org.beangle.sas.engine.<name>.Bootstrap`（[war-engine.md](war-engine.md)） |
 
 保留 `resolve`/`classpath` 是为了兼容 launch.sh 式的脚本解耦；`run` 则把两步合并进
 单个进程。
@@ -50,14 +50,14 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 ```text
 <根>/<组件键>/app.pid          run 在 exec 前写、stop 读（实例是否在跑就靠它）
 <根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
-<根>/<组件键>/webapps/<ctx>/   war 的爆炸目录（引擎的 --base 就是组件目录）
+<根>/<组件键>/webapps/<ctx>/   war 的解压目录（引擎的 --base 就是组件目录）
 ```
 
 - **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复 `run` 会被
   拒绝（exit 1，`--force` 可覆盖）；要跑多个副本就给每个副本一个 base
   （`--base=<dir>`、`--instance=<name>` 或 spec `[app] base`）；
 - `stop` 只需要组件与 base，因此**不需要重复 run 时的参数**，也不需要取包或解析依赖；
-- 解压/爆炸等可变产物按 base 各存一份（多副本 = 多份解压），换来的是身份简单、run/stop
+- 解压等可变产物按 base 各存一份（多副本 = 多份解压），换来的是身份简单、run/stop
   一致：base 对上就是同一个实例；
 - 解压仍先写独立临时目录、再整体 `rename` 就位，旧目录改名挪走后清理，正在运行的实例
   继续用旧 inode，所以并发启动或强杀残留都不会看到半个目录。
@@ -72,10 +72,10 @@ source/jstart/http.d            调用宿主 curl 下载（仿 micdn）
 source/jstart/distrepo.d        发行仓库取包：gav 布局/快照命中、增量补丁探测与重建、基线推断
 source/jstart/bspatch.d         BSDIFF40 内置实现；宿主 bspatch 优先，失败/缺失时回退
 source/jstart/gzip.d            增量重建 tar.gz 用的 gunzip/gzip（gzip -n -6，走宿主命令）
-source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的爆炸解压）、Manifest Main-Class 解析
+source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的解压）、Manifest Main-Class 解析
 source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifest（纯函数，可单测）
 source/jstart/engine.d           war 引擎：主类映射、内置默认依赖目录（tomcat/undertow，
-                                 tomcat 可带版本后缀）、爆炸布局/参数扫描、[engine] 行占位符展开
+                                 tomcat 可带版本后缀）、解压布局/参数扫描、[engine] 行占位符展开
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
                                  （[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
@@ -119,7 +119,7 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
    命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class：
    解析（可选）`[app] engine`（tomcat 可带版本后缀，如 `tomcat-11.0.24`）与
    `[engine]` 段（行内 `{tomcat.version}`/`{sas.version}` 占位符先展开；段存在即为
-   权威，否则回退内置默认目录）后，爆炸 war 到 `<base>/webapps/<ctx>` 并 exec 引擎
+   权威，否则回退内置默认目录）后，解压 war 到 `<base>/webapps/<ctx>` 并 exec 引擎
    Bootstrap，见 [war-engine.md](war-engine.md)。
 
 ## 仓库与校验策略
@@ -155,7 +155,7 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 - **不解析传递依赖**：依赖描述文件是唯一来源，只逐行处理显式依赖（见流程第 3 步），
   不读 POM、不展开传递依赖；全部运行期依赖须由构建期插件写全，漏写以 Missing 失败。
 - `run` jar 目标支持带 `Main-Class` 的瘦 jar；war 目标走内置引擎（对应 beangle sas
-  `sas.sh`）：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap，tomcat/undertow
+  `sas.sh`）：解压到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap，tomcat/undertow
   都有内置默认依赖目录、可被 launch spec `[engine]` 段显式罗列覆盖（详见
   [war-engine.md](war-engine.md)）；可执行 war（自带 Main-Class）与"解压目录目标走
   引擎"暂不支持。

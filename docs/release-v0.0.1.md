@@ -19,7 +19,7 @@
 - 下载：宿主 curl 命令（仿 micdn），`.sha1` 校验，坏件删除重下
 - 启动：`run` 解析后 `execvp` 为 java（POSIX；Windows 退化为子进程等待）；launch spec
   采用通用运行时命名（`[app] runtime` + `[runtime]` 段，旧 `[app] java`/`[jvm]` 已移除并告警）
-- war 引擎：`run` 对 war 目标爆炸到 `<base>/webapps/<ctx>` 后 exec 内嵌引擎 Bootstrap
+- war 引擎：`run` 对 war 目标解压到 `<base>/webapps/<ctx>` 后 exec 内嵌引擎 Bootstrap
   （tomcat/undertow，均有内置默认依赖目录；`[app] engine` 选择、`[engine]` 段罗列引擎
   依赖用于覆盖内置默认；`--path`/`--base` 例外解析，见 [war-engine.md](war-engine.md)）
 - 打包：`scripts/build_rpm.sh`、`scripts/build_deb.sh`（含 `build_common.sh`）
@@ -56,7 +56,7 @@
   `info` 结构化输出命令均已随 v0.0.1 落地；war 引擎 run（tomcat/undertow）已实现
   （见 [war-engine.md](war-engine.md)）。项目以 Java 工件（jar/war）为主，同时保留
   通用运行时的扩展能力。
-- war run：tomcat 与 undertow 引擎均已落地（爆炸布局/内置默认依赖/`[app] engine`+
+- war run：tomcat 与 undertow 引擎均已落地（解压布局/内置默认依赖/`[app] engine`+
   `[engine]`），两种引擎均已用 `org.beangle.otk:beangle-otk-ws:war:0.0.29` 完成真实
   运行验证；后续：解压目录目标走引擎。
 - 多依赖并行下载（`--jobs`）与单文件 Range 分段并行（远端支持且 ≥1MB，最多 4 段）
