@@ -32,12 +32,14 @@ exec 前把 war 爆炸到同一位置：
 | `--path` 缺省或 `/` | `<base>/webapps/ROOT` |
 | `--path=/a/b` | `<base>/webapps/a#b`（先归一化：去尾 `/`、折叠 `//`） |
 
-- `base` 默认 `${TMPDIR:-/tmp}/jstart-sas`（对齐 sas.sh 的 `/tmp/sas` 定位），用
-  `--base=<dir>` 覆盖；
+- `base` 就是组件的运行目录 `<base 根>/<组件键>`：根默认 `/var/tmp/jstart`，用
+  `--base=<dir>` 换根、`--instance=<name>` / launch spec `[app] base` 命名；`<base>/app.pid`
+  是实例的 pid 文件，`<base>/webapps/<ctx>` 是爆炸目录（一个 base 一个实例，多副本各自
+  指定；也可指回 `${TMPDIR:-/tmp}/jstart-sas` 这类 sas.sh 风格的位置）；
 - 每次运行前**重建**爆炸目录（先删后炸）；引擎关闭（shutdown hook）时会自行删除
   docBase，被 `kill -9` 留下的残骸由下一次运行清理；
-- 同一 `base` 上并发运行相同 context path 会冲突（与 sas.sh 相同），需要各自
-  `--base=`；
+- 同一 `base` 上运行相同 context path 会冲突（与 sas.sh 相同）：默认已按组件隔离，
+  多副本请各自指定 `--base`/`--instance`；
 - 无 `WEB-INF/classes` 的极简 war 会补一个空目录（引擎启动时要探测 classpath 上的
   目录资源，全是 jar 时 `getResource("")` 为 null）。
 
@@ -46,9 +48,9 @@ exec 前把 war 爆炸到同一位置：
 引擎模式下 jstart 只**读取**两个参数用于布置爆炸位置，其余一律原样透传：
 
 - `--path=`：决定 contextPath 与爆炸目录，之后仍原样转发给引擎；
-- `--base=`：决定 base（命令行与 launch spec `[args]` 均参与扫描，最后一次出现
-  生效，与引擎 `CmdOptions` 一致）；消费后不再重复转发，统一以
-  `--base=<最终值>` 放在引擎参数首位；
+- `--base=`：是 jstart 的 base 选项（`--base=` 或 launch spec `[app] base`，命令行优先），
+  不再从 `[args]` 里读（`[args]` 里的 `--base=` 会被丢弃，避免与注入值冲突）；jstart
+  统一以 `--base=<base>` 放在引擎参数首位；
 - `--port=8080` 等不读取、原样透传：端口由引擎消费（被占用时自动探测 8080 起的
   空闲端口或报错）；
 - 其它参数照常透传。注意 **sas 引擎本身只消费 `--path/--port/--dev/--base`**，
@@ -184,7 +186,8 @@ https://repo.example.com/sas/beangle-sas-engine.jar
 ```
 
 4. **引擎 JVM 参数**：与 jar 目标一致写 `[runtime]`；引擎自身参数
-   （`--port=`/`--path=`/`--base=`）写 `[args]` 或命令行透传：
+   （`--port=`/`--path=`）写 `[args]` 或命令行透传（base 用 `[app] base`/`--base=`，
+   不要写进 `[args]`）：
 
 ```ini
 [runtime]

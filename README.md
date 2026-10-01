@@ -5,9 +5,10 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
 **命令**而非常驻服务。
 
 > **定位**：以 Java 工件为主——jar（带 `Main-Class` 的瘦 jar）与 war（内置 tomcat/undertow
-> 引擎）。同时保留通用组件的扩展能力：launch spec 的目标与运行时字段（entry/runtime/
-> `[runtime]`）采用通用命名、`launcher.runNativeApp` 预留同形 exec 入口，后续可扩展到其他
-> 运行时；当前只实现并验证 java。
+> 引擎）；同时支持 GraalVM native 发行包（tar.gz）：取包（复用 `fetch`，gav 含增量补丁）、
+> 解压、直接 exec 包内可执行文件，参数附加在其后。launch spec 的目标与运行时字段
+> （entry/runtime/`[runtime]`）采用通用命名，`launcher.runNativeApp` 与 java 走同一 exec
+> 入口，其他运行时仍可继续扩展。
 
 ## 特性
 
@@ -20,15 +21,40 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   单独的 `~/.m2/snapshots`，**不与 `~/.m2/repository` 混合**；本地命中最新时间戳即直接用，
   缺失才下载；
   远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖。
+- `stop` 子命令按 **base** 停止 `run` 启动的实例：`run` 在 exec 前把 pid 写入
+  `<base>/app.pid`（base = `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
+  整体替换这个根，`--instance=<name>` 命名组件目录，launch spec 可用 `[app] base` 固定）。
+  **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复启动会被拒绝
+  （`--force` 可覆盖），`stop <target>` 不需要重复 run 时的参数；要跑多个副本就给每个副本
+  一个 base。
+  `stop` 先 SIGTERM，`--timeout`/`--force` 控制等待与 SIGKILL。
+- `fetch` 子命令负责把目标取到本地：gav（支持 classifier）从发行仓库取 native tar.gz/jar/war，
+  本地有基线且远端有 bsdiff 增量时只下补丁，否则整包下载；`http(s)` url 直接下载并按主机路径
+  缓存；本地文件原样返回路径。没有补丁不是错误。tar.gz 的补丁按“本地基线 `gunzip` →
+  bspatch → `gzip -n -6` → 校验 `.sha1`”处理，jar/war 直接 patch；打补丁优先用系统
+  `bspatch`（`PATH` 上有就用，失败自动回退内置实现，`JSTART_BSPATCH` 可指定或强制内置）。
+  SNAPSHOT 版本落在/优先命中 `~/.m2/snapshots`，正式版落在 `~/.m2/repository`。
 - `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待；`--port=8080` 等参数原样
   转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 的 `[app] runtime`/
   `[runtime]` 用通用命名，便于替换 JDK/引擎，并为后续其他运行时预留
   （见 [docs/launch-spec.md](docs/launch-spec.md)）。
+  主类按 `--main=<class>` > launch spec `[app] main` > jar 内 `MANIFEST.MF` 的
+  `Main-Class` 确定：jar 的 Main-Class 不适用（或想跑 jar 里/依赖里的另一个类）时用
+  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎 Bootstrap 启动，
+  native 用 `[app] exec`，给 `--main` 会告警忽略）。
 - war 目标用内置引擎启动：爆炸到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
-  tomcat）；引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
-  见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
+  tomcat；组件目录默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根）；
+  引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
+ 见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
   `engine = tomcat-11.0.24` 直接指定 tomcat 版本；`[engine]` 行支持
   `{tomcat.version}`/`{sas.version}` 占位符引用内置版本，不必手写重复版本号。
+- native（tar.gz）目标：`g:a:tar.gz:<classifier>:v`、本地 `*.tar.gz` 或 `http(s)` url 时，
+  `resolve`/`run` 复用 `fetch` 的取包逻辑（gav 时优先增量补丁），解压到 `<base>/app` 后
+  **exec 包内可执行文件**；参数按序附加在其后（native 无 JVM，`[args]`/命令行含 `-D`/`-X`
+  全部归应用），可执行文件位置可用 launch spec `[app] exec=` 指定，缺省探测
+  `<name>/bin/<exe>`，`resolve` 输出该可执行文件路径。
+  `--base=<dir>` / `--instance=<name>` 可改 base（不会写到包旁；`/tmp` 的 noexec、tmpfs、
+  清理周期等影响见 [docs/commands.md](docs/commands.md)）。
 - 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 
@@ -67,8 +93,24 @@ meta=$(./target/jstart --quiet classpath "$app")
 # 输出结构化信息（app/main/依赖落盘路径与体积），供审计与 CI
 ./target/jstart --quiet info "$app"
 
+# 后台运行 + 按 base 停止（一个 base 一个实例；多副本各给一个 base）
+./target/jstart run /path/to/app.tar.gz --instance=app-a --port=8081 &
+./target/jstart stop /path/to/app.tar.gz --instance=app-a
+
 # 离线整合：把依赖从 --source 仓库复制到 --local 仓库
 ./target/jstart repo "$app" --local=/opt/offline-repo
+
+# 取发行包（native tar.gz 等），有 bsdiff 增量补丁则只下补丁
+./target/jstart fetch org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT --from=4.20.13
+
+# fetch 也接受 url / 本地文件（它就是"下载并给出本地路径"）
+./target/jstart fetch https://host/path/app-1.0-linux-amd64.tar.gz
+./target/jstart fetch ./app-1.0-linux-amd64.tar.gz
+
+# native（tar.gz）：取包 -> 解压 -> 运行，参数附加在可执行文件之后
+boot=$(./target/jstart --quiet resolve org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT)
+"$boot" --port=8080
+./target/jstart run org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT --port=8080
 ```
 
 ## 构建与测试

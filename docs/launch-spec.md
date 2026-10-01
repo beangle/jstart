@@ -10,8 +10,9 @@ Java 主类（main）、应用本体来源（entry）、运行时/解释器（ru
   一份可提交、可评审、可复用的文件——`run` 的声明式目标就是 launch spec。
 
 > spec 用 `runtime` 这类通用命名是为让 JDK 可替换（而不是绑定某个 java 路径），也避免文件
-> 格式绑定 Java 术语，从而保留后续接入其他运行时的扩展能力。当前以 Java 为主：`run` 只
-> exec java（jar 目标），取 java 之外的值（如 `python3`、`node`）仅为结构与文档预留。
+> 格式绑定 Java 术语，从而保留接入其他运行时的扩展能力。当前以 Java（jar/war）为主，
+> 另支持 GraalVM native 发行包（tar.gz）：entry 指向 tar.gz 时没有 JVM，用 `[app] exec`
+> 指定包内可执行文件（见下文）。取 java 之外的值（如 `python3`、`node`）仍仅为结构与文档预留。
 
 ## 文件识别
 
@@ -49,17 +50,41 @@ com.zaxxer:HikariCP:7.0.2              # 可选段：每行与依赖描述文件
 org.slf4j:slf4j-api:2.0.17
 ```
 
+### native（tar.gz）entry
+
+entry 指向 GraalVM native 发行包（gav 的 `tar.gz` 打包，或本地 `*.tar.gz`）时，
+jstart 取包（gav 走 `fetch` 的发行仓库逻辑，含增量补丁）→ 解压到 `<base>/app`（base =
+`<base 根>/<组件键>`，根默认 `/var/tmp/jstart`，可用 `--base`/`[app] base` 换）→ exec 包内可执行文件，
+`[args]` 与命令行参数按序附加在其后。此时没有 JVM：`[runtime]` 段与
+`[app] runtime` 会被告警忽略，`[app] main` 无意义，可执行文件位置用 `[app] exec` 声明
+（相对解压根目录；缺省按 `<name>/bin/<exe>` 探测）：
+
+```ini
+# beangle-ems-portal.jstart：native 发行包
+[app]
+entry = org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT
+exec = beangle-ems-portal-4.20.14/bin/beangle-ems-portal
+working_dir = ${APP_HOME}
+
+[args]
+--port=8080
+
+[deps]                                 # 可选：native 包内没有依赖清单，需要时在此显式罗列
+```
+
 ### 段与键
 
 | 段 | 键/内容 | 说明 |
 |----|---------|------|
-| `[app]` | `main` | 可选（Java）。主类全名。缺省时回退：entry 为 jar 时读其 Manifest `Main-Class`；仍无则 run 报错 |
-| | `entry` | 必填。取值同现有 target：`g:a:v`/`gav://`、`http(s)://`、本地 jar/war/解压目录/文件路径 |
+| `[app]` | `base` | 可选。base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是 `<base>/<组件键>`（pid 文件、native 解压、war 爆炸都在其下），`run`/`stop` 用同一个 base 找实例（见 [commands.md](commands.md)） |
+| `[app]` | `main` | 可选（Java）。主类全名，命令行 `--main=<class>` 优先于本键。缺省时回退：entry 为 jar 时读其 Manifest `Main-Class`；仍无则 run 报错（war/native 目标不需要主类，见下） |
+| | `entry` | 必填。取值同现有 target：`g:a:v`/`gav://`、native 的 `g:a:tar.gz:<classifier>:v`、`http(s)://`、本地 jar/war/tar.gz/解压目录/文件路径 |
 | | `working_dir` | 可选。exec 前切换工作目录，沿用 `~`/`${VAR}` 展开 |
 | | `runtime` | 可选。运行时/解释器可执行文件（`java`/`python3`/`node`/...）或 java 安装目录（自动补 `bin/java`）；支持 `~`/`${VAR}` 展开；缺省按 entry 推断（jar → `$JAVA_HOME`/PATH 的 java） |
+| | `exec` | 可选（native tar.gz）。包内可执行文件，**相对解压根目录**（如 `demo-1.0/bin/demo`）；缺省自动探测 `<name>/bin/<exe>` 或唯一可执行文件；jar/war entry 忽略此键 |
 | | `engine` | 可选（仅 war）。内嵌引擎名 `tomcat`/`undertow`（war 缺省 `tomcat`）；tomcat 可带版本后缀 `tomcat-11.0.24`（无后缀用内置默认版本）；jar/其它运行时不需要、写了则告警忽略（见 [war-engine.md](war-engine.md)） |
-| `[runtime]` | 行列表 | 每个非注释行是一个运行时参数（Java 的 `-D`/`-X`/`--add-opens`、Python 的 `-O` 等），按书写顺序拼接 |
-| `[args]` | 行列表 | 每个非注释行是一个应用参数，**整行**作为一个 argv：不切分、不展开变量，值含空格可直接书写 |
+| `[runtime]` | 行列表 | 每个非注释行是一个运行时参数（Java 的 `-D`/`-X`/`--add-opens`、Python 的 `-O` 等），按书写顺序拼接；native（tar.gz）目标无 JVM，该段告警忽略 |
+| `[args]` | 行列表 | 每个非注释行是一个应用参数，**整行**作为一个 argv：不切分、不展开变量，值含空格可直接书写；native 目标同样附加在可执行文件之后 |
 | `[deps]` | 行列表 | 可选。每行语法与依赖描述文件一致（gav/本地文件/远程 url） |
 | `[engine]` | 行列表 | 可选（仅 war）。引擎启动器依赖逐行罗列，语法同 `[deps]`（gav/本地文件/远程 url），行内可用占位符 `{tomcat.version}`/`{sas.version}` 引用内置版本；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [war-engine.md](war-engine.md)） |
 
@@ -78,9 +103,12 @@ org.slf4j:slf4j-api:2.0.17
   （如 `--port=8080`、`--k v`、`-k=v`）同样原样透传，jstart 不解释键值结构——写法众口
   难调（`-k=v` 与 `--k v` 并存），统一交给应用自行处理；`-D`/`-X` 开头归运行时
   （java 即 JVM 参数，与非 spec 的 jar 目标一致）。
-- **运行时定制只在 spec 内**：Java 主类用 `[app] main`、运行时参数用 `[runtime]` 段、
-  运行时/解释器可执行文件用 `[app] runtime`；不提供 `--main-class=`/`--jvm=` 之类的
-  命令行覆盖，避免同一参数在文件与命令行两处出现（试参数请直接改文件或加 `[args]` 行）。
+- **主类可覆盖**：Java 主类按 `--main=<class>` > `[app] main` >
+  entry 内 `MANIFEST.MF` 的 `Main-Class` 确定，命令行覆盖适合临时试参数、文件里的
+  `[app] main` 适合固化（见 [commands.md](commands.md)）；
+- **其余运行时定制只在 spec 内**：运行时参数用 `[runtime]` 段、运行时/解释器可执行文件用
+  `[app] runtime`；不提供 `--jvm=`/`--runtime=` 之类的命令行覆盖，避免同一参数在文件与
+  命令行两处出现（试参数请直接改文件或加 `[args]` 行）。
 - **引擎定制也只在 spec 内**：`[app] engine` 选择、`[engine]` 段罗列引擎依赖，二者
   仅对 war 目标生效，详见下文"war 目标与引擎定制"。
 
@@ -187,10 +215,11 @@ java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.a
 
 ## 边界决策
 
-1. **不做命令行覆盖**：`main`/运行时/引擎定制统一在 spec 内声明（`[app] main`、
-   `[app] runtime`、`[app] engine` 与 `[runtime]`/`[engine]` 段），不提供
-   `--main-class=`/`--jvm=`/`--engine=` 之类的命令行参数；旧命名 `[jvm]` 段与
-   `[app] java` 键已移除（视为未知段/未知键告警）。
+1. **主类可命令行覆盖，其余定制只在 spec 内**：主类按 `--main=` > `[app] main` >
+   entry 内 `MANIFEST.MF` 的 `Main-Class` 确定——临时试参数用命令行，
+   固化用 spec。运行时/引擎定制仍在 spec 内声明（`[app] runtime`、`[app] engine` 与
+   `[runtime]`/`[engine]` 段），不提供 `--jvm=`/`--engine=` 之类的命令行参数；旧命名
+   `[jvm]` 段与 `[app] java` 键已移除（视为未知段/未知键告警）。
 2. **`[args]` 不做简写/解析**：不支持 `key = value → --key=value` 之类的转换；`-k=v`、
    `--k v`、位置参数等一律原样透传，由应用自行解释。
 3. **行号告警已实现**：未知段/未知键/格式错误会在 stderr 输出 `line N: ...` 告警并被忽略。

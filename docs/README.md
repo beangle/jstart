@@ -10,7 +10,7 @@ java。本目录存放项目文档。
 | 文档 | 内容 |
 |------|------|
 | [design.md](design.md) | 设计思路：与 beangle/boot 的对应关系、exec 启动、模块架构、依赖准备流程 |
-| [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`、选项、退出码与示例 |
+| [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`/`fetch`、选项、退出码与示例 |
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
 | [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[deps]/[engine] 语义、run --print 与范围规划 |
 | [war-engine.md](war-engine.md) | war 内置引擎：爆炸布局、[app] engine 选择、[engine] 依赖罗列、参数语义与限制 |
@@ -25,12 +25,18 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 ./target/jstart run app.jar --port=8080       # 解析依赖后 exec 为 java
 ./target/jstart resolve app.jar                # 只准备依赖环境，输出应用路径
 ./target/jstart repo app.jar --local=/opt/offline-repo   # 离线仓库整合
+./target/jstart fetch g:a:tar.gz:linux-amd64:4.20.14-SNAPSHOT   # 取发行包（优先增量补丁）
+./target/jstart resolve g:a:tar.gz:linux-amd64:4.20.14-SNAPSHOT # 取包+解压，输出包内可执行文件
 ```
 
 运行期依赖：
 
 - `curl`：所有下载都调用宿主 curl 命令（仿 micdn），不链接 libcurl。
 - `java`：仅 `run` jar 时按需使用（`JAVA_HOME` 或 PATH）；`resolve`/`classpath`/`repo` 不需要。
+- `bspatch`：可选，`fetch` 打补丁时优先使用（`PATH` 上有就用）；失败自动回退内置实现。
+- `bzip2` / `gzip`：仅 `fetch` 走增量补丁时需要（解压补丁内的 bzip2 流；tar.gz 还要重压）；
+  缺对应命令时 `fetch` 只下载整包。
+- `tar`：仅 native（tar.gz）目标解压时需要（`tar -xzf`）。
 
 ## 命令与功能一览
 
@@ -43,17 +49,34 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   `engine = tomcat-11.0.24` 可直接指定 tomcat 版本、`[engine]` 段罗列引擎依赖并支持
   `{tomcat.version}`/`{sas.version}` 占位符（见 [war-engine.md](war-engine.md)）。
 - `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件
-  走独立的 `~/.m2/snapshots`，不与 repository 混合），成功输出应用绝对路径。
+  走独立的 `~/.m2/snapshots`，不与 repository 混合），成功输出应用绝对路径。tar.gz
+  （native）目标复用 `fetch` 的发行仓库逻辑取包并解压，输出**包内可执行文件**的绝对路径。
+- `stop <target> [args...]`：按 pid 文件停止 `run` 启动的实例（SIGTERM，`--force` 超时后
+  SIGKILL）；`--timeout=<sec>` 控制等待秒数。未运行 exit 3，成功 exit 0。见
+  [commands.md](commands.md)。
 - `classpath <target>`：输出 `Main-Class@classpath`，供 launch.sh 风格脚本解耦使用。
 - `info <target>`：依赖就绪后输出结构化信息（app/main/每个依赖的来源、本地落盘路径
   与体积、仓库位置），供审计与 CI 集成。
 - `repo <target> [--source=<dir>]`：把依赖描述中 local 仓库缺失的构件从 source 仓库复制过来（含 `.sha1`），成功后输出 local 仓库基目录。
+- `fetch <target> [--from=<version>]`：把目标取到本地并输出本地绝对路径。gav 走发行仓库
+  （默认 beangle native 仓库），有可用的 bsdiff 增量补丁时只下补丁（重建后校验 `.sha1`），
+  没有则整包下载；`http(s)` url 直接下载并按主机路径缓存；本地文件原样返回。gav 支持
+  classifier（`group:artifact:tar.gz:linux-amd64:4.20.14-SNAPSHOT`）。SNAPSHOT 版本落在/
+  优先命中 `~/.m2/snapshots`，正式版落在 `~/.m2/repository`；tar.gz 补丁按“解压后再压回”
+  处理，jar/war 补丁直接作用于构件。
+- `run <tar.gz 目标>`：同 `fetch` 取包（gav 含增量补丁）后解压到 `<base>/app`
+  （base = `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`，`--base`/`--instance` 可换）并
+  **exec 包内可执行文件**；参数按序附加在其后
+  （native 无 JVM，命令行 `-D`/`-X` 也归应用），位置用 launch spec `[app] exec=` 指定
+  （缺省探测 `<name>/bin/<exe>`）。`classpath` 对 native 报错，`info` 输出 `type: native`
+  与 `archive`/`root`。
 
 目标（target）支持：
 
-- 本地 jar/war、解压后的 war 目录
+- 本地 jar/war、解压后的 war 目录、native 发行包 `*.tar.gz`
 - launch spec `.jstart`（本地路径，或 `http(s)://host/path/app.jstart` 远程 spec）
 - `group:artifact:version`、`gav://group:artifact:version`、`http(s)://host/path/app.jar`
+- native gav：`group:artifact:tar.gz:classifier:version`（走发行仓库，含增量补丁）
 
 主要选项：
 
@@ -61,6 +84,14 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   `~/.m2/snapshots`，显式给定时也定位到该目录下的快照路径）
 - `--remote=<urls>` 逗号分隔远程仓库（默认阿里云 public、华为云 maven、Maven Central）
 - `--source=<dir>` repo 命令的源仓库（默认 `~/.m2/repository`，须与 `--local` 不同）
+- `--base=<dir>` base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是
+  `<base>/<组件键>`，`app.pid`、native 解压（`app/`）、war 爆炸（`webapps/`）都在其下；
+  一个 base 只跑一个实例，缺省根不可用时必须显式指定
+- `--instance=<name>` 命名组件目录（`<根>/<name>-<组件指纹>`）：同一组件跑多个
+  副本时给每个副本一个 base（实例身份 = 组件 + base，与应用参数无关）
+- `--main=<class>` 指定 java 主类，优先于 `[app] main` 与 jar 内
+  `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略
+- `--timeout=<sec>`（stop，默认 15）/ `--force`（run 忽略已运行实例；stop 超时后 SIGKILL）
 - `--preferwar` gav 目标优先 war 打包；`--quiet` 关闭过程输出
 - `--print` 仅 run：打印将执行的命令行（逐参数引号）而不 exec；`--jobs=N` 并行下载
   并发数（默认 10，1 = 串行）

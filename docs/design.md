@@ -41,6 +41,27 @@ beangle/boot 的做法是"解析进程退出，shell 再执行 java"，最终进
 Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进程方式），代码中
 已用 `version (Windows)` 分支注明。
 
+## 运行期目录：组件 base
+
+`run`/`stop` 以**组件 base** 为单位组织运行期目录。base 根默认 `/var/tmp/jstart`，
+`--base=<dir>` 整体替换它；组件目录是 `<根>/<组件键>`（组件键 = target 短名 + 指纹，
+本地路径先绝对化）：
+
+```text
+<根>/<组件键>/app.pid          run 在 exec 前写、stop 读（实例是否在跑就靠它）
+<根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
+<根>/<组件键>/webapps/<ctx>/   war 的爆炸目录（引擎的 --base 就是组件目录）
+```
+
+- **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复 `run` 会被
+  拒绝（exit 1，`--force` 可覆盖）；要跑多个副本就给每个副本一个 base
+  （`--base=<dir>`、`--instance=<name>` 或 spec `[app] base`）；
+- `stop` 只需要组件与 base，因此**不需要重复 run 时的参数**，也不需要取包或解析依赖；
+- 解压/爆炸等可变产物按 base 各存一份（多副本 = 多份解压），换来的是身份简单、run/stop
+  一致：base 对上就是同一个实例；
+- 解压仍先写独立临时目录、再整体 `rename` 就位，旧目录改名挪走后清理，正在运行的实例
+  继续用旧 inode，所以并发启动或强杀残留都不会看到半个目录。
+
 ## 模块架构
 
 ```text
@@ -48,17 +69,25 @@ source/app.d                    命令入口与参数解析
 source/jstart/archive.d         依赖模型：Artifact/LocalFile/RemoteFile、gav、Maven2 布局
 source/jstart/repo.d            本地仓库 LocalRepo、远程仓库列表、sha1 工具
 source/jstart/http.d            调用宿主 curl 下载（仿 micdn）
+source/jstart/distrepo.d        发行仓库取包：gav 布局/快照命中、增量补丁探测与重建、基线推断
+source/jstart/bspatch.d         BSDIFF40 内置实现；宿主 bspatch 优先，失败/缺失时回退
+source/jstart/gzip.d            增量重建 tar.gz 用的 gunzip/gzip（gzip -n -6，走宿主命令）
 source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的爆炸解压）、Manifest Main-Class 解析
+source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifest（纯函数，可单测）
 source/jstart/engine.d           war 引擎：主类映射、内置默认依赖目录（tomcat/undertow，
                                  tomcat 可带版本后缀）、爆炸布局/参数扫描、[engine] 行占位符展开
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
                                  （[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
-source/jstart/launcher.d        exec 为 java（native 入口仅预留）
+source/jstart/native.d          native tar.gz：解压到给定目录（临时目录+改名，支持并发）、
+                                 包内可执行文件探测（[app] exec）
+source/jstart/base.d            组件 base：pid 文件、重复启动检测、stop（SIGTERM/SIGKILL）
+source/jstart/launcher.d        exec 入口：java（jar/war）与 native 可执行文件共用 execvp
 ```
 
-依赖关系：`app.d → spec.d（解析 launch spec）/ resolver / consolidate / launcher → archive / repo / http / zipfile`。
+依赖关系：`app.d → spec.d（解析 launch spec）/ resolver / consolidate / distrepo / native / base /
+launcher → archive / repo / http / zipfile / bspatch / gzip`。
 
 ## 依赖准备流程
 
@@ -82,8 +111,8 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
    缺失/损坏按远程顺序逐个下载；同远程再取 `.sha1` 复核，不匹配删除并尝试下一远程。
 5. **装配**（`buildClasspath`）：应用 jar（或解压 war 的 `WEB-INF/classes`+`WEB-INF/lib`）
    在前，依赖在后，`CLASSPATH_EXTRA`/`classpath_extra` 前置。
-6. **执行**（`run`）：读 Manifest `Main-Class`（launch spec 目标时优先取 `[app] main`，
-   仍缺则回退 Manifest），exec 为
+6. **执行**（`run`）：定主类（`--main` > spec `[app] main` > Manifest `Main-Class`，
+   见 `jstart.mainclass`；都没有则报错提示 `--main=<class>`），exec 为
    `java <runtime-options> -cp <cp> <Main-Class> [app-args...]`。运行时可执行文件取
    spec `[app] runtime`（缺省 `$JAVA_HOME`/PATH 的 java，JVM 家目录自动补 `bin/java`），
    运行时参数取 `[runtime]` 段与命令行 `-D`/`-X` 追加，应用参数取 `[args]` 段与
@@ -133,6 +162,6 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 - 并发粒度："跨依赖"由 `--jobs` 控制，单文件 Range 分段由远端支持与文件大小自动
   决定（≥1MB 最多 4 段）；不做跨次运行的断点续传，也不实现 boot 的 `.diff`
   增量补丁（按取舍决定）。
-- 以 Java 工件为主、保留通用扩展：`run` 当前终点是 java（jar 走 `Main-Class`，war 走内置
-  引擎）；`launcher.runNativeApp` 已预留同形 exec 入口、launch spec 用通用运行时命名，
-  后续可扩展到其他运行时，但尚未实现，也未列入已承诺的路线图项。
+- 以 Java 工件为主，同时支持 native 发行包：`run` 的终点是 java（jar 走 `Main-Class`，
+  war 走内置引擎）或解压出的 native 可执行文件（tar.gz）；两者共用同一个 exec 入口，
+  launch spec 用通用运行时命名，其他运行时（python3/node 等）仍可继续扩展但尚未实现。
