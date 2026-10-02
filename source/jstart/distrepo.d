@@ -3,8 +3,10 @@
  * jar, war) from a beangle dist repository, preferring a binary delta
  * against a local baseline over the whole artifact.
  *
- * The repository layout is the maven2 one, so the same gav strings used for
- * maven work here; the difference is the optional delta:
+ * The repository layout is the maven2 one served by micdn's `/native` endpoint
+ * (one root for both releases and snapshots; the `-SNAPSHOT` version directory
+ * tells them apart), so the same gav strings used for maven work here; the
+ * difference is the optional delta:
  *
  *   <base>/<g>/<a>/<version>/<a>-<version>[-<classifier>].<packaging>
  *   <base>/<g>/<a>/<version>/<a>-<oldVersion>_<version>[-<classifier>].<packaging>.diff
@@ -29,8 +31,8 @@ import jstart.gzip : gzipAvailable, gzipTo, gunzipTo;
 import jstart.http : downloadFile, downloadFileSmart, remoteExists;
 import jstart.repo : LocalRepo, parseSha1Text, sha1OfFile;
 
-/// Default dist repository: the beangle native-image repository.
-enum defaultDistRemote = "https://sas.openurp.net/sas/repo/native";
+/// Default dist repository: micdn's `/native` endpoint (single root for releases and snapshots).
+enum defaultDistRemote = "https://sas.openurp.net/native";
 
 /// Outcome of a fetch: the local path of the artifact.
 struct FetchResult {

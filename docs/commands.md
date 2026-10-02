@@ -22,7 +22,7 @@ jstart [options] <command> <target> [args...]
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
 | `--timeout=<sec>` | stop：SIGTERM 后等待进程退出的秒数，缺省 15 |
 | `--force` | run：base 上的实例仍在运行时也照常启动（覆盖旧 pid 文件）；stop：超时后改用 SIGKILL |
-| `--remote=<urls>` | 逗号分隔的远程仓库；默认阿里云 public、华为云 maven、Maven Central；fetch 命令下是发行仓库基地址，默认 `https://sas.openurp.net/sas/repo/native` |
+| `--remote=<urls>` | 逗号分隔的远程仓库；默认阿里云 public、华为云 maven、Maven Central；fetch 命令下是发行仓库基地址，默认 `https://sas.openurp.net/native` |
 | `--preferwar` | gav 目标优先尝试 war 打包（对应原 sas.sh 场景） |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
 | `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
@@ -306,8 +306,9 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
    任一环节失败（补丁损坏、本地没有基线、重建结果不符）都回退整包下载，不会失败退出；
 5. 整包下载同样带 `.sha1` 校验，损坏则换下一个 `--remote`；全部失败才 exit 1。
 
-- 默认 `--remote` 为 `https://sas.openurp.net/sas/repo/native`（逗号分隔可给多个，
-  按序尝试，与 `resolve` 的 maven 镜像列表不同：这里不追加 Maven Central）；
+- 默认 `--remote` 为 `https://sas.openurp.net/native`（micdn 的 `/native` 端点：单根存放
+  正式版与开发版，靠版本目录名里的 `-SNAPSHOT` 区分；逗号分隔可给多个，按序尝试，
+  与 `resolve` 的 maven 镜像列表不同：这里不追加 Maven Central）；
 - 依赖宿主命令：`curl` 下载，增量路径另需 `bzip2`（解压补丁里的 bzip2 流），
   tar.gz 还需要 `gzip`；缺对应命令时只走整包下载；
 - 打补丁优先用系统 `bspatch`：`PATH` 上有就用（`bspatch <old> <new> <patch>`），
@@ -321,7 +322,7 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
 ```bash
 # 显式基线 + 自建仓库，脚本里取路径
 artifact=$(jstart --quiet fetch org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT \
-  --from=4.20.13 --remote=https://sas.openurp.net/sas/repo/native --local=~/.m2/repository)
+  --from=4.20.13 --remote=https://sas.openurp.net/native --local=~/.m2/repository)
 ```
 
 **与 `resolve`/`run` 的关系**：`fetch` 只负责"把目标取到本地"。`resolve`/`run` 遇到 gav 或
