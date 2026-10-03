@@ -167,6 +167,38 @@ Archive parseArchive(string line) {
 }
 
 /**
+ * 合并扩展依赖（libs）与基础清单（entry 内置 dependencies/引擎清单）：
+ * libs 在前并**覆盖**同名项：同名判定用 `groupId:artifactId`（不看版本/打包/classifier），
+ * 同名时整条取 libs 的那条（**版本用 libs 的**），基础清单里的同名项被丢弃，
+ * 因此不会出现两个版本并存；与容器侧 `Dependency.Resolver.merge` 的 libs 语义一致。
+ * 本地文件/远程 url 用原始行作键。
+ */
+Archive[] mergeLibraries(Archive[] libs, Archive[] base) {
+  Archive[] result = libs.dup;
+  bool[string] seen;
+  foreach (a; libs) {
+    seen[libraryKey(a)] = true;
+  }
+  foreach (a; base) {
+    auto key = libraryKey(a);
+    if (key in seen) {
+      continue;
+    }
+    seen[key] = true;
+    result ~= a;
+  }
+  return result;
+}
+
+/// 合并去重键：gav 用 group:artifact（对齐 sas `Dependency.Resolver.merge`），其余用原始行。
+private string libraryKey(Archive a) {
+  if (auto art = cast(Artifact) a) {
+    return art.groupId ~ ":" ~ art.artifactId;
+  }
+  return a.raw;
+}
+
+/**
  * Expand ~ and ${VAR} placeholders in a local path.
  * An unknown ${VAR} is left as its plain variable name, mirroring the
  * original java implementation.

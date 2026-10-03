@@ -13,7 +13,7 @@ import std.conv : to;
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile;
 import jstart.engine : appendEngineDeps, defaultDistEngineDeps, defaultEngineDeps,
   distTomcatEntryMain, engineEntryMain, expandEngineDeps, isEmbedEntryMain, parseEngineSel,
-  parseEntryArgv, webappsPlanFile;
+  parseEntryArgv, subappsPlanFile;
 
 unittest {
   assert(engineEntryMain("tomcat") == "org.beangle.sas.engine.tomcat.EmbedCreator");
@@ -193,7 +193,7 @@ unittest {
   assert(isEmbedEntryMain("org.beangle.sas.engine.undertow.EmbedCreator"));
   assert(!isEmbedEntryMain(distTomcatEntryMain));
   assert(!isEmbedEntryMain("com.example.MyEngine"));
-  assert(webappsPlanFile == "engine-webapps.tsv");
+  assert(subappsPlanFile == "engine-subapps.jstart");
 }
 
 unittest {

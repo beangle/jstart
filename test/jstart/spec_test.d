@@ -10,7 +10,7 @@ module test.jstart.spec_test;
 import std.array : join;
 import std.string : indexOf, startsWith;
 
-import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec, validateLaunchSpec;
+import jstart.spec : LaunchSpec, flattenLibs, isSpecFile, parseLaunchSpec, validateLaunchSpec;
 
 unittest {
   // spec 识别：唯一形式是 .jstart 后缀（本地路径或 http(s) url，url 忽略查询串）。
@@ -263,6 +263,7 @@ unittest {
     "[subapp portal]\n" ~
     "entry = portal.war\n" ~
     "path = /portal\n" ~
+    "libs = com.zaxxer:HikariCP:7.0.3-SNAPSHOT\n" ~
     "[subapp admin]\n" ~
     "entry = admin.war\n" ~
     "path = /admin/\n";
@@ -273,11 +274,25 @@ unittest {
   assert(spec.subapps[0].id == "portal");
   assert(spec.subapps[0].entry == "portal.war");
   assert(spec.subapps[0].path == "/portal");
+  assert(spec.subapps[0].libs.length == 1);
+  assert(spec.subapps[0].libs[0] == "com.zaxxer:HikariCP:7.0.3-SNAPSHOT");
   assert(spec.subapps[1].id == "admin");
   assert(spec.subapps[1].entry == "admin.war");
   assert(spec.subapps[1].path == "/admin/");
+  assert(spec.subapps[1].libs.length == 0);
   assert(spec.base == "/var/tmp/jstart/demo");
   assert(validateLaunchSpec(spec).length == 0, validateLaunchSpec(spec));
+}
+
+unittest {
+  // libs 展开：一行可逗号/分号分隔多个，多行累加，空白与空项被丢弃。
+  assert(flattenLibs(["org.slf4j:slf4j-api:2.0.17"]).length == 1);
+  auto multi = flattenLibs(["a:b:1, c:d:2;e:f:3", "  ", "g:h:4"]);
+  assert(multi.length == 4);
+  assert(multi[0] == "a:b:1");
+  assert(multi[1] == "c:d:2");
+  assert(multi[2] == "e:f:3");
+  assert(multi[3] == "g:h:4");
 }
 
 unittest {

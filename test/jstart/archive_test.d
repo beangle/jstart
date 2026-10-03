@@ -7,7 +7,8 @@
  */
 module test.jstart.archive_test;
 
-import jstart.archive : Archive, Artifact, LocalFile, RemoteFile, parseArchive, parseGav;
+import jstart.archive : Archive, Artifact, LocalFile, RemoteFile, mergeLibraries, parseArchive,
+  parseGav;
 
 unittest {
   import std.exception : assertThrown;
@@ -66,4 +67,30 @@ unittest {
   assert((cast(LocalFile) fileUrl).file == "/opt/lib/x.jar");
 
   assert(parseArchive("   ") is null);
+}
+
+unittest {
+  // mergeLibraries：libs 在前并覆盖同名 g:a（忽略版本），基础清单其余项按序追加。
+  Archive[] libs = [cast(Archive) parseGav("org.slf4j:slf4j-api:2.0.99",
+      "org.slf4j:slf4j-api:2.0.99")];
+  Archive[] base = [
+    cast(Archive) parseGav("org.slf4j:slf4j-api:2.0.17", "org.slf4j:slf4j-api:2.0.17"),
+    cast(Archive) parseGav("com.zaxxer:HikariCP:7.0.3", "com.zaxxer:HikariCP:7.0.3"),
+  ];
+  auto merged = mergeLibraries(libs, base);
+  assert(merged.length == 2);
+  assert((cast(Artifact) merged[0]).ver == "2.0.99"); // libs 覆盖同名 g:a
+  assert((cast(Artifact) merged[1]).artifactId == "HikariCP");
+
+  // 非 gav（本地文件/远程 url）以原始行作键，同样可被 libs 覆盖。
+  Archive[] libs2 = [cast(Archive) new RemoteFile("https://h/x.jar", "https://h/x.jar")];
+  Archive[] base2 = [
+    cast(Archive) new RemoteFile("https://h/x.jar", "https://h/x.jar"),
+    cast(Archive) new LocalFile("lib/y.jar", "lib/y.jar"),
+  ];
+  auto merged2 = mergeLibraries(libs2, base2);
+  assert(merged2.length == 2);
+
+  // 空 libs 时保持基础清单原样。
+  assert(mergeLibraries(null, base).length == 2);
 }

@@ -17,14 +17,14 @@ import std.path : buildPath;
 import std.stdio : stderr, writeln;
 import std.string : startsWith, strip;
 
-import jstart.archive : Archive, expandLocalPath, parseGav;
+import jstart.archive : Artifact, Archive, expandLocalPath, mergeLibraries, parseArchive, parseGav;
 import jstart.base : PidInfo, currentPid, nativeDirName, pidFilePath, processAlive,
   processStartTime, readPidFile, removePidFile, resolveBase, stopApplication, stopNotRunning,
   writePidFile;
 import jstart.distrepo : fetchDist;
 import jstart.engine : EngineSel, appendEngineDeps, defaultDistEngineDeps, defaultEngineDeps,
   distTomcatEntryMain, entryArgvFile, entryClasspathFile, expandEngineDeps, parseEngineSel,
-  parseEntryArgv, webappsPlanFile;
+  parseEntryArgv, subappsPlanFile;
 import jstart.http : runProcessCapture;
 import jstart.launcher : execCommand, javaFor, printCommand, printJavaCommand, runJarApp,
   runNativeApp;
@@ -33,7 +33,7 @@ import jstart.mainclass : MainClass, MainSource, isPlausibleMainClass, pickMainC
 import jstart.native : extractTarGz, findExecutable, isNativeTarget, targetGav;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes, buildSnapshotRemotes;
 import jstart.resolver : Resolver;
-import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec, validateLaunchSpec;
+import jstart.spec : LaunchSpec, flattenLibs, isSpecFile, parseLaunchSpec, validateLaunchSpec;
 
 /// Version of the jstart binary.
 enum jstartVersion = "0.0.1";
@@ -646,9 +646,9 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
   if (exists(entryOut)) {
     remove(entryOut); // 清掉上次残留，避免引擎准备失败时误读旧命令
   }
-  // 多应用计划按 <base>/engine-webapps.tsv 约定读取，不是命令行参数：单应用清掉可能
+  // 多应用计划按 <base>/engine-subapps.jstart 约定读取，不是命令行参数：单应用清掉可能
   // 残留的计划文件，使「无 --entry= 且该文件存在 = 多应用」可作可靠判定。
-  auto stalePlan = buildPath(base, webappsPlanFile);
+  auto stalePlan = buildPath(base, subappsPlanFile);
   if (exists(stalePlan)) {
     remove(stalePlan);
   }
@@ -683,9 +683,10 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
  *  - jstart 逐个取回 webapp（war 文件或已解压目录）并**补齐各自依赖到本地仓库**——运行时
  *    由容器内每个 Context 自己的 DependencyClassLoader 按 war 清单解析（sas.repo 透传），
  *    jstart 不把多应用的依赖合并进同一个 JVM classpath（那样会串味）；
- *  - 每个 webapp 的入口与 context path 写进 `<base>/engine-webapps.tsv`（一行一个：
- *    `id \t entry \t path`），入口 main 按 `--base` 从该约定路径读取，不经命令行传递；
- *    单应用仍走 `--entry=`/`--path=`/`--app-classpath-file=`；
+ *  - 每个 webapp 的入口、context path 与扩展依赖（libs）写进
+ *    `<base>/engine-subapps.jstart`（launch spec 片段，一段一个 `[subapp <id>]`），
+ *    入口 main 按 `--base` 从该约定路径读取，不经命令行传递；单应用仍走
+ *    `--entry=`/`--path=`/`--app-classpath-file=`；
  *  - 一个 base = 一个实例：一份 pid、一套 `webapps/`，多应用共享启停生命周期。
  */
 private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
@@ -712,6 +713,8 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   // 逐个取回 webapp 并补齐依赖：容器内 DependencyClassLoader 按 sas.repo 从本地仓库解析
   // 每个 war 的清单，因此这里必须确保构件已就位（与单应用同为 jstart 的解析结果）。
   string[] entries;
+  string[][] subappLibs; // 每个 subapp 的扩展依赖 gav（写进计划文件，交给引擎按 Context 合并）
+  Archive[][] subappLibArchives; // 同上，解析后的形态（info 展示有效依赖用）
   bool missingAny;
   foreach (w; spec.subapps) {
     auto entry = resolver.fetchTarget(w.entry);
@@ -719,12 +722,35 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
       return 1;
     }
     entries ~= entry;
-    auto deps = resolver.resolveDependencies(entry);
+    // libs 是追加在该 war 的 META-INF/beangle/dependencies 之上的扩展依赖（gav）。
+    // 引擎的 DependencyClassLoader 只在本地仓库里找、缺失即报错，所以这里必须先
+    // 解析并取回；不支持 libs 里的本地文件/远程 url（引擎只认 gav）。
+    auto gavs = flattenLibs(w.libs);
+    Archive[] libDeps;
+    foreach (g; gavs) {
+      Archive parsed;
+      try {
+        parsed = parseArchive(g);
+      } catch (Exception e) {
+        parsed = null;
+      }
+      if (parsed is null || cast(Artifact) parsed is null) {
+        stderr.writeln(format("[subapp %s] libs must be g:a:v gav coordinates, got: %s",
+            w.id, g));
+        return 1;
+      }
+      libDeps ~= parsed;
+    }
+    // 与单应用同一覆盖规则：同名 g:a（不看版本）取 libs 的那条，内置同名项丢弃——
+    // 被覆盖的旧版本因此不再需要下载。
+    auto deps = mergeLibraries(libDeps, resolver.resolveDependencies(entry));
     auto missing = resolver.ensureDependencies(deps, opts.jobs);
     if (missing.length > 0) {
       stderr.writeln(format("[subapp %s] missing: %s", w.id, missing.join(",")));
       missingAny = true;
     }
+    subappLibs ~= gavs;
+    subappLibArchives ~= libDeps;
   }
 
   if (opts.command == "resolve") {
@@ -737,7 +763,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     if (missingAny) {
       return 1;
     }
-    return printMultiWebappInfo(opts, resolver, spec, entries);
+    return printMultiWebappInfo(opts, resolver, spec, entries, subappLibArchives);
   }
   if (opts.command == "classpath") {
     stderr.writeln("classpath is not supported for multi-webapp specs: each webapp has "
@@ -800,12 +826,16 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     }
   }
 
-  // webapps 计划文件：每行 id \t entry \t path；入口 main（ServerCreator）按 --base 从
-  // 约定路径 <base>/engine-webapps.tsv 读取（不经命令行传递），逐个建 Context。
-  auto planPath = buildPath(base, webappsPlanFile);
-  string plan;
+  // 交付计划文件走 launch spec 片段：一段一个 [subapp <id>]，含 entry/path/libs；入口
+  // main（ServerCreator）按 --base 从约定路径 <base>/engine-subapps.jstart 读取
+  // （不经命令行传递），逐个建 Context 并把 libs 交给该 Context 的 Loader。
+  auto planPath = buildPath(base, subappsPlanFile);
+  string plan = "# Generated by jstart: resolved subapps for the dist engine. Do not edit.\n";
   foreach (i, w; spec.subapps) {
-    plan ~= w.id ~ "\t" ~ entries[i] ~ "\t" ~ w.path ~ "\n";
+    plan ~= format("\n[subapp %s]\nentry = %s\npath = %s\n", w.id, entries[i], w.path);
+    if (subappLibs[i].length > 0) {
+      plan ~= "libs = " ~ subappLibs[i].join(",") ~ "\n";
+    }
   }
   write(planPath, plan);
 
@@ -857,9 +887,10 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   return execCommand(argv, showProgress(opts));
 }
 
-/// 多应用 info：先给仓库/上游信息，再按 webapp 列出落盘路径、context path 与依赖。
+/// 多应用 info：先给仓库/上游信息，再按 webapp 列出落盘路径、context path 与依赖
+/// （deps 为 libs 覆盖 war 清单后的**有效**集合，libs 单列声明项）。
 private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec spec,
-    string[] entries) {
+    string[] entries, Archive[][] subappLibs) {
   import std.format : format;
 
   import jstart.archive : Artifact, LocalFile, RemoteFile;
@@ -880,8 +911,13 @@ private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec sp
   }
   writeln("snapshot-remotes: " ~ snapshotRemotes.join(","));
   foreach (i, w; spec.subapps) {
-    auto deps = resolver.resolveDependencies(entries[i]);
-    writeln(format("webapp %s: app=%s path=%s deps=%d", w.id, entries[i], w.path, deps.length));
+    auto deps = mergeLibraries(subappLibs[i], resolver.resolveDependencies(entries[i]));
+    auto libs = flattenLibs(w.libs);
+    writeln(format("webapp %s: app=%s path=%s deps=%d libs=%d", w.id, entries[i], w.path,
+        deps.length, libs.length));
+    foreach (j, g; libs) {
+      writeln(format("  lib %d: %s", j + 1, g));
+    }
     foreach (j, dep; deps) {
       string kind;
       if (cast(Artifact) dep !is null) {

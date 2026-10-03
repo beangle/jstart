@@ -414,11 +414,11 @@ else
   echo "skip war engine test (javac/java missing)"
 fi
 
-echo "== multi-webapp spec: [subapp] -> <base>/engine-webapps.tsv -> dist engine -> entry-out =="
+echo "== multi-webapp spec: [subapp] -> <base>/engine-subapps.jstart -> dist engine -> entry-out =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
-  # 一个假的 dist 引擎入口 main：按 --base 约定读 <base>/engine-webapps.tsv，校验有多少行、
-  # 每行 id/entry/path 是否完整、entry 是否真实存在，再 exec 一个回显计划文件的短程序
-  # （不依赖真实 sas，也不经命令行传多 webapp 计划）。
+  # 一个假的 dist 引擎入口 main：按 --base 约定读 <base>/engine-subapps.jstart（launch spec
+  # 片段），校验 [subapp <id>] 段数、每段的 entry/path 是否完整、entry 是否真实存在、libs
+  # 是否带过来，再 exec 一个回显计划文件的短程序（不依赖真实 sas，也不经命令行传计划）。
   cat > "$T/src/org/jstarttest/PlanEcho.java" <<'JAVA'
 package org.jstarttest;
 import java.nio.file.Files;
@@ -449,21 +449,46 @@ public class FakeDistEngine {
         }
         if (entryOut == null || base == null)
             throw new IllegalStateException("missing args: " + Arrays.toString(args));
-        String webappsFile = Paths.get(base, "engine-webapps.tsv").toString();
-        List<String> rows = Files.readAllLines(Paths.get(webappsFile));
-        if (rows.size() != 2) throw new IllegalStateException("expected 2 webapps, got " + rows.size());
-        for (String r : rows) {
-            String[] c = r.split("\t", -1);
-            if (c.length != 3 || c[0].isEmpty() || c[1].isEmpty() || c[2].isEmpty())
-                throw new IllegalStateException("bad plan row: " + r);
-            if (!new File(c[1]).exists()) throw new IllegalStateException("missing entry " + c[1]);
+        String planFile = Paths.get(base, "engine-subapps.jstart").toString();
+        List<String> lines = Files.readAllLines(Paths.get(planFile));
+        int apps = 0;
+        boolean portalLibs = false;
+        String id = null, entry = null, path = null;
+        for (String raw : lines) {
+            String l = raw.trim();
+            if (l.isEmpty() || l.startsWith("#")) continue;
+            if (l.startsWith("[") && l.endsWith("]")) {
+                checkSection(id, entry, path);
+                String name = l.substring(1, l.length() - 1).trim();
+                if (!name.startsWith("subapp "))
+                    throw new IllegalStateException("not a subapp section: " + l);
+                id = name.substring("subapp ".length()).trim();
+                entry = null; path = null; apps++;
+            } else if (l.startsWith("entry")) entry = value(l);
+            else if (l.startsWith("path")) path = value(l);
+            else if (l.startsWith("libs")) {
+                if ("portal".equals(id) && l.contains("slf4j-api")) portalLibs = true;
+            } else throw new IllegalStateException("bad plan line: " + l);
         }
+        checkSection(id, entry, path);
+        if (apps != 2) throw new IllegalStateException("expected 2 subapps, got " + apps);
+        if (!portalLibs) throw new IllegalStateException("portal libs missing from plan");
         String java = System.getProperty("java.home") + "/bin/java";
         String cp = System.getProperty("java.class.path");
-        String[] argv = {java, "-cp", cp, "org.jstarttest.PlanEcho", webappsFile};
+        String[] argv = {java, "-cp", cp, "org.jstarttest.PlanEcho", planFile};
         try (OutputStream os = new FileOutputStream(entryOut)) {
             for (String s : argv) { os.write(s.getBytes("UTF-8")); os.write(0); }
         }
+    }
+    private static String value(String l) {
+        int i = l.indexOf('=');
+        return i < 0 ? "" : l.substring(i + 1).trim();
+    }
+    private static void checkSection(String id, String entry, String path) {
+        if (id == null) return;
+        if (entry == null || entry.isEmpty() || path == null || path.isEmpty())
+            throw new IllegalStateException("incomplete subapp " + id);
+        if (!new File(entry).exists()) throw new IllegalStateException("missing entry " + entry);
     }
 }
 JAVA
@@ -474,6 +499,11 @@ JAVA
   mkdir -p "$T/multi-a/WEB-INF/classes" "$T/multi-b/WEB-INF/classes"
   echo portal > "$T/multi-a/WEB-INF/classes/marker.txt"
   echo admin > "$T/multi-b/WEB-INF/classes/marker.txt"
+  # portal 的 war 清单故意写一个取不到的 slf4j 版本；spec 用 libs 覆盖成同 g:a 的
+  # 可用版本后，jstart 只应取 libs 版本（旧的被丢弃、不再需要下载）。
+  mkdir -p "$T/multi-a/WEB-INF/classes/META-INF/beangle"
+  printf 'org.slf4j:slf4j-api:0.0.1-nonexistent\n' \
+    > "$T/multi-a/WEB-INF/classes/META-INF/beangle/dependencies"
   (cd "$T/multi-a" && zip -qr "$T/portal.war" .)
   (cd "$T/multi-b" && zip -qr "$T/admin.war" .)
 
@@ -484,6 +514,7 @@ engine = org.jstarttest.FakeDistEngine
 [subapp portal]
 entry = $T/portal.war
 path = /portal
+libs = org.slf4j:slf4j-api:2.0.17
 
 [subapp admin]
 entry = $T/admin.war
@@ -497,10 +528,12 @@ INI
   for i in $(seq 1 120); do grep -q "plan-up" "$T/multi-run.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "plan-up" "$T/multi-run.log" \
     || { echo "FAIL multi-webapp engine argv not exec'd: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
-  grep -q "row:portal" "$T/multi-run.log" \
+  grep -q "row:\[subapp portal\]" "$T/multi-run.log" \
     || { echo "FAIL portal plan row missing: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
-  grep -q "row:admin" "$T/multi-run.log" \
+  grep -q "row:\[subapp admin\]" "$T/multi-run.log" \
     || { echo "FAIL admin plan row missing: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
+  grep -q "row:libs = org.slf4j:slf4j-api:2.0.17" "$T/multi-run.log" \
+    || { echo "FAIL portal libs missing from plan" >&2; failures=$((failures + 1)); }
   grep -q "/portal" "$T/multi-run.log" \
     || { echo "FAIL portal context path missing" >&2; failures=$((failures + 1)); }
   grep -q "/admin" "$T/multi-run.log" \
@@ -516,6 +549,14 @@ INI
   check "info multi-webapp" "$code" 0 "type: multi-webapp"
   printf '%s' "$out" | grep -q "path=/admin" \
     || { echo "FAIL info missing admin path: $out" >&2; failures=$((failures + 1)); }
+  printf '%s' "$out" | grep -q "libs=1" \
+    || { echo "FAIL info missing portal libs count: $out" >&2; failures=$((failures + 1)); }
+  # 覆盖规则：portal 的 war 清单版本被 libs 覆盖，info 只应列出 libs 的版本。
+  printf '%s' "$out" | grep -q "slf4j-api-2.0.17.jar" \
+    || { echo "FAIL info missing portal lib jar: $out" >&2; failures=$((failures + 1)); }
+  if printf '%s' "$out" | grep -q "0.0.1-nonexistent"; then
+    echo "FAIL info still lists overridden war dep: $out" >&2; failures=$((failures + 1))
+  fi
   out="$("$JSTART" --local="$REPO" classpath "$T/multi.jstart" 2>&1)"; code=$?
   check "classpath multi-webapp rejected" "$code" 2 "not supported"
   # 多应用只走 Dist：内嵌别名（tomcat/undertow）在 spec 校验阶段被拒

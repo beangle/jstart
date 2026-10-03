@@ -299,17 +299,23 @@ immutable string entryArgvFile = "engine-entry.argv";
 immutable string entryClasspathFile = "engine-app.classpath";
 
 /**
- * File under the component base describing the webapps an engine must deploy
- * (multi-webapp specs). One row per webapp, tab separated:
+ * File under the component base describing the subapps an engine must deploy
+ * (multi-app specs). It is a launch-spec fragment written by jstart, one
+ * `[subapp <id>]` section per webapp:
  *
- *   <id> \t <entry path> \t <context path>
+ *   [subapp portal]
+ *   entry = /abs/path/portal.war     # 本地 war 文件或已解压目录
+ *   path  = /portal                  # 上下文路径（引擎归一化后建 Context）
+ *   libs  = g:a:v,g2:a2:v2           # 可选：扩展依赖（引擎合并到 war 清单之上）
  *
  * The entry path is a local war file or an already exploded directory; the
- * context path is the spec's `[subapp <id>] path` value (the engine normalizes
- * it). It is not passed on the command line: the engine entry main reads
- * <base>/engine-webapps.tsv from the --base it was given.
+ * context path is the spec's `[subapp <id>] path` value; libs are the extra
+ * gavs the engine's per-Context DependencyClassLoader merges over the war's
+ * own `META-INF/beangle/dependencies`. It is not passed on the command line:
+ * the engine entry main reads <base>/engine-subapps.jstart from the --base it
+ * was given.
  */
-immutable string webappsPlanFile = "engine-webapps.tsv";
+immutable string subappsPlanFile = "engine-subapps.jstart";
 
 /**
  * Parse the NUL-separated argv an engine entry main wrote to its

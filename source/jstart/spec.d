@@ -30,6 +30,10 @@ struct SubappSpec {
   string entry;
   /// 上下文路径；多 app 必填、归一化后各自唯一（`/` 只能有一个）。
   string path;
+  /// 扩展依赖（`libs = g:a:v`，可多行、一行可逗号分隔多个）：追加在该 webapp 的
+  /// META-INF/beangle/dependencies 清单之上（同名 g:a 以 libs 为准），由引擎的
+  /// DependencyClassLoader 合并；jstart 负责把它们先取回本地仓库。
+  string[] libs;
 }
 
 /// A parsed launch spec.
@@ -199,6 +203,9 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
           case "path":
             app.path = value;
             break;
+          case "libs":
+            app.libs ~= value;
+            break;
           default:
             warnings ~= format("line %d: unknown [subapp] key %s", i + 1, key);
         }
@@ -208,6 +215,23 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
     }
   }
   return spec;
+}
+
+/**
+ * 展开 `[subapp <id>] libs` 行：一行可写多个 gav（逗号或分号分隔），也可多行累加。
+ * 返回按出现顺序去空白后的 gav 列表，供 jstart 解析取回、并写入交付计划文件。
+ */
+string[] flattenLibs(string[] libs) {
+  string[] gavs;
+  foreach (line; libs) {
+    foreach (part; line.replace(";", ",").split(",")) {
+      auto gav = part.strip;
+      if (gav.length > 0) {
+        gavs ~= gav;
+      }
+    }
+  }
+  return gavs;
 }
 
 /// 上下文路径归一化的**预检**副本（去尾 `/`、补首个 `/`、折叠 `//`）；权威公式在引擎侧。
