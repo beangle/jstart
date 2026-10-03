@@ -62,8 +62,8 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 - native（tar.gz）：现场打包 demo，验证 resolve/`run --print`/参数转发与解压目录；
 - fetch：本地文件与增量补丁路径（`--from`，本地静态服务，不联网）；
 - 实例与 stop：重复 base 拒绝启动，stop 指定/无参/重复调用的退出码与 pid 文件清理；
-- 多 webapp spec：`[subapp]` 段 → `engine-webapps.tsv` → Dist 引擎 → `entry-out`（本地
-  fake dist 引擎），并验证内嵌引擎与 `classpath` 被拒；
+- 多 webapp spec：`[subapp]` 段（含 `libs` 扩展依赖）→ `engine-subapps.jstart` →
+  Dist 引擎 → `entry-out`（本地 fake dist 引擎），并验证内嵌引擎与 `classpath` 被拒；
 - war 引擎：`run --print` 输出引擎入口 main 命令、验证 `--entry`/参数透传（引擎 jar 用
   本地空文件，不联网）；另用本地 `FakeEngine` 端到端验证"入口 main 写 argv → exec 最终
   命令"（`engine-entry.argv` 落盘与参数转发）；

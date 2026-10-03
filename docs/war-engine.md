@@ -90,7 +90,7 @@ entry = gav://org.example:webapp:0.0.1:war
 engine = tomcat                  # 可选 tomcat|undertow；war 缺省 tomcat
                                  # tomcat 可带版本：tomcat-11.0.24
 
-[engine]                         # 可选段：引擎依赖逐行罗列（同 [deps] 语法）
+[engine]                         # 可选段：引擎依赖逐行罗列（同 [libs] 语法）
 org.beangle.sas:beangle-sas-engine:0.13.10
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -109,13 +109,13 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
   的 `ServerCreator` 有内置目录）。tomcat 别名可带版本
   后缀（如 `tomcat-11.0.24`）：不带 `[engine]` 段时，内置目录里两个 `tomcat-embed-*`
   jar 自动用该版本（`beangle-sas-engine` 仍用内置默认版本）；不带后缀用内置默认版本。
-- `[engine]` 段：引擎 jar 清单，每行与 `[deps]` 完全同语法（gav/本地文件/远程 url）。
+- `[engine]` 段：引擎 jar 清单，每行与 `[libs]` 完全同语法（gav/本地文件/远程 url）。
   **段存在即为权威，jstart 不内置依赖行**——引擎版本随 spec 走，升级/换源/改
   undertow 只改文件，不重新发版。行内可用版本占位符 `{tomcat.version}`（`engine =
   tomcat-<版本>` 时用该版本，否则内置默认）与 `{sas.version}`（内置默认），由
   jstart 展开后再装配。
-- `[engine]` 与 `[deps]` 相互独立：`[deps]` 是应用自身依赖（存在时替换 war 内置
-  清单），`[engine]` 是引擎启动器依赖，两者都进 classpath。
+- `[engine]` 与 `[libs]` 相互独立：`[libs]` 是应用自身依赖（追加/覆盖在 war 内置清单
+  之上），`[engine]` 是引擎启动器依赖，两者都进 classpath。
 - entry 是 **war 文件或目录**时都走引擎流程（目录直接用，不解压）；其它目标（jar/native）
   **不要求** engine 声明，spec 里写了 `[app] engine`/`[engine]` 段会告警并忽略。
 
@@ -249,7 +249,7 @@ CLASSPATH_EXTRA → WEB-INF/classes → WEB-INF/lib/*.jar（排序） → 应用
 - `run --print <spec>`（entry 为 war）：照常下载引擎依赖；**不执行**入口 main 的准备
   （准备有副作用），若 `--base` 下已有 `engine-entry.argv` 则打印其中的最终命令，否则
   打印入口 main 的准备命令（逐参数引号），不 exec；
-- `repo <war>` / `repo <spec>`：只整合**应用**依赖（war 内置清单或 spec `[deps]`），
+- `repo <war>` / `repo <spec>`：只整合**应用**依赖（war 内置清单或 spec `[libs]`），
   不读取 `[engine]` 段。离线机器需要引擎 jar 时，先在联网机上
   `jstart run --print <spec>`（会下载应用 + 引擎依赖到 `--local` 仓库），再把该仓库
   目录拷到离线机（见 [offline.md](offline.md)）。

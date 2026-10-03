@@ -97,9 +97,9 @@ jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/
 
 注意：
 
-- `repo` 子命令**只整合应用依赖**（war 内置清单或 spec `[deps]`），不读取 `[engine]`
+- `repo` 子命令**只整合应用依赖**（war 内置清单或 spec `[libs]`），不读取 `[engine]`
   段，也不会复制引擎 jar；引擎依赖请用上面的 `run --print`（或 `resolve` 后手工
-  `repo` 引擎 spec 的 `[deps]`）预下载进离线仓库；
+  `repo` 引擎 spec 的 `[libs]`）预下载进离线仓库；
 - 引擎版本可用 `[app] engine = tomcat-11.0.24` 或 `[engine]` 行
   `{tomcat.version}`/`{sas.version}` 占位符指定（见 [war-engine.md](war-engine.md)），
   解析出的具体版本与其它引擎 jar 一样随 `run --print` 预下载进离线仓库；

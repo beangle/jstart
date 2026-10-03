@@ -21,7 +21,7 @@ Java 主类（main）、应用本体来源（entry）、运行时/解释器（ru
   下载并缓存到本地仓库（按主机路径缓存，与远程 jar 一致），再按本地文件解析；
 - 其它后缀、以及"内容看起来像 ini/段头"的普通文本文件**都不再**判定为 spec——
   普通文本文件**不支持**为依赖清单 target（依赖清单只来自 jar/war 内置描述或
-  本文件的 `[deps]` 段）。
+  本文件的 `[libs]` 段）。
 
 > 远程 spec 与远程 jar 一样按主机路径缓存、无过期判定：要取更新版请清理本地仓库
 > 对应缓存条目（或换一个 url）。
@@ -45,8 +45,8 @@ working_dir = ${APP_HOME}              # 可选：启动前 chdir；支持 ~ 与
 --port=8080                            # 每行一个应用参数，原样作为单个 argv（不做 shell 切分）
 --path=/base
 
-[deps]
-com.zaxxer:HikariCP:7.0.2              # 可选段：每行与依赖描述文件完全同语法
+[libs]
+com.zaxxer:HikariCP:7.0.3              # 可选段：扩展依赖，追加/覆盖在 entry 内置清单之上
 org.slf4j:slf4j-api:2.0.17
 ```
 
@@ -71,7 +71,7 @@ working_dir = ${APP_HOME}
 [args]
 --port=8080
 
-[deps]                                 # 可选：native 包内没有依赖清单，需要时在此显式罗列
+[libs]                                 # 可选：native 包内没有依赖清单，需要时在此显式罗列
 ```
 
 ### 段与键
@@ -87,16 +87,25 @@ working_dir = ${APP_HOME}
 | | `engine` | 可选（仅 war/目录）。入口 main：含 `.` 的值当 FQCN，否则内置别名 `tomcat`/`undertow`（war 缺省 `tomcat`，映射 `org.beangle.sas.engine.<name>.EmbedCreator`）；tomcat 别名可带版本后缀 `tomcat-11.0.24`（无后缀用内置默认版本）；FQCN 一般无内置目录、须写 `[engine]`（例外：ServerCreator 有内置目录）；jar/native 目标写了则告警忽略（见 [engine.md](engine.md)）。**与 `[app] main` 互斥** |
 | `[runtime]` | 行列表 | 每个非注释行是一个运行时参数（Java 的 `-D`/`-X`/`--add-opens`、Python 的 `-O` 等），按书写顺序拼接；native（tar.gz）目标无 JVM，该段告警忽略 |
 | `[args]` | 行列表 | 每个非注释行是一个应用参数，**整行**作为一个 argv：不切分、不展开变量，值含空格可直接书写；native 目标同样附加在可执行文件之后 |
-| `[deps]` | 行列表 | 可选。每行语法与依赖描述文件一致（gav/本地文件/远程 url） |
-| `[engine]` | 行列表 | 可选（仅 war/目录）。引擎启动器依赖逐行罗列，语法同 `[deps]`（gav/本地文件/远程 url），行内可用占位符 `{tomcat.version}`/`{sas.version}` 引用内置版本；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [engine.md](engine.md)） |
-| `[subapp <id>]` | `entry` / `path` | 可选、可重复。**多应用**：一个 dist 引擎在同一 JVM 里跑多个 webapp，每个一段；`entry` 同 `[app] entry`，`path` 是该 webapp 的上下文路径（归一化后各自唯一）。与 `[app] entry`/`main`/`[deps]` 互斥，引擎只能走 Dist（见下） |
+| `[libs]` | 行列表 | 可选。**扩展依赖**：每行与依赖描述文件同语法（gav/本地文件/远程 url），一行也可逗号分隔多个 gav。**追加/覆盖**在 entry 内置清单之上（同名 `g:a` 以本段为准）；native 无清单时即为全部依赖。旧名 `[deps]` 仍可用（告警并按 `[libs]` 处理），已废弃 |
+| `[engine]` | 行列表 | 可选（仅 war/目录）。引擎启动器依赖逐行罗列，语法同 `[libs]`（gav/本地文件/远程 url），行内可用占位符 `{tomcat.version}`/`{sas.version}` 引用内置版本；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [engine.md](engine.md)） |
+| `[subapp <id>]` | `entry` / `path` / `libs` | 可选、可重复。**多应用**：一个 dist 引擎在同一 JVM 里跑多个 webapp，每个一段；`entry` 同 `[app] entry`，`path` 是该 webapp 的上下文路径（归一化后各自唯一），`libs` 是该 webapp 的扩展依赖（gav，一行可逗号分隔多个，可不写）。与 `[app] entry`/`main`/`[libs]` 互斥，引擎只能走 Dist（见下） |
 
 ### 语义约定
 
-- `[deps]` **存在**时它是依赖的唯一来源，不再读取 entry 内置的
-  `META-INF/beangle/dependencies`（本地开发覆盖内置清单的手段，也保持"显式依赖"约束）；
-- `[deps]` **不存在**时自动回退读取 entry 内的依赖描述（jar/war/解压目录各位置规则
-  与现有 `resolveDependencies` 完全一致）；
+- `[libs]` 是**扩展依赖**，**追加/覆盖**在 entry 内置清单之上，规则如下：
+
+  | 项 | 规则 |
+  |----|------|
+  | 同名判定 | 按 `groupId:artifactId` 判同名，**不看版本**，也不看打包/classifier |
+  | 同名取值 | 取 `[libs]` 里那一条，**版本用 `[libs]` 的**；内置清单里的同名项整条丢弃 |
+  | classpath 顺序 | `[libs]` 在前、内置在后（因此被保留的 libs 版本优先命中，且不会出现两个版本并存） |
+  | 用途 | 补依赖（写新的 `g:a`）与换版本（写同名 `g:a` 的不同版本）都是这一条规则 |
+
+  该规则在 jstart 侧（应用 classpath）与容器侧（`DependencyClassLoader` 合并 war 清单）
+  一致，也与 sas `Webapp libs` 的 merge 一致；`[subapp <id>] libs` 同样遵循。
+- 不写 `[libs]` 时只用 entry 内的依赖描述（jar/war/解压目录各位置规则与现有
+  `resolveDependencies` 完全一致）；native（tar.gz）包内没有清单，`[libs]` 即为全部依赖；
 - `[app] main` 与 entry 内 Manifest `Main-Class` 都缺失时，`run` 报
   `Cannot find Main-Class` 并退出 1（war 目标例外：不需要 main，直接进入内置引擎
   运行流程，见 [war-engine.md](war-engine.md)）；
@@ -132,7 +141,7 @@ entry = /path/app.war          # war 目标（本地文件/gav/http 均可）
 engine = tomcat                # 可选：tomcat | undertow；war 缺省 tomcat
                                # tomcat 可带版本：tomcat-11.0.24
 
-[engine]                       # 可选：引擎启动器依赖，每行与 [deps] 同语法
+[engine]                       # 可选：引擎启动器依赖，每行与 [libs] 同语法
 org.beangle.sas:beangle-sas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -163,14 +172,14 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
   `org.apache.tomcat.embed:tomcat-embed-core:{tomcat.version}`。只换 tomcat 版本可写
   `engine = tomcat-<版本>`；覆盖其它（undertow、镜像、sas 引擎等）就写 `[engine]`
   段，都不必等 jstart 发版。
-- **与应用依赖互不影响**：`[deps]`（或 war 内置清单）负责应用本体，`[engine]` 只负责
+- **与应用依赖互不影响**：`[libs]`（或 war 内置清单）负责应用本体，`[engine]` 只负责
   引擎启动器；classpath 顺序为"应用 classes/lib + 应用依赖 → 引擎依赖"，引擎 gav 与
   应用依赖按 `g:a:v` 去重。
 - **运行参数**：引擎 JVM 参数写 `[runtime]`（`-D`/`-X` 开头参数同理，jstart 作为
   `--app-jvm-arg` 交给入口 main 写进最终命令）；`--port=8080`、`--path=/` 等引擎运行参数
   写 `[args]`（或命令行透传），jstart 全部原样交给入口 main，不吞参数。
 - **不做定制**：引擎主类由引擎名固定，没有 CLI 覆盖（无 `--engine=`），`[engine]` 段
-  也不解析 `main=...` 之类的键值行——每行就是一条依赖（与 `[deps]` 完全同构）。
+  也不解析 `main=...` 之类的键值行——每行就是一条依赖（与 `[libs]` 完全同构）。
 - 引擎 jar 同样遵守"不解析传递依赖"约束：目录/`[engine]` 里必须显式写全。
 
 ### 多 webapp（[subapp \<id\>]）
@@ -185,6 +194,7 @@ engine = org.beangle.sas.engine.tomcat.ServerCreator   # 可省略，多应用�
 [subapp portal]
 entry = /srv/deploy/portal.war
 path = /portal
+libs = com.zaxxer:HikariCP:7.0.3-SNAPSHOT
 
 [subapp admin]
 entry = /srv/deploy/admin.war
@@ -198,18 +208,25 @@ path = /admin
   engine` 省略时用内置的 Dist 引擎入口 main `org.beangle.sas.engine.tomcat.ServerCreator`。
 - **每个 webapp 必须有 `entry` 和 `path`**，归一化后（去尾 `/`、补首个 `/`、折叠
   `//`）的 context path 不能重复（`/` 只允许一个）；段头 id 不能重复、不能含空格/制表符。
-- **与单应用的键互斥**：`[app] entry`、`[app] main`、`[deps]` 都不能和 `[subapp]` 段
-  共存——多应用每个 war 各用自身的 `META-INF/beangle/dependencies` 清单，`[deps]` 无法
-  用一份清单表达多个应用。
+- **`libs` 是该 webapp 的扩展依赖**（gav 坐标，可多行、一行可逗号分隔多个）：覆盖规则与
+  顶层 `[libs]` 完全相同——按 `groupId:artifactId` 判同名（不看版本），同名取 libs 的
+  版本，追加/覆盖在该 war 的 `META-INF/beangle/dependencies` 清单之上，由引擎的
+  `DependencyClassLoader` 合并（对齐 sas 的 `Webapp libs`）。jstart 会先把它们取回本地
+  仓库——引擎只在本地仓库里找、缺失即报错；被覆盖的旧版本不再需要下载。`[subapp] libs`
+  只认 gav（引擎侧只支持 gav），顶层 `[libs]` 另支持本地文件/远程 url。
+- **与单应用的键互斥**：`[app] entry`、`[app] main`、`[libs]` 都不能和 `[subapp]` 段
+  共存——多应用每个 war 各用自身的 `META-INF/beangle/dependencies` 清单，顶层 `[libs]`
+  无法用一份清单表达多个应用。
 - **各 webapp 依赖相互隔离**：jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库；运行时
   由容器内每个 Context 自己的 `DependencyClassLoader` 按各自 war 清单解析（jstart 透传
   `--Dsas.repo`），**不**把多个应用的依赖合并进同一个 JVM classpath——那样会串味。
 - **共享生命周期**：一个 spec 一个 base（`--base`/`--instance`/`[app] base`），一份 pid
   文件，`stop` 一次停整组；`resolve`/`info` 按 webapp 逐个输出，`classpath` 对多应用
   无意义会明确拒绝。
-- **接口形式**：入口与 context path 写进 `<base>/engine-webapps.tsv`（每行
-  `id \t entry \t path`），Dist 引擎按 `--base` 从该约定路径读取，不经命令行传递（单应用仍走
-  `--entry=`/`--path=`/`--app-classpath-file=`）；协议见 [engine.md](engine.md)。
+- **接口形式**：入口、context path 与 `libs` 写进 `<base>/engine-subapps.jstart`
+  （launch spec 片段，一段一个 `[subapp <id>]`），Dist 引擎按 `--base` 从该约定路径读取，
+  不经命令行传递（单应用仍走 `--entry=`/`--path=`/`--app-classpath-file=`）；协议见
+  [engine.md](engine.md)。
 
 ## 与现有命令的关系
 
@@ -219,7 +236,7 @@ spec 文件可作为 `run`/`resolve`/`classpath`/`repo` 的 target：
 jstart run app.jstart                    # 解析 spec → 准备依赖 → exec java
 jstart resolve app.jstart                # 解析并下载依赖，输出 entry 落盘绝对路径
 jstart classpath app.jstart              # 输出 Main-Class@classpath（main 取 spec 或 Manifest）
-jstart repo app.jstart --local=/opt/offline-repo   # 离线整合（取 [deps] 或内置清单）
+jstart repo app.jstart --local=/opt/offline-repo   # 离线整合（取 [libs] 或内置清单）
 jstart run https://repo.example.com/app.jstart     # 远程 spec：下载后按 entry 解析
 ```
 
@@ -229,7 +246,7 @@ jstart run https://repo.example.com/app.jstart     # 远程 spec：下载后按 
 内部实现上，spec 被解析为"entry + 依赖清单 + 启动参数"的合成目标，之后的依赖准备、
 classpath 装配、exec 流程与现有 jar 目标共用同一套代码。`run` 的可启动目标就是
 launch spec（或带应用本体的 jar/gav/url）；**普通文本文件不再支持为依赖清单
-target**（任何命令都不接受），依赖清单只来自 jar/war 内置描述或 spec 的 `[deps]`。
+target**（任何命令都不接受），依赖清单只来自 jar/war 内置描述或 spec 的 `[libs]`。
 
 ## --print：只打印将要执行的命令
 
@@ -247,7 +264,7 @@ java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.a
 
 ## 范围与规划
 
-- **v0.1.0 候选范围**：launch spec 文件解析（含 `[deps]` 回退/覆盖语义）+ `run`/其余
+- **v0.1.0 候选范围**：launch spec 文件解析（含 `[libs]` 追加/覆盖语义）+ `run`/其余
   命令支持 spec target + `run --print`。
 - `info` 命令已实现：解析并准备依赖后输出 main、依赖数、各依赖来源与本地落盘、体积等
   结构化信息（文本 `key: value`，依赖逐行 `dep <n>: ...`），服务审计与 IDE/CI 集成，

@@ -79,7 +79,7 @@ source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifes
 source/jstart/engine.d           war 引擎：入口 main 选择与协议常量、内置默认依赖目录
                                  （tomcat/undertow/Dist）、[engine] 行占位符展开、entry-out argv 解析
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
-                                 （[app]/[runtime]/[args]/[deps]/[engine]/[subapp <id>]）
+                                 （[app]/[runtime]/[args]/[libs]/[engine]/[subapp <id>]）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
 source/jstart/native.d          native tar.gz：解压到给定目录（临时目录+改名，支持并发）、
@@ -95,8 +95,8 @@ launcher → archive / repo / http / zipfile / bspatch / gzip`。
 
 launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 [launch-spec.md](launch-spec.md)）在进入本流程前由 `app.d` 经 `spec.d` 解析成
-"entry + 可选显式依赖 + 启动参数"：`[deps]` 存在时它是依赖唯一来源（跳过第 2 步的
-内置清单），否则 entry 仍走内置依赖描述；`[app] main`/`[app] runtime`/`[runtime]`/`[args]`
+"entry + 可选扩展依赖 + 启动参数"：`[libs]` 追加/覆盖在 entry 内置依赖描述之上
+（同名 `g:a` 以 `[libs]` 为准，见第 2/3 步）；`[app] main`/`[app] runtime`/`[runtime]`/`[args]`
 用于最后一步启动。http(s) spec 先经 `fetchTarget` 下载、按主机路径缓存到本地仓库，
 再按本地文件读取解析（repo 是离线整合命令，仍只接受本地 `.jstart`）。
 
@@ -107,7 +107,8 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
    - war：`WEB-INF/classes/META-INF/beangle/dependencies`（缺失时回退 jar 位置）
    - 解压目录：目录下对应 war 路径的文本文件
    - 其它普通文件：不再读取（纯文本依赖清单已不支持，见 commands.md 目标形态）
-3. **逐行解析**（`parseDependencyText`）：空行忽略、重复行去重，格式见
+3. **逐行解析并合并**（`parseDependencyText` + `mergeLibraries`）：空行忽略、重复行
+   去重；`[libs]` 先于内置清单，同名 `g:a` 以 `[libs]` 为准，格式见
    [dependencies.md](dependencies.md)。
 4. **下载校验**（`ensureArtifact`/`ensureRemoteFile`）：本地已有则用 `.sha1` 校验，
    缺失/损坏按远程顺序逐个下载；同远程再取 `.sha1` 复核，不匹配删除并尝试下一远程。

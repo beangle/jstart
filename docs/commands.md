@@ -107,7 +107,8 @@ target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
 [launch-spec.md](launch-spec.md)）时，主类（`[app] main`）、运行时/解释器可执行
 文件（`[app] runtime`）、运行时参数（`[runtime]` 段）与应用参数（`[args]` 段）
 取自 spec；命令行上追加的参数排在 spec 之后（`-D`/`-X` 开头归运行时）。spec
-声明 `[deps]` 时它是依赖唯一来源，否则回退读取 entry 内置依赖清单。
+的 `[libs]` 段是扩展依赖，**追加/覆盖**在 entry 内置依赖清单之上（同名 `g:a` 以
+`[libs]` 为准）；不写时不改变内置清单。
 
 参数分配：
 
@@ -442,7 +443,7 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
 - **子命令**：`resolve` 输出可执行文件绝对路径（供脚本 exec）；`run` 解析后 exec 它（进程即
   应用，无父子等待）；`info` 输出 `type: native` 与 `archive`/`root`；`classpath` 对 native
   无意义（exit 2，提示改用 `resolve`）；
-- **依赖**：native 包内没有依赖清单，需要额外依赖时用 spec `[deps]` 段显式罗列（语义不变）。
+- **依赖**：native 包内没有依赖清单，需要额外依赖时用 spec `[libs]` 段显式罗列（此时即全部依赖）。
 
 ## 组件 base 与 pid 文件（run/stop）—— 一个 base 一个实例
 
@@ -524,8 +525,8 @@ jstart run /opt/app/portal.tar.gz --instance=portal-a --port=9999  # Already run
 | `/path/to/app.war` | war：`resolve`/`repo` 直接接受，读取 `WEB-INF/classes/...` 依赖描述；`run` 不接受裸 war，须在 launch spec 里用 `[app] entry` 声明（见 [war-engine.md](war-engine.md)） |
 | `/path/dir` | 解压后的 webapp 目录：作为 `run` 目标时须在 spec 里声明 `[app] engine`（引擎直接当 docBase 用，不解压）；否则按普通 java 目标（需 `--main`/`[app] main`/Manifest）；`resolve`/`repo` 直接接受 |
 | `/path/app.tar.gz` | native 发行包（GraalVM）：解压到 `<base>/app`（base = `<根>/<组件键>`，根默认 `/var/tmp/jstart`，`--base` 可改）后 exec 包内可执行文件，参数附加在其后（见"native（tar.gz）目标"） |
-| `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[deps]` |
-| `/path/app.jstart` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
+| `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[libs]` |
+| `/path/app.jstart` | launch spec：ini 式声明 main/entry/runtime/args/可选 [libs]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |
 | `group:artifact:version` | gav；含 `:` 且无 `/`、`\` 时识别为 gav |
 | `gav://group:artifact:version` | 显式 gav |
 | `group:artifact:tar.gz:<classifier>:version` | native 发行包 gav：走发行仓库取包（含增量补丁）后解压运行 |

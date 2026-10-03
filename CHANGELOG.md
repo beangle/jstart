@@ -10,15 +10,24 @@
   beangle/sas `TomcatMaker` 的能力已收敛到该入口 main）：解压并精简 tomcat 发行包、
   生成 `conf/web.xml`/`conf/server.xml`、装 lib，`--jsp=`/`--listener=`/`--dist=` 等经
   `[args]` 或命令行透传
-- **多 webapp spec**：单个 spec 用若干 `[subapp <id>]` 段（`entry`/`path`）声明多个
-  webapp，由一个 **Dist 引擎**在同一 JVM 里各建一个 context。多应用只走 Dist 模式
-  （内嵌 `tomcat`/`undertow` 别名与 `*EmbedCreator` 在校验阶段被拒），`[app] engine` 省略
-  时缺省 ServerCreator；jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库（运行时由每个
-  Context 自己的 `DependencyClassLoader` 按 war 清单解析，不合并进同一 JVM classpath），
-  把 `id \t entry \t path` 写进 `<base>/engine-webapps.tsv`，引擎按 `--base` 约定读取；
-  `resolve`/`info` 按 webapp 逐个输出，`classpath` 明确拒绝，`stop` 一次停整组
+- **多 webapp spec**：单个 spec 用若干 `[subapp <id>]` 段（`entry`/`path`，可选 `libs`）
+  声明多个 webapp，由一个 **Dist 引擎**在同一 JVM 里各建一个 context。多应用只走 Dist
+  模式（内嵌 `tomcat`/`undertow` 别名与 `*EmbedCreator` 在校验阶段被拒），`[app] engine`
+  省略时缺省 ServerCreator；jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库（运行时由
+  每个 Context 自己的 `DependencyClassLoader` 按 war 清单解析，不合并进同一 JVM
+  classpath）。交付文件改走 **launch spec 片段** `<base>/engine-subapps.jstart`
+  （一段一个 `[subapp <id>]`，含 entry/path/libs），引擎按 `--base` 约定读取；`libs` 是
+  per-webapp 的扩展依赖（gav，追加在 war 清单之上，同名以 libs 为准，对齐 sas `Webapp
+  libs`），jstart 先取回本地仓库。`resolve`/`info` 按 webapp 逐个输出，`classpath` 明确
+  拒绝，`stop` 一次停整组
 - **spec 互斥校验**：`[app] main` 与 `[app] engine`/`[engine]` 互斥，同时声明直接报错
   （jar 跑主类、war 跑引擎 entry main，语义冲突）
+- **`[deps]` 段改名 `[libs]`，语义改为追加/覆盖**：不再"存在即替换 entry 内置清单"，
+  而是**追加在**内置清单之上。**覆盖规则**：按 `groupId:artifactId` 判同名（不看版本、
+  打包/classifier），同名时取 `[libs]` 的那条、版本用 `[libs]` 的，内置同名项整条丢弃
+  （不会两个版本并存，classpath 里 libs 在前）；与容器 `libs` 的合并规则一致，native 等
+  无内置清单的 entry 下即为全部依赖。顶层 `[libs]` 与 `[subapp]` 段互斥；旧名 `[deps]`
+  仍可用（告警提示改名，行为等同 `[libs]`）
 - **实例目录与 `stop`**：`stop <target>` 按 pid 文件停止 `run` 启动的实例（SIGTERM；
   `--timeout=<sec>` 缺省 15 秒，`--force` 超时后 SIGKILL；未运行 exit 3 并清理残留
   pid 文件）。实例身份 = 组件键 + base，`--base=<dir>` 换 base 根（默认

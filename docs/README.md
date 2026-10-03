@@ -12,9 +12,9 @@ java。本目录存放项目文档。
 | [design.md](design.md) | 设计思路：与 beangle/boot 的对应关系、exec 启动、模块架构、依赖准备流程 |
 | [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`/`fetch`、选项、退出码与示例 |
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
-| [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[deps]/[engine] 语义、run --print 与范围规划 |
+| [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[libs]/[engine] 语义、run --print 与范围规划 |
 | [war-engine.md](war-engine.md) | war 运行：何时启用、[app] engine 选择、[engine] 依赖罗列、参数与限制 |
-| [engine.md](engine.md) | **引擎入口 main 协议**：两阶段启动、argv 文件、`--entry` 语义、多 webapp 计划文件（`<base>/engine-webapps.tsv`）、引擎别名与 docBase 归属 |
+| [engine.md](engine.md) | **引擎入口 main 协议**：两阶段启动、argv 文件、`--entry` 语义、多 webapp 交付文件（`<base>/engine-subapps.jstart`，spec 片段）、引擎别名与 docBase 归属 |
 | [offline.md](offline.md) | 离线部署：仓库整合、无外网机器上的启动方式与注意事项 |
 | [build.md](build.md) | 构建、测试与打包：dub/release、单测与冒烟、deb/rpm 脚本、产物布局 |
 | [release-v0.0.1.md](release-v0.0.1.md) | v0.0.1 发布说明：范围、已知限制与路线图 |
@@ -53,8 +53,9 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   tomcat 版本、`[engine]` 段罗列引擎依赖并支持 `{tomcat.version}`/`{sas.version}` 占位符
   （协议见 [engine.md](engine.md)，用法见 [war-engine.md](war-engine.md)）。
   `resolve`/`fetch`/`repo` 仍可直接接受 war 文件/gav。多 webapp 用若干 `[subapp <id>]`
-  段（`entry`+`path`）声明，交给 **Dist 引擎**（缺省 `ServerCreator`，多应用只走 Dist）在同一
-  JVM 里各建一个 context，各 webapp 依赖由各自 Context 隔离解析，见 [engine.md](engine.md)。
+  段（`entry`+`path`，可选 `libs` 扩展依赖）声明，交给 **Dist 引擎**（缺省
+  `ServerCreator`，多应用只走 Dist）在同一 JVM 里各建一个 context，各 webapp 依赖由各自
+  Context 隔离解析，见 [engine.md](engine.md)。
 - `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件
   走独立的 `~/.m2/snapshots`，不与 repository 混合；SNAPSHOT 每次向上游解析最新构建：
   HEAD 别名读 micdn 的 `latest` 头，其次版本目录的 `maven-metadata.xml`，本地已有该时间戳
