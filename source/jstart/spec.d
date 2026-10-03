@@ -3,12 +3,13 @@
  *
  * A spec declares the main class (Java only), the application entry
  * (gav/http/file/dir), the runtime executable and its options, application
- * args, an optional explicit dependency list and, for war entries, the
- * built-in engine (see docs/war-engine.md), turning `run` into a complete
+ * args, an optional extension libs list (`[libs]`, merged over the entry's
+ * built-in dependency manifest) and, for war entries, the built-in engine
+ * (see docs/war-engine.md), turning `run` into a complete
  * "how to start" description. A spec may instead declare several
- * `[subapp <id>]` sections (entry + context path) so one dist engine runs
- * several webapps in one JVM (see docs/engine.md). See docs/launch-spec.md
- * for the format and design decisions.
+ * `[subapp <id>]` sections (entry + context path + optional extension libs)
+ * so one dist engine runs several webapps in one JVM (see docs/engine.md).
+ * See docs/launch-spec.md for the format and design decisions.
  */
 module jstart.spec;
 
@@ -60,10 +61,11 @@ struct LaunchSpec {
   string[] runtimeOptions;
   /// Application args, in order (each spec line is one argv, no splitting).
   string[] args;
-  /// Explicit dependency lines, valid only when hasDeps is true.
-  string[] deps;
-  /// Whether an explicit [deps] section was present (even when empty).
-  bool hasDeps;
+  /// 扩展依赖行（`[libs]` 段）：追加/覆盖在 entry 内置依赖清单之上。同名按
+  /// `groupId:artifactId` 判定（不看版本），同名时取 libs 的版本。每行与依赖描述
+  /// 文件同语法（gav/本地文件/远程 url）；一行也可逗号分隔多个 gav。native 等
+  /// 无内置清单的 entry 下它就是全部依赖。
+  string[] libs;
   /// Engine selection ([app] engine), meaningful only for war entries.
   /// Empty defaults to "tomcat" at run time; jar/other targets ignore it.
   string engine;
@@ -124,10 +126,13 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
       }
       section = name;
       if (section == "deps") {
-        spec.hasDeps = true; // 空 [deps] 段也是"显式无依赖"的声明
+        // 旧名 [deps]：0.0.x 起改名 [libs]，语义也从"替换内置清单"改为"追加/覆盖"。
+        warnings ~= format("line %d: [deps] 已改名为 [libs]，请更新 spec", i + 1);
+        section = "libs";
       } else if (section == "engine") {
         spec.hasEngineDeps = true; // [engine] 段存在即为准
-      } else if (section != "app" && section != "runtime" && section != "args") {
+      } else if (section != "app" && section != "runtime" && section != "args"
+          && section != "libs") {
         warnings ~= format("line %d: unknown section [%s]", i + 1, section);
         section = ""; // 未知段内容整段跳过
       }
@@ -177,8 +182,8 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
       case "args":
         spec.args ~= raw;
         break;
-      case "deps":
-        spec.deps ~= raw;
+      case "libs":
+        spec.libs ~= raw;
         break;
       case "engine":
         spec.engineDeps ~= raw;
@@ -273,9 +278,9 @@ string validateLaunchSpec(LaunchSpec spec) {
     if (spec.main.length > 0) {
       return "[app] main conflicts with [subapp <id>] sections: a subapp runs an engine entry main";
     }
-    if (spec.hasDeps) {
-      return "[deps] conflicts with [subapp <id>] sections: each subapp declares its own"
-          ~ " dependencies in its war (META-INF/beangle/dependencies)";
+    if (spec.libs.length > 0) {
+      return "[libs] conflicts with [subapp <id>] sections: each subapp declares its own"
+          ~ " extension libs and reads its war's META-INF/beangle/dependencies";
     }
     if (spec.engine.length > 0) {
       auto head = spec.engine;

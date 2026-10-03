@@ -85,6 +85,36 @@ echo "== second resolve uses local cache =="
 out="$("$JSTART" --local="$REPO" --quiet resolve "$T/app.jar")"; code=$?
 check "resolve cached" "$code" 0 "$T/app.jar"
 
+echo "== [libs]: 追加/覆盖，同名 g:a 与内置清单去重 =="
+# app.jar 的清单已含 slf4j-api:2.0.17；spec 再声明同名 [libs] 后合并结果仍应只有 1 条。
+cat > "$T/libs.jstart" <<INI
+[app]
+main = org.jstarttest.Hello
+entry = $T/app.jar
+
+[libs]
+org.slf4j:slf4j-api:2.0.17
+INI
+out="$("$JSTART" --local="$REPO" --quiet info "$T/libs.jstart")"; code=$?
+check "libs merge info" "$code" 0 "libs: 1"
+check "libs merge dedup" "$code" 0 "deps: 1"
+out="$("$JSTART" --local="$REPO" --quiet classpath "$T/libs.jstart")"; code=$?
+check "libs merge classpath" "$code" 0 "slf4j-api-2.0.17.jar"
+# 旧名 [deps] 仍可用：告警提示改名，行为等同 [libs]。
+cat > "$T/deps-alias.jstart" <<INI
+[app]
+main = org.jstarttest.Hello
+entry = $T/app.jar
+
+[deps]
+org.slf4j:slf4j-api:2.0.17
+INI
+out="$("$JSTART" --local="$REPO" info "$T/deps-alias.jstart" 2>&1)"; code=$?
+check "deps alias warns" "$code" 0 "改名为"
+printf '%s' "$out" | grep -q "已改名为 \[libs\]" \
+  || { echo "FAIL deps alias warning text: $out" >&2; failures=$((failures + 1)); }
+check "deps alias merges" "$code" 0 "deps: 1"
+
 echo "== run forwards args (needs java + compiled class) =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   out="$("$JSTART" --local="$REPO" --verbose run "$T/app.jar" --port=8080 demo)"; code=$?

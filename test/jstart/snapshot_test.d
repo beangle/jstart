@@ -322,9 +322,9 @@ unittest {
 }
 
 unittest {
-  // launch spec [deps] 里的 SNAPSHOT 走与内置依赖清单同一条快照解析：每次解析都问上游，
-  // 上游发布新构建后，同一个 [deps] 应换到新的时间戳文件（而不是停在本地旧构建）。
-  auto tmp = buildPath(tempDir(), "jstart-snapshot-specdeps-" ~ to!string(thisProcessID));
+  // launch spec [libs] 里的 SNAPSHOT 走与内置依赖清单同一条快照解析：每次解析都问上游，
+  // 上游发布新构建后，同一个 [libs] 应换到新的时间戳文件（而不是停在本地旧构建）。
+  auto tmp = buildPath(tempDir(), "jstart-snapshot-speclibs-" ~ to!string(thisProcessID));
   rmTree(tmp);
   auto remote = buildPath(tmp, "remote");
   auto localBase = buildPath(tmp, "repository");
@@ -344,14 +344,14 @@ unittest {
   server.headExtra[aliasPath] = "latest: demo-1.0-20260101.010101-1.jar\r\n";
 
   string[] warnings;
-  auto spec = parseLaunchSpec("[app]\nentry = app.jar\n\n[deps]\n"
+  auto spec = parseLaunchSpec("[app]\nentry = app.jar\n\n[libs]\n"
       ~ "org.example:demo:1.0-SNAPSHOT\n", warnings);
-  assert(spec.hasDeps && spec.deps.length == 1);
+  assert(spec.libs.length == 1);
 
   auto local = new LocalRepo(localBase, snapBase);
   auto resolver = new Resolver(local, [], false);
   resolver.snapshotRemotes = [RemoteRepo("test", base)];
-  auto deps = resolver.parseDependencyText(spec.deps.join("\n"));
+  auto deps = resolver.parseDependencyText(spec.libs.join("\n"));
   assert(deps.length == 1);
 
   auto first = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT",
@@ -360,7 +360,7 @@ unittest {
   assert(missing.length == 0, missing.length ? missing[0] : "");
   assert(resolver.dependencyPath(deps[0]) == first, resolver.dependencyPath(deps[0]));
 
-  // 上游发布 build 2：同一个 [deps] 再次解析应换到新时间戳文件
+  // 上游发布 build 2：同一个 [libs] 再次解析应换到新时间戳文件
   write(buildPath(dir, "demo-1.0-20260102.020202-2.jar"), "two");
   write(buildPath(dir, "demo-1.0-20260102.020202-2.jar.sha1"),
       sha1OfFile(buildPath(dir, "demo-1.0-20260102.020202-2.jar")));

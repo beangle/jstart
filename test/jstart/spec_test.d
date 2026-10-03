@@ -38,7 +38,7 @@ unittest {
     "--port=8080\n" ~
     "with space\n" ~
     "; trailing comment line\n" ~
-    "[deps]\n" ~
+    "[libs]\n" ~
     "org.slf4j:slf4j-api:2.0.17\n";
   string[] warnings;
   auto spec = parseLaunchSpec(text, warnings);
@@ -52,9 +52,8 @@ unittest {
   assert(spec.args.length == 2);
   assert(spec.args[0] == "--port=8080");
   assert(spec.args[1] == "with space");
-  assert(spec.hasDeps);
-  assert(spec.deps.length == 1);
-  assert(spec.deps[0] == "org.slf4j:slf4j-api:2.0.17");
+  assert(spec.libs.length == 1);
+  assert(spec.libs[0] == "org.slf4j:slf4j-api:2.0.17");
 }
 
 unittest {
@@ -78,17 +77,21 @@ unittest {
 }
 
 unittest {
-  // 空 [deps] 段：显式声明"无依赖"，hasDeps 为 true。
+  // 空 [libs] 段是空扩展（无副作用）；没有 [libs] 段则为空、走 entry 内置清单。
   string[] warnings;
-  auto spec = parseLaunchSpec("[app]\nentry = x.jar\n[deps]\n", warnings);
-  assert(spec.hasDeps);
-  assert(spec.deps.length == 0);
+  auto spec = parseLaunchSpec("[app]\nentry = x.jar\n[libs]\n", warnings);
+  assert(spec.libs.length == 0);
   assert(warnings.length == 0);
 
-  // 没有 [deps] 段：hasDeps 为 false（回退读取 entry 内置清单）。
   auto spec2 = parseLaunchSpec("[app]\nentry = x.jar\n", warnings);
-  assert(!spec2.hasDeps);
-  assert(spec2.deps.length == 0);
+  assert(spec2.libs.length == 0);
+
+  // 旧名 [deps] 仍可用（告警 + 归入 libs），方便迁移。
+  auto spec3 = parseLaunchSpec("[app]\nentry = x.jar\n[deps]\norg.slf4j:slf4j-api:2.0.17\n",
+      warnings);
+  assert(spec3.libs.length == 1);
+  assert(warnings.length == 1);
+  assert(warnings[0].indexOf("[deps]") >= 0 && warnings[0].indexOf("[libs]") >= 0);
 }
 
 unittest {
@@ -120,7 +123,7 @@ unittest {
     "entry=  x.jar\t\n" ~
     "; whole line comment\n" ~
     "# another\n" ~
-    "[deps]\n" ~
+    "[libs]\n" ~
     "  org.slf4j:slf4j-api:2.0.17  \n";
   string[] warnings;
   auto spec = parseLaunchSpec(text, warnings);
@@ -128,22 +131,20 @@ unittest {
   assert(spec.runtimeOptions.length == 1 && spec.runtimeOptions[0] == "-Xmx1g");
   assert(spec.main == "M");
   assert(spec.entry == "x.jar");
-  assert(spec.hasDeps);
-  assert(spec.deps.length == 1 && spec.deps[0] == "org.slf4j:slf4j-api:2.0.17");
+  assert(spec.libs.length == 1 && spec.libs[0] == "org.slf4j:slf4j-api:2.0.17");
 }
 
 unittest {
-  // [deps] 行原样保留（不去重、不解释）：与 deps file 的语义一致，重复由后续解析层处理。
-  enum text = "[deps]\n" ~
+  // [libs] 行原样保留（不去重、不解释）：与 deps file 的语义一致，重复由后续解析层处理。
+  enum text = "[libs]\n" ~
     "org.slf4j:slf4j-api:2.0.17\n" ~
     "org.slf4j:slf4j-api:2.0.17\n" ~
     "https://repo.example.com/lib.jar\n";
   string[] warnings;
   auto spec = parseLaunchSpec(text, warnings);
-  assert(spec.hasDeps);
-  assert(spec.deps.length == 3, spec.deps.join(","));
-  assert(spec.deps[1] == "org.slf4j:slf4j-api:2.0.17");
-  assert(spec.deps[2] == "https://repo.example.com/lib.jar");
+  assert(spec.libs.length == 3, spec.libs.join(","));
+  assert(spec.libs[1] == "org.slf4j:slf4j-api:2.0.17");
+  assert(spec.libs[2] == "https://repo.example.com/lib.jar");
 }
 
 unittest {
@@ -193,7 +194,7 @@ unittest {
 }
 
 unittest {
-  // [app] engine 短键 + [engine] 段：war 引擎选择与引擎依赖罗列（每行同 [deps] 语法）。
+  // [app] engine 短键 + [engine] 段：war 引擎选择与引擎依赖罗列（每行同 [libs] 语法）。
   enum text = "[app]\n" ~
     "entry = app.war\n" ~
     "engine = tomcat\n" ~
@@ -344,7 +345,7 @@ unittest {
 }
 
 unittest {
-  // 多应用与单应用的键互斥：entry/main/[deps] 都不能和 [subapp] 段共存。
+  // 多应用与单应用的键互斥：entry/main/[libs] 都不能和 [subapp] 段共存。
   string[] warnings;
   auto withEntry = parseLaunchSpec(
       "[app]\nentry = app.war\n[subapp a]\nentry = a.war\npath = /a\n", warnings);
@@ -354,9 +355,9 @@ unittest {
       "[app]\nmain = org.example.Main\n[subapp a]\nentry = a.war\npath = /a\n", warnings);
   assert(validateLaunchSpec(withMain).length > 0);
 
-  auto withDeps = parseLaunchSpec(
-      "[deps]\norg.slf4j:slf4j-api:2.0.17\n[subapp a]\nentry = a.war\npath = /a\n", warnings);
-  assert(validateLaunchSpec(withDeps).length > 0);
+  auto withLibs = parseLaunchSpec(
+      "[libs]\norg.slf4j:slf4j-api:2.0.17\n[subapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(withLibs).length > 0);
 }
 
 unittest {

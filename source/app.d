@@ -433,12 +433,13 @@ int main(string[] args) {
     stderr.writeln("Warning: [app] engine / [engine] applies to war targets "
         ~ "(a war file or an exploded webapp directory), ignored.");
   }
-  Archive[] deps;
-  if (specMode && spec.hasDeps) {
-    // 显式 [deps] 段是唯一来源，不再回退读取 entry 内置依赖清单。
-    deps = resolver.parseDependencyText(spec.deps.join("\n"));
-  } else if (!nativeMode) {
-    deps = resolver.resolveDependencies(appPath);
+  // [libs] 叠加在 entry 内置依赖清单之上（追加/覆盖）：先 libs 后内置，同名 g:a 以
+  // libs 为准（与 sas `libs` 的 merge 一致）。native 包内无清单时 libs 即全部依赖。
+  Archive[] entryDeps = nativeMode ? null : resolver.resolveDependencies(appPath);
+  Archive[] deps = entryDeps;
+  if (specMode && spec.libs.length > 0) {
+    auto libs = resolver.parseDependencyText(flattenLibs(spec.libs).join("\n"));
+    deps = mergeLibraries(libs, entryDeps);
   }
   auto missing = resolver.ensureDependencies(deps, opts.jobs);
 
@@ -539,7 +540,7 @@ int main(string[] args) {
  *
  * - [app] engine：内置别名 tomcat|undertow（war 缺省 tomcat，可带 tomcat 版本
  *   后缀），或含 "." 的入口 main FQCN；
- * - [engine] 段：引擎 jar 清单（同 [deps] 语法，行内可用
+ * - [engine] 段：引擎 jar 清单（同 [libs] 语法，行内可用
  *   {tomcat.version}/{sas.version} 占位符）；段存在即为准。缺省用内置目录
  *   （tomcat 支持 engine = tomcat-<版本> 重钉两个 tomcat-embed jar）；FQCN 入口
  *   main 没有内置目录，必须显式声明 [engine]；
@@ -1004,6 +1005,9 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
     snapshotRemotes ~= r.base;
   }
   writeln("snapshot-remotes: " ~ snapshotRemotes.join(","));
+  if (specMode) {
+    writeln("libs: " ~ flattenLibs(spec.libs).length.to!string);
+  }
   writeln("deps: " ~ deps.length.to!string);
   foreach (i, dep; deps) {
     string kind;
@@ -1217,7 +1221,7 @@ private int runRepo(BootArgs opts) {
   auto resolver = new Resolver(localRepo, [], showProgress(opts), opts.quiet, opts.offline);
   Archive[] deps;
   if (specMode && spec.subapps.length > 0) {
-    // 多应用：逐 webapp 整合依赖（[deps] 与 [subapp] 段互斥，各 webapp 用自身 war 清单）。
+    // 多应用：逐 webapp 整合依赖（[libs] 与 [subapp] 段互斥，各 webapp 用自身 war 清单）。
     foreach (w; spec.subapps) {
       auto entry = expandLocalPath(w.entry);
       if (!exists(entry) || (!isFile(entry) && !isDir(entry))) {
@@ -1233,8 +1237,10 @@ private int runRepo(BootArgs opts) {
       stderr.writeln("repo: launch spec entry must be a local file or directory: " ~ spec.entry);
       return 1;
     }
-    deps = spec.hasDeps ? resolver.parseDependencyText(spec.deps.join("\n"))
-      : resolver.resolveDependencies(entry);
+    auto entryDeps = resolver.resolveDependencies(entry);
+    deps = spec.libs.length > 0
+      ? mergeLibraries(resolver.parseDependencyText(flattenLibs(spec.libs).join("\n")), entryDeps)
+      : entryDeps;
   } else {
     auto reject = plainTargetReject(opts);
     if (reject.length > 0) {

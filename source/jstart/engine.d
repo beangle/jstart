@@ -16,7 +16,7 @@
  *   engine = tomcat-11.0.24        # 内置别名可带 tomcat 版本后缀
  *   engine = org.example.MyMain    # 含 "." 的值直接作为入口 main 的 FQCN
  *
- *   [engine]                       # 可选段：引擎依赖，每行与 [deps] 同语法；
+ *   [engine]                       # 可选段：引擎依赖，每行与 [libs] 同语法；
  *   org.beangle.sas:beangle-sas-engine:0.13.17
  *   org.apache.tomcat.embed:tomcat-embed-core:11.0.21
  *   org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
