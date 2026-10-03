@@ -6,7 +6,7 @@
  * args, an optional explicit dependency list and, for war entries, the
  * built-in engine (see docs/war-engine.md), turning `run` into a complete
  * "how to start" description. A spec may instead declare several
- * `[webapp <id>]` sections (entry + context path) so one dist engine runs
+ * `[subapp <id>]` sections (entry + context path) so one dist engine runs
  * several webapps in one JVM (see docs/engine.md). See docs/launch-spec.md
  * for the format and design decisions.
  */
@@ -22,9 +22,9 @@ import jstart.engine : builtinEngineNames, distTomcatEntryMain, isEmbedEntryMain
 /// Launch spec suffix: a spec target must be named <name>.jstart.
 immutable string[] specExtensions = [".jstart"];
 
-/// 单个 webapp 的声明（`[webapp <id>]` 段）：一个引擎跑多个应用时用。
-struct WebappSpec {
-  /// 段头里的 id（`[webapp portal]` → "portal"）：命名计划行，便于引擎区分各 webapp。
+/// 单个 subapp 的声明（`[subapp <id>]` 段）：一个引擎跑多个应用时用。
+struct SubappSpec {
+  /// 段头里的 id（`[subapp portal]` → "portal"）：命名计划行，便于引擎区分各 subapp。
   string id;
   /// 应用入口，取值同 [app] entry（gav / url / 本地文件 / 目录）。
   string entry;
@@ -68,8 +68,8 @@ struct LaunchSpec {
   /// Whether an [engine] section was present (even when empty); when
   /// present its lines are authoritative and no built-in catalog is used.
   bool hasEngineDeps;
-  /// 多应用：[webapp <id>] 段逐个声明，空表示单应用 spec（[app] entry）。
-  WebappSpec[] webapps;
+  /// 多应用：[subapp <id>] 段逐个声明，空表示单应用 spec（[app] entry）。
+  SubappSpec[] subapps;
 }
 
 /**
@@ -107,14 +107,14 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
     }
     if (raw.startsWith("[") && raw.endsWith("]")) {
       auto name = raw[1 .. $ - 1].strip;
-      if (name == "webapp" || name.startsWith("webapp ")) {
-        auto id = name["webapp".length .. $].strip;
+      if (name == "subapp" || name.startsWith("subapp ")) {
+        auto id = name["subapp".length .. $].strip;
         if (id.length == 0) {
-          warnings ~= format("line %d: [webapp] needs an id, e.g. [webapp portal]", i + 1);
+          warnings ~= format("line %d: [subapp] needs an id, e.g. [subapp portal]", i + 1);
           section = "";
         } else {
-          spec.webapps ~= WebappSpec(id, "", "");
-          section = "webapp";
+          spec.subapps ~= SubappSpec(id, "", "");
+          section = "subapp";
         }
         continue;
       }
@@ -179,19 +179,19 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
       case "engine":
         spec.engineDeps ~= raw;
         break;
-      case "webapp":
+      case "subapp":
         auto eq = raw.indexOf("=");
         if (eq < 0) {
-          warnings ~= format("line %d: [webapp %s] expects key = value", i + 1,
-              spec.webapps.length ? spec.webapps[$ - 1].id : "");
+          warnings ~= format("line %d: [subapp %s] expects key = value", i + 1,
+              spec.subapps.length ? spec.subapps[$ - 1].id : "");
           continue;
         }
         auto key = raw[0 .. eq].strip;
         auto value = raw[eq + 1 .. $].strip;
-        if (spec.webapps.length == 0) {
+        if (spec.subapps.length == 0) {
           continue;
         }
-        ref app = spec.webapps[$ - 1];
+        ref app = spec.subapps[$ - 1];
         switch (key) {
           case "entry":
             app.entry = value;
@@ -200,7 +200,7 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
             app.path = value;
             break;
           default:
-            warnings ~= format("line %d: unknown [webapp] key %s", i + 1, key);
+            warnings ~= format("line %d: unknown [subapp] key %s", i + 1, key);
         }
         break;
       default:
@@ -242,15 +242,15 @@ private string normalizeContextPath(string p) {
  * with an engine, so it conflicts with [app] main too.
  */
 string validateLaunchSpec(LaunchSpec spec) {
-  if (spec.webapps.length > 0) {
+  if (spec.subapps.length > 0) {
     if (spec.entry.length > 0) {
-      return "[app] entry conflicts with [webapp <id>] sections: use one form or the other";
+      return "[app] entry conflicts with [subapp <id>] sections: use one form or the other";
     }
     if (spec.main.length > 0) {
-      return "[app] main conflicts with [webapp <id>] sections: a webapp runs an engine entry main";
+      return "[app] main conflicts with [subapp <id>] sections: a subapp runs an engine entry main";
     }
     if (spec.hasDeps) {
-      return "[deps] conflicts with [webapp <id>] sections: each webapp declares its own"
+      return "[deps] conflicts with [subapp <id>] sections: each subapp declares its own"
           ~ " dependencies in its war (META-INF/beangle/dependencies)";
     }
     if (spec.engine.length > 0) {
@@ -261,34 +261,34 @@ string validateLaunchSpec(LaunchSpec spec) {
       }
       if (builtinEngineNames.canFind(head)) {
         return format("[app] engine = %s is the embedded (single-webapp) engine, but"
-            ~ " [webapp <id>] needs the dist engine, which runs several contexts in one JVM;"
+            ~ " [subapp <id>] needs the dist engine, which runs several contexts in one JVM;"
             ~ " drop [app] engine or give the dist entry main", spec.engine);
       }
       if (isEmbedEntryMain(spec.engine)) {
         return format("[app] engine = %s is an embedded (single-webapp) entry main, but"
-            ~ " [webapp <id>] needs the dist engine, which runs several contexts in one JVM"
+            ~ " [subapp <id>] needs the dist engine, which runs several contexts in one JVM"
             ~ " (e.g. %s)", spec.engine, distTomcatEntryMain);
       }
     }
     string[] paths;
     string[] ids;
-    foreach (app; spec.webapps) {
+    foreach (app; spec.subapps) {
       if (app.id.indexOf(' ') >= 0 || app.id.indexOf('\t') >= 0) {
-        return format("[webapp] id `%s` cannot contain spaces or tabs", app.id);
+        return format("[subapp] id `%s` cannot contain spaces or tabs", app.id);
       }
       if (ids.canFind(app.id)) {
-        return format("duplicate [webapp %s] section", app.id);
+        return format("duplicate [subapp %s] section", app.id);
       }
       ids ~= app.id;
       if (app.entry.length == 0) {
-        return format("[webapp %s] needs an entry", app.id);
+        return format("[subapp %s] needs an entry", app.id);
       }
       if (app.path.length == 0) {
-        return format("[webapp %s] needs a path", app.id);
+        return format("[subapp %s] needs a path", app.id);
       }
       auto normalized = normalizeContextPath(app.path);
       if (paths.canFind(normalized)) {
-        return format("duplicate context path %s in [webapp <id>] sections", app.path);
+        return format("duplicate context path %s in [subapp <id>] sections", app.path);
       }
       paths ~= normalized;
     }

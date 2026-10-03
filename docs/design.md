@@ -79,7 +79,7 @@ source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifes
 source/jstart/engine.d           war 引擎：入口 main 选择与协议常量、内置默认依赖目录
                                  （tomcat/undertow/Dist）、[engine] 行占位符展开、entry-out argv 解析
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
-                                 （[app]/[runtime]/[args]/[deps]/[engine]/[webapp <id>]）
+                                 （[app]/[runtime]/[args]/[deps]/[engine]/[subapp <id>]）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
 source/jstart/native.d          native tar.gz：解压到给定目录（临时目录+改名，支持并发）、

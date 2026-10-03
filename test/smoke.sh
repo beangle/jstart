@@ -414,7 +414,7 @@ else
   echo "skip war engine test (javac/java missing)"
 fi
 
-echo "== multi-webapp spec: [webapp] -> webapps-file -> dist engine -> entry-out =="
+echo "== multi-webapp spec: [subapp] -> webapps-file -> dist engine -> entry-out =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   # 一个假的 dist 引擎入口 main：校验 --webapps-file 有多少行、每行 id/entry/path 是否
   # 完整、entry 是否真实存在，再 exec 一个回显计划文件的短程序（不依赖真实 sas）。
@@ -479,11 +479,11 @@ JAVA
 [app]
 engine = org.jstarttest.FakeDistEngine
 
-[webapp portal]
+[subapp portal]
 entry = $T/portal.war
 path = /portal
 
-[webapp admin]
+[subapp admin]
 entry = $T/admin.war
 path = /admin
 
@@ -521,7 +521,7 @@ INI
 [app]
 engine = tomcat
 
-[webapp a]
+[subapp a]
 entry = $T/portal.war
 path = /a
 INI

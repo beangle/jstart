@@ -58,7 +58,7 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
  见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
   `engine = tomcat-11.0.24` 直接指定 tomcat 版本；`[engine]` 行支持
   `{tomcat.version}`/`{sas.version}` 占位符引用内置版本，不必手写重复版本号。
-- 多 webapp：一个 spec 用若干 `[webapp <id>]` 段（`entry` + `path`）声明多个 war，交给
+- 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，交给
   **Dist 引擎**（`org.beangle.sas.engine.tomcat.ServerCreator`，可省略即缺省）在同一 JVM 里各
   建一个 context。多应用只走 Dist 模式（内嵌 `tomcat`/`undertow`、`*EmbedCreator` 会被拒），
   各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一份 pid

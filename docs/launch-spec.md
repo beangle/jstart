@@ -89,7 +89,7 @@ working_dir = ${APP_HOME}
 | `[args]` | 行列表 | 每个非注释行是一个应用参数，**整行**作为一个 argv：不切分、不展开变量，值含空格可直接书写；native 目标同样附加在可执行文件之后 |
 | `[deps]` | 行列表 | 可选。每行语法与依赖描述文件一致（gav/本地文件/远程 url） |
 | `[engine]` | 行列表 | 可选（仅 war/目录）。引擎启动器依赖逐行罗列，语法同 `[deps]`（gav/本地文件/远程 url），行内可用占位符 `{tomcat.version}`/`{sas.version}` 引用内置版本；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [engine.md](engine.md)） |
-| `[webapp <id>]` | `entry` / `path` | 可选、可重复。**多应用**：一个 dist 引擎在同一 JVM 里跑多个 webapp，每个一段；`entry` 同 `[app] entry`，`path` 是该 webapp 的上下文路径（归一化后各自唯一）。与 `[app] entry`/`main`/`[deps]` 互斥，引擎只能走 Dist（见下） |
+| `[subapp <id>]` | `entry` / `path` | 可选、可重复。**多应用**：一个 dist 引擎在同一 JVM 里跑多个 webapp，每个一段；`entry` 同 `[app] entry`，`path` 是该 webapp 的上下文路径（归一化后各自唯一）。与 `[app] entry`/`main`/`[deps]` 互斥，引擎只能走 Dist（见下） |
 
 ### 语义约定
 
@@ -173,20 +173,20 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
   也不解析 `main=...` 之类的键值行——每行就是一条依赖（与 `[deps]` 完全同构）。
 - 引擎 jar 同样遵守"不解析传递依赖"约束：目录/`[engine]` 里必须显式写全。
 
-### 多 webapp（[webapp \<id\>]）
+### 多 webapp（[subapp \<id\>]）
 
-同一个引擎跑多个 war 时，用若干个 `[webapp <id>]` 段声明，**一个 spec 文件**即可，
+同一个引擎跑多个 war 时，用若干个 `[subapp <id>]` 段声明，**一个 spec 文件**即可，
 每个 webapp 一个独立上下文路径：
 
 ```ini
 [app]
 engine = org.beangle.sas.engine.tomcat.ServerCreator   # 可省略，多应用缺省即 ServerCreator
 
-[webapp portal]
+[subapp portal]
 entry = /srv/deploy/portal.war
 path = /portal
 
-[webapp admin]
+[subapp admin]
 entry = /srv/deploy/admin.war
 path = /admin
 ```
@@ -198,7 +198,7 @@ path = /admin
   engine` 省略时用内置的 Dist 引擎入口 main `org.beangle.sas.engine.tomcat.ServerCreator`。
 - **每个 webapp 必须有 `entry` 和 `path`**，归一化后（去尾 `/`、补首个 `/`、折叠
   `//`）的 context path 不能重复（`/` 只允许一个）；段头 id 不能重复、不能含空格/制表符。
-- **与单应用的键互斥**：`[app] entry`、`[app] main`、`[deps]` 都不能和 `[webapp]` 段
+- **与单应用的键互斥**：`[app] entry`、`[app] main`、`[deps]` 都不能和 `[subapp]` 段
   共存——多应用每个 war 各用自身的 `META-INF/beangle/dependencies` 清单，`[deps]` 无法
   用一份清单表达多个应用。
 - **各 webapp 依赖相互隔离**：jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库；运行时

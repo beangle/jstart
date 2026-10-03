@@ -52,7 +52,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   `org.beangle.sas.engine.<name>.EmbedCreator`）、`engine = tomcat-11.0.24` 可直接指定
   tomcat 版本、`[engine]` 段罗列引擎依赖并支持 `{tomcat.version}`/`{sas.version}` 占位符
   （协议见 [engine.md](engine.md)，用法见 [war-engine.md](war-engine.md)）。
-  `resolve`/`fetch`/`repo` 仍可直接接受 war 文件/gav。多 webapp 用若干 `[webapp <id>]`
+  `resolve`/`fetch`/`repo` 仍可直接接受 war 文件/gav。多 webapp 用若干 `[subapp <id>]`
   段（`entry`+`path`）声明，交给 **Dist 引擎**（缺省 `ServerCreator`，多应用只走 Dist）在同一
   JVM 里各建一个 context，各 webapp 依赖由各自 Context 隔离解析，见 [engine.md](engine.md)。
 - `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件

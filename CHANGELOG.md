@@ -10,7 +10,7 @@
   beangle/sas `TomcatMaker` 的能力已收敛到该入口 main）：解压并精简 tomcat 发行包、
   生成 `conf/web.xml`/`conf/server.xml`、装 lib，`--jsp=`/`--listener=`/`--dist=` 等经
   `[args]` 或命令行透传
-- **多 webapp spec**：单个 spec 用若干 `[webapp <id>]` 段（`entry`/`path`）声明多个
+- **多 webapp spec**：单个 spec 用若干 `[subapp <id>]` 段（`entry`/`path`）声明多个
   webapp，由一个 **Dist 引擎**在同一 JVM 里各建一个 context。多应用只走 Dist 模式
   （内嵌 `tomcat`/`undertow` 别名与 `*EmbedCreator` 在校验阶段被拒），`[app] engine` 省略
   时缺省 ServerCreator；jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库（运行时由每个

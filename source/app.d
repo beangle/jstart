@@ -321,7 +321,7 @@ int main(string[] args) {
       return 1;
     }
   }
-  if (specMode && spec.webapps.length == 0 && spec.entry.length == 0) {
+  if (specMode && spec.subapps.length == 0 && spec.entry.length == 0) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
   }
@@ -357,9 +357,9 @@ int main(string[] args) {
     return code;
   }
 
-  // 多应用 spec（[webapp <id>]）：一个 dist 引擎在同一 JVM 里跑多个 webapp，各占一个
+  // 多应用 spec（[subapp <id>]）：一个 dist 引擎在同一 JVM 里跑多个 webapp，各占一个
   // context path。stop 已按 base 处理，这里处理 run/resolve/info/classpath。
-  if (specMode && spec.webapps.length > 0) {
+  if (specMode && spec.subapps.length > 0) {
     return runMultiWebapp(opts, resolver, spec);
   }
 
@@ -669,7 +669,7 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
 }
 
 /**
- * 多应用 spec（`[webapp <id>]`）：一个 **dist 引擎**在同一 JVM 里跑多个 webapp，每个
+ * 多应用 spec（`[subapp <id>]`）：一个 **dist 引擎**在同一 JVM 里跑多个 webapp，每个
  * 一个独立 context path。设计约定见 docs/engine.md：
  *
  *  - 多应用只走 Dist 模式，内嵌引擎（tomcat/undertow 别名、*EmbedCreator）只跑一个 webapp，
@@ -707,7 +707,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   // 每个 war 的清单，因此这里必须确保构件已就位（与单应用同为 jstart 的解析结果）。
   string[] entries;
   bool missingAny;
-  foreach (w; spec.webapps) {
+  foreach (w; spec.subapps) {
     auto entry = resolver.fetchTarget(w.entry);
     if (entry.length == 0) {
       return 1;
@@ -716,7 +716,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     auto deps = resolver.resolveDependencies(entry);
     auto missing = resolver.ensureDependencies(deps, opts.jobs);
     if (missing.length > 0) {
-      stderr.writeln(format("[webapp %s] missing: %s", w.id, missing.join(",")));
+      stderr.writeln(format("[subapp %s] missing: %s", w.id, missing.join(",")));
       missingAny = true;
     }
   }
@@ -797,7 +797,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   // webapps 计划文件：每行 id \t entry \t path，交给入口 main（ServerCreator）逐个建 Context。
   auto planPath = buildPath(base, webappsPlanFile);
   string plan;
-  foreach (i, w; spec.webapps) {
+  foreach (i, w; spec.subapps) {
     plan ~= w.id ~ "\t" ~ entries[i] ~ "\t" ~ w.path ~ "\n";
   }
   write(planPath, plan);
@@ -859,7 +859,7 @@ private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec sp
 
   writeln("target: " ~ opts.target);
   writeln("type: multi-webapp");
-  writeln("webapps: " ~ spec.webapps.length.to!string);
+  writeln("webapps: " ~ spec.subapps.length.to!string);
   writeln("local: " ~ resolver.local.base);
   writeln("snapshots: " ~ resolver.local.snapshotBase);
   string[] remotes;
@@ -872,7 +872,7 @@ private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec sp
     snapshotRemotes ~= r.base;
   }
   writeln("snapshot-remotes: " ~ snapshotRemotes.join(","));
-  foreach (i, w; spec.webapps) {
+  foreach (i, w; spec.subapps) {
     auto deps = resolver.resolveDependencies(entries[i]);
     writeln(format("webapp %s: app=%s path=%s deps=%d", w.id, entries[i], w.path, deps.length));
     foreach (j, dep; deps) {
@@ -1159,7 +1159,7 @@ private int runRepo(BootArgs opts) {
       return 1;
     }
   }
-  if (specMode && spec.webapps.length == 0 && spec.entry.length == 0) {
+  if (specMode && spec.subapps.length == 0 && spec.entry.length == 0) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
   }
@@ -1173,12 +1173,12 @@ private int runRepo(BootArgs opts) {
   }
   auto resolver = new Resolver(localRepo, [], showProgress(opts), opts.quiet, opts.offline);
   Archive[] deps;
-  if (specMode && spec.webapps.length > 0) {
-    // 多应用：逐 webapp 整合依赖（[deps] 与 [webapp] 段互斥，各 webapp 用自身 war 清单）。
-    foreach (w; spec.webapps) {
+  if (specMode && spec.subapps.length > 0) {
+    // 多应用：逐 webapp 整合依赖（[deps] 与 [subapp] 段互斥，各 webapp 用自身 war 清单）。
+    foreach (w; spec.subapps) {
       auto entry = expandLocalPath(w.entry);
       if (!exists(entry) || (!isFile(entry) && !isDir(entry))) {
-        stderr.writeln("repo: [webapp " ~ w.id
+        stderr.writeln("repo: [subapp " ~ w.id
             ~ "] entry must be a local file or directory: " ~ w.entry);
         return 1;
       }

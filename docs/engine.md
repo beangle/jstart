@@ -93,7 +93,7 @@ engine` 省略时缺省用 `org.beangle.sas.engine.tomcat.ServerCreator`。
 id \t entry \t path
 ```
 
-- `id`：`[webapp <id>]` 段头 id（命名用；引擎可用来定位日志/配置）；
+- `id`：`[subapp <id>]` 段头 id（命名用；引擎可用来定位日志/配置）；
 - `entry`：该 webapp 的本地落盘路径（jstart 已取回：war 文件或已解压目录）；
 - `path`：spec 里写的上下文路径，引擎按自身公式归一化后建 `<Context>`。
 

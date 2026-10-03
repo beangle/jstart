@@ -180,7 +180,7 @@ app=$(jstart --quiet resolve /path/to/app.jar)   # exit=0 才使用
 ```
 
 - war 目标同样适用：`resolve /path/app.war` 只解析 war 内置依赖并打印路径，不涉及引擎。
-- 多应用 spec（`[webapp <id>]`）**每行打印一个 webapp 的落盘路径**，同样按依赖是否齐备
+- 多应用 spec（`[subapp <id>]`）**每行打印一个 subapp 的落盘路径**，同样按依赖是否齐备
   决定退出码；引擎依赖不在 `resolve` 范围内（与单应用 war 一致）。
 - native（tar.gz）目标复用 `fetch` 的取包逻辑并解压，输出的是**包内可执行文件绝对路径**
   （可直接 exec；见下文"native（tar.gz）目标"）。

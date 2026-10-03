@@ -305,7 +305,7 @@ immutable string entryClasspathFile = "engine-app.classpath";
  *   <id> \t <entry path> \t <context path>
  *
  * The entry path is a local war file or an already exploded directory; the
- * context path is the spec's `[webapp <id>] path` value (the engine normalizes
+ * context path is the spec's `[subapp <id>] path` value (the engine normalizes
  * it). The engine entry main reads it from `--webapps-file=`.
  */
 immutable string webappsPlanFile = "engine-webapps.tsv";
