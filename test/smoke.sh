@@ -414,10 +414,11 @@ else
   echo "skip war engine test (javac/java missing)"
 fi
 
-echo "== multi-webapp spec: [subapp] -> webapps-file -> dist engine -> entry-out =="
+echo "== multi-webapp spec: [subapp] -> <base>/engine-webapps.tsv -> dist engine -> entry-out =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
-  # 一个假的 dist 引擎入口 main：校验 --webapps-file 有多少行、每行 id/entry/path 是否
-  # 完整、entry 是否真实存在，再 exec 一个回显计划文件的短程序（不依赖真实 sas）。
+  # 一个假的 dist 引擎入口 main：按 --base 约定读 <base>/engine-webapps.tsv，校验有多少行、
+  # 每行 id/entry/path 是否完整、entry 是否真实存在，再 exec 一个回显计划文件的短程序
+  # （不依赖真实 sas，也不经命令行传多 webapp 计划）。
   cat > "$T/src/org/jstarttest/PlanEcho.java" <<'JAVA'
 package org.jstarttest;
 import java.nio.file.Files;
@@ -441,13 +442,14 @@ import java.util.Arrays;
 import java.util.List;
 public class FakeDistEngine {
     public static void main(String[] args) throws Exception {
-        String entryOut = null, webappsFile = null;
+        String entryOut = null, base = null;
         for (String a : args) {
             if (a.startsWith("--entry-out=")) entryOut = a.substring("--entry-out=".length());
-            else if (a.startsWith("--webapps-file=")) webappsFile = a.substring("--webapps-file=".length());
+            else if (a.startsWith("--base=")) base = a.substring("--base=".length());
         }
-        if (entryOut == null || webappsFile == null)
+        if (entryOut == null || base == null)
             throw new IllegalStateException("missing args: " + Arrays.toString(args));
+        String webappsFile = Paths.get(base, "engine-webapps.tsv").toString();
         List<String> rows = Files.readAllLines(Paths.get(webappsFile));
         if (rows.size() != 2) throw new IllegalStateException("expected 2 webapps, got " + rows.size());
         for (String r : rows) {

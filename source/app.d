@@ -646,6 +646,12 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
   if (exists(entryOut)) {
     remove(entryOut); // 清掉上次残留，避免引擎准备失败时误读旧命令
   }
+  // 多应用计划按 <base>/engine-webapps.tsv 约定读取，不是命令行参数：单应用清掉可能
+  // 残留的计划文件，使「无 --entry= 且该文件存在 = 多应用」可作可靠判定。
+  auto stalePlan = buildPath(base, webappsPlanFile);
+  if (exists(stalePlan)) {
+    remove(stalePlan);
+  }
 
   auto pr = runProcessCapture(engineCmd, opts.verbose);
   if (pr.status != 0) {
@@ -678,8 +684,8 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
  *    由容器内每个 Context 自己的 DependencyClassLoader 按 war 清单解析（sas.repo 透传），
  *    jstart 不把多应用的依赖合并进同一个 JVM classpath（那样会串味）；
  *  - 每个 webapp 的入口与 context path 写进 `<base>/engine-webapps.tsv`（一行一个：
- *    `id \t entry \t path`），用 `--webapps-file=` 交给入口 main；单应用仍走
- *    `--entry=`/`--path=`/`--app-classpath-file=`；
+ *    `id \t entry \t path`），入口 main 按 `--base` 从该约定路径读取，不经命令行传递；
+ *    单应用仍走 `--entry=`/`--path=`/`--app-classpath-file=`；
  *  - 一个 base = 一个实例：一份 pid、一套 `webapps/`，多应用共享启停生命周期。
  */
 private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
@@ -794,7 +800,8 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     }
   }
 
-  // webapps 计划文件：每行 id \t entry \t path，交给入口 main（ServerCreator）逐个建 Context。
+  // webapps 计划文件：每行 id \t entry \t path；入口 main（ServerCreator）按 --base 从
+  // 约定路径 <base>/engine-webapps.tsv 读取（不经命令行传递），逐个建 Context。
   auto planPath = buildPath(base, webappsPlanFile);
   string plan;
   foreach (i, w; spec.subapps) {
@@ -806,7 +813,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   auto engineCp = resolver.depsClasspath(engineDeps);
   auto entryOut = buildPath(base, entryArgvFile);
   auto engineCmd = [java, "-cp", engineCp, sel.entryMain,
-      "--base=" ~ base, "--webapps-file=" ~ planPath,
+      "--base=" ~ base,
       // 本地仓库地址透传（ServerCreator 转成 -Dsas.repo），容器内每个 Context 的
       // DependencyClassLoader 都从同一个仓库解析各自 war 的依赖清单。
       "--Dsas.repo=" ~ resolver.local.base,

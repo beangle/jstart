@@ -208,7 +208,7 @@ path = /admin
   文件，`stop` 一次停整组；`resolve`/`info` 按 webapp 逐个输出，`classpath` 对多应用
   无意义会明确拒绝。
 - **接口形式**：入口与 context path 写进 `<base>/engine-webapps.tsv`（每行
-  `id \t entry \t path`），用 `--webapps-file=` 交给 Dist 引擎（单应用仍走
+  `id \t entry \t path`），Dist 引擎按 `--base` 从该约定路径读取，不经命令行传递（单应用仍走
   `--entry=`/`--path=`/`--app-classpath-file=`）；协议见 [engine.md](engine.md)。
 
 ## 与现有命令的关系

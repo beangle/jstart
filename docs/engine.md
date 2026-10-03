@@ -31,14 +31,15 @@ java <jvm opts> -cp <引擎 jar + 应用依赖 + WEB-INF> <容器 Bootstrap> --b
 |------|------|------|
 | `--base=<dir>` | 是 | 组件 base（jstart 的 `--base`/`--instance`/`[app] base`）；pid 文件、`webapps/`、引擎目录都在其下 |
 | `--entry=<path>` | 单应用是 | war 文件，或**已解压的 webapp 目录** |
-| `--webapps-file=<file>` | 多应用是 | 多 webapp 计划文件（代替 `--entry`）；一行一个 webapp：`id \t entry \t path` |
 | `--entry-out=<file>` | 是 | 最终 argv 的写出文件（NUL 分隔） |
 | `--app-classpath-file=<file>` | 否 | 存放应用依赖 classpath 的文件（jstart 解析出的 gav/本地/远程 jar，`<base>/engine-app.classpath`）；文件可能为空 |
 | `--app-jvm-arg=<opt>` | 否，可重复 | 最终命令的 JVM 参数（来自 `[runtime]` 与命令行 `-D`/`-X`） |
 | 其它参数 | 否 | 原样转发：`--path=`/`--port=`/`--Dkey=value` 等由各自的引擎消费 |
 
-- **单应用**用 `--entry=`（可带 `--path=`、`--app-classpath-file=`）；**多应用**用
-  `--webapps-file=`（此时不再有 `--entry=`，每个 webapp 的路径在计划文件里）。
+- **单应用**用 `--entry=`（可带 `--path=`、`--app-classpath-file=`）；**多应用**不给
+  `--entry=`，入口 main 按 `--base` 从 `<base>/engine-webapps.tsv` 读多 webapp 计划
+  （一行一个：`id \t entry \t path`），不经命令行传递。该文件由 jstart 每次运行刷新
+  （单应用会删除），故入口 main 可「有 `--entry=` 即单应用，否则按该文件多应用」判定。
 - 入口 main 以 **0** 退出表示成功（此时 `--entry-out` 必须存在且非空）；非 0 即失败，
   jstart 直接返回该退出码。
 - `--entry-out` 内容：**每个 argv 用 NUL(`\0`) 分隔**，通常带结尾 NUL。jstart 去掉
@@ -87,7 +88,8 @@ engine = org.beangle.sas.engine.tomcat.ServerCreator  # 或直接给入口 main 
 engine` 省略时缺省用 `org.beangle.sas.engine.tomcat.ServerCreator`。
 
 多应用时 jstart 不再用 `--entry=`/`--path=`/`--app-classpath-file=`，而是把每个 webapp
-的入口与上下文路径写进 `<base>/engine-webapps.tsv`：
+的入口与上下文路径写进 `<base>/engine-webapps.tsv`（**不经命令行传递**，入口 main 按
+`--base` 从该约定路径读取）：
 
 ```text
 id \t entry \t path
@@ -97,8 +99,8 @@ id \t entry \t path
 - `entry`：该 webapp 的本地落盘路径（jstart 已取回：war 文件或已解压目录）；
 - `path`：spec 里写的上下文路径，引擎按自身公式归一化后建 `<Context>`。
 
-入口 main 用 `--webapps-file=<file>` 读取，**为每一行建一个 Context**（docBase 公式
-仍是 `<base>/webapps/<ctx>`，每个 webapp 各自独立），最后只写出一份最终 argv。
+入口 main **为每一行建一个 Context**（docBase 公式仍是 `<base>/webapps/<ctx>`，每个
+webapp 各自独立），最后只写出一份最终 argv。
 
 - **依赖隔离**：每个 webapp 的依赖由它自己 Context 的 `DependencyClassLoader` 按该 war
   的 `META-INF/beangle/dependencies` 解析；jstart 只负责把各 webapp 的依赖取到本地仓库
@@ -108,8 +110,8 @@ id \t entry \t path
 - **单应用路径不变**：`--entry=` 协议与 `--app-classpath-file=` 保持原样，ServerCreator 的
   单 Context 行为向后兼容。
 
-> 引擎侧需支持 `--webapps-file=`（多 `<Context>`）：本仓库负责生成计划文件并下发；
-> 消费端在 beangle/sas 的 `ServerCreator`（多 context 部署）落地。
+> 引擎侧需支持按 `<base>/engine-webapps.tsv` 部署多 `<Context>`：本仓库负责生成计划
+> 文件；消费端在 beangle/sas 的 `ServerCreator`（多 context 部署）落地。
 
 ## 引擎依赖：`[engine]` 段
 

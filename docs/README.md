@@ -14,7 +14,7 @@ java。本目录存放项目文档。
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
 | [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[deps]/[engine] 语义、run --print 与范围规划 |
 | [war-engine.md](war-engine.md) | war 运行：何时启用、[app] engine 选择、[engine] 依赖罗列、参数与限制 |
-| [engine.md](engine.md) | **引擎入口 main 协议**：两阶段启动、argv 文件、`--entry`/`--webapps-file` 语义、引擎别名、多 webapp（Dist）与 docBase 归属 |
+| [engine.md](engine.md) | **引擎入口 main 协议**：两阶段启动、argv 文件、`--entry` 语义、多 webapp 计划文件（`<base>/engine-webapps.tsv`）、引擎别名与 docBase 归属 |
 | [offline.md](offline.md) | 离线部署：仓库整合、无外网机器上的启动方式与注意事项 |
 | [build.md](build.md) | 构建、测试与打包：dub/release、单测与冒烟、deb/rpm 脚本、产物布局 |
 | [release-v0.0.1.md](release-v0.0.1.md) | v0.0.1 发布说明：范围、已知限制与路线图 |

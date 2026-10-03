@@ -15,7 +15,7 @@
   （内嵌 `tomcat`/`undertow` 别名与 `*EmbedCreator` 在校验阶段被拒），`[app] engine` 省略
   时缺省 ServerCreator；jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库（运行时由每个
   Context 自己的 `DependencyClassLoader` 按 war 清单解析，不合并进同一 JVM classpath），
-  把 `id \t entry \t path` 写进 `<base>/engine-webapps.tsv` 用 `--webapps-file=` 下发；
+  把 `id \t entry \t path` 写进 `<base>/engine-webapps.tsv`，引擎按 `--base` 约定读取；
   `resolve`/`info` 按 webapp 逐个输出，`classpath` 明确拒绝，`stop` 一次停整组
 - **spec 互斥校验**：`[app] main` 与 `[app] engine`/`[engine]` 互斥，同时声明直接报错
   （jar 跑主类、war 跑引擎 entry main，语义冲突）
