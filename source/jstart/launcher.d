@@ -65,6 +65,11 @@ int runJarApp(string classpath, string mainClass, string[] jvmOptions,
   return execCmd(cmd, verbose);
 }
 
+/// java executable for a launch: [app] runtime override, else $JAVA_HOME/PATH.
+string javaFor(string runtime = "") {
+  return resolveJava(runtime);
+}
+
 /**
  * Print the command `run` would exec (java [jvm] -cp cp main args), with
  * every argv POSIX-single-quoted, without executing it.
@@ -101,6 +106,15 @@ private string shellQuote(string arg) {
  */
 int runNativeApp(string executable, string[] args, bool verbose = true) {
   return execCmd([executable] ~ args, verbose);
+}
+
+/**
+ * Replace the current process image with an already-built argv (used for
+ * the command an engine entry main wrote to its --entry-out file). On
+ * POSIX this never returns on success; it returns 127 when exec fails.
+ */
+int execCommand(string[] cmd, bool verbose = true) {
+  return execCmd(cmd, verbose);
 }
 
 /**

@@ -42,8 +42,11 @@ exec java -cp "$cp" "$main" --port=8080
 
 注意事项：
 
-- 若 jar 在离线目录中已存在且 `.sha1` 齐全、校验通过，jstart **不会发起任何网络请求**
-  （连远程探测都没有——下载实现只在实际缺件时调用 curl）。
+- 若 jar 在离线目录中已存在且 `.sha1` 齐全、校验通过，jstart 对 release 构件**不会发起
+  任何网络请求**（连远程探测都没有——下载实现只在实际缺件时调用 curl）。SNAPSHOT 只在
+  配了 `--snapshot-remote` 时才会向上游问一次「最新构建」（HEAD 别名或取
+  `maven-metadata.xml`）以拿到最新时间戳；没配快照上游就直接用本地快照库已有文件，
+  不发请求也不报错，只有本地缺失、需要拉取才报错。
 - 本地文件行（`lib/extra.jar` 等）不会被 `repo` 复制，请随应用一起部署；其路径相对
   启动时的工作目录。
 - 拷贝时请连同 `.sha1` 一起复制：一旦离线机器上 jar 与 `.sha1` 不一致，jstart 会删除
@@ -54,6 +57,20 @@ exec java -cp "$cp" "$main" --port=8080
   `~/.m2/snapshots/g/a/1.0-SNAPSHOT/a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）拷贝到目标机
   相同位置；使用 `--local=/opt/offline-repo` 时，放到该目录下对应的快照路径即可
   （显式 `--local` 后快照文件定位在同一 base，不再另设 `~/.m2/snapshots`）。
+
+### `--offline`：连探测都不发
+
+`--remote` 只影响"去哪里下载"，运行时仍会为缺件发探测请求。目标机完全不允许出网时用
+`--offline`：
+
+```bash
+jstart resolve myapp.war --local=/opt/offline-repo --offline
+```
+
+- 远程列表按空处理：不下载、也不做 SNAPSHOT 的 `latest` 头 / `maven-metadata.xml`
+  探测，http(s) 目标与远程文件依赖直接报缺件；
+- SNAPSHOT 仍然可用：取本地快照库（或 `--local` base 下）已有的最新时间戳文件；
+- 缺件时以 Missing / exit 1 结束，不会静默等待网络超时。
 
 ## 常见流程示例
 
@@ -67,15 +84,15 @@ tar czf offline-bundle.tgz jstart app.jar offline-repo/
 
 ## war 目标与引擎依赖的离线
 
-`run <war>` 除了应用自身依赖，还需要**引擎 jar**（tomcat/undertow 内置默认目录或
-spec `[engine]` 罗列），两者都要在联网机上先集齐：
+`run <spec>`（`[app] entry` 为 war）除了应用自身依赖，还需要**引擎 jar**（tomcat/undertow
+内置默认目录或 spec `[engine]` 罗列），两者都要在联网机上先集齐：
 
 ```bash
 # 联网机：解析并下载（run --print 也会下载后只打印命令，不启动）
 jstart --quiet run --print app.jstart --local=/opt/offline-repo
 
-# 校验：退出码 0 表示含引擎依赖在内全部齐备
-jstart --local=/opt/offline-repo --quiet resolve app.war && echo ready
+# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动；--print 不跑入口 main）
+jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/null && echo ready
 ```
 
 注意：

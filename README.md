@@ -12,15 +12,21 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
 
 ## 特性
 
-- 目标支持：本地 jar/war、解压 war 目录、`g:a:v`/`gav://`、`http(s)://` url；
-  `run` 的声明式目标为 launch spec（`.jstart`，支持本地路径或 http(s) url，见 [docs/launch-spec.md](docs/launch-spec.md)）。
+- 目标支持：本地 jar、解压 war 目录、`g:a:v`/`gav://`、`http(s)://` url；war 仍是
+  `resolve`/`fetch`/`repo` 的目标，但 `run` 时**必须**写进 launch spec 的
+  `[app] entry`（裸 war 目标会报错并提示）。`run` 的声明式目标为 launch spec
+  （`.jstart`，支持本地路径或 http(s) url，见 [docs/launch-spec.md](docs/launch-spec.md)）。
 - 读取应用内置依赖清单（jar：`META-INF/beangle/dependencies`；war：`WEB-INF/classes/...`），
   逐行准备 gav/本地文件/远程文件三类依赖。
 - 缺失依赖下载到本地 Maven 仓库（默认 `~/.m2/repository`），`.sha1` 校验、损坏删除重下；
 - **快照库独立**：SNAPSHOT 时间戳构件（`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）放在
-  单独的 `~/.m2/snapshots`，**不与 `~/.m2/repository` 混合**；本地命中最新时间戳即直接用，
-  缺失才下载；
-  远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖。
+  单独的 `~/.m2/snapshots`，**不与 `~/.m2/repository` 混合**。每个 SNAPSHOT 都先向上游解析
+  「最新构建」——HEAD 别名读 micdn 的 `latest` 响应头，其次版本目录的 `maven-metadata.xml`；
+  解析出的时间戳文件已在本地且 `.sha1` 通过就跳过下载，否则下载。上游不可达时退回本地已有
+  的最新时间戳文件，离线仍可用。
+  正式版远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖；SNAPSHOT 上游用
+  `--snapshot-remote=`（可选，**不兜到 `--remote`**）；没配快照上游时本地快照库命中即用
+  （不发请求、不报错），只有本地缺失、需要拉取才报错（`--offline` 只是不联网、不拉取）。
 - `stop` 子命令按 **base** 停止 `run` 启动的实例：`run` 在 exec 前把 pid 写入
   `<base>/app.pid`（base = `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
   整体替换这个根，`--instance=<name>` 命名组件目录，launch spec 可用 `[app] base` 固定）。
@@ -33,30 +39,44 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   缓存；本地文件原样返回路径。没有补丁不是错误。tar.gz 的补丁按“本地基线 `gunzip` →
   bspatch → `gzip -n -6` → 校验 `.sha1`”处理，jar/war 直接 patch；打补丁优先用系统
   `bspatch`（`PATH` 上有就用，失败自动回退内置实现，`JSTART_BSPATCH` 可指定或强制内置）。
-  SNAPSHOT 版本落在/优先命中 `~/.m2/snapshots`，正式版落在 `~/.m2/repository`。
+  发行包侧不做快照元数据解析（`-SNAPSHOT` 只当字面版本名）；SNAPSHOT 版本落在/优先命中
+  `~/.m2/snapshots`，正式版落在 `~/.m2/repository`；
+  `--remote` 指向配了 `<auth download-key>` 的 micdn 时，设置环境变量 `micdn_token` 让构件与补丁
+  的下载带 `Authorization: Bearer`（HEAD 探测不受限，未设置时行为不变）。
 - `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待；`--port=8080` 等参数原样
   转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 的 `[app] runtime`/
   `[runtime]` 用通用命名，便于替换 JDK/引擎，并为后续其他运行时预留
   （见 [docs/launch-spec.md](docs/launch-spec.md)）。
   主类按 `--main=<class>` > launch spec `[app] main` > jar 内 `MANIFEST.MF` 的
   `Main-Class` 确定：jar 的 Main-Class 不适用（或想跑 jar 里/依赖里的另一个类）时用
-  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎 Bootstrap 启动，
+  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎入口 main 启动，
   native 用 `[app] exec`，给 `--main` 会告警忽略）。
-- war 目标用内置引擎启动：解压到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap（默认
-  tomcat；组件目录默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根）；
+- war 目标用内置引擎启动：jstart 先运行**引擎入口 main**（准备容器环境、写出最终启动
+  命令）再 exec 容器（默认引擎 tomcat，映射 `org.beangle.sas.engine.tomcat.EmbedCreator`；
+  组件目录默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根）；
   引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
  见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
   `engine = tomcat-11.0.24` 直接指定 tomcat 版本；`[engine]` 行支持
   `{tomcat.version}`/`{sas.version}` 占位符引用内置版本，不必手写重复版本号。
+- 多 webapp：一个 spec 用若干 `[webapp <id>]` 段（`entry` + `path`）声明多个 war，交给
+  **Dist 引擎**（`org.beangle.sas.engine.tomcat.ServerCreator`，可省略即缺省）在同一 JVM 里各
+  建一个 context。多应用只走 Dist 模式（内嵌 `tomcat`/`undertow`、`*EmbedCreator` 会被拒），
+  各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一份 pid
+  （`stop` 一次停整组）；见 [docs/engine.md](docs/engine.md)。
 - native（tar.gz）目标：`g:a:tar.gz:<classifier>:v`、本地 `*.tar.gz` 或 `http(s)` url 时，
   `resolve`/`run` 复用 `fetch` 的取包逻辑（gav 时优先增量补丁），解压到 `<base>/app` 后
   **exec 包内可执行文件**；参数按序附加在其后（native 无 JVM，`[args]`/命令行含 `-D`/`-X`
   全部归应用），可执行文件位置可用 launch spec `[app] exec=` 指定，缺省探测
-  `<name>/bin/<exe>`，`resolve` 输出该可执行文件路径。
+  `<name>/bin/<exe>`，`resolve` 输出该可执行文件路径。native 侧**不对 `-SNAPSHOT` 特殊
+  照顾**：不做快照元数据探测，`-SNAPSHOT` 只是字面版本名（本地命中 → 增量补丁 → 整包下载）。
   `--base=<dir>` / `--instance=<name>` 可改 base（不会写到包旁；`/tmp` 的 noexec、tmpfs、
   清理周期等影响见 [docs/commands.md](docs/commands.md)）。
 - 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
+- 输出分级：默认只输出告警/错误与命令结果（`resolve` 的路径、`classpath` 的
+  `Main-Class@classpath`、`fetch` 的本地路径等）；`--verbose`/`-v` 追加解析、下载、
+  写 pid、引擎入口 main 的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连
+  告警也关闭。
 
 > **项目约束**：不做传递依赖解析。依赖清单是依赖的唯一来源，应用的全部运行期依赖须由构建期
 > beangle maven/sbt 插件显式写全；漏写不推导，`resolve`/`run` 会以 Missing 失败。
@@ -69,13 +89,11 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 # 准备依赖环境并启动（进程即 java，参数原样透传）
 ./target/jstart run /path/to/app.jar --port=8080 --path=/base
 
-# war 走内置引擎：解压后启动内嵌 tomcat（--port/--path 透传给引擎）
-./target/jstart run /path/to/app.war --port=8080 --path=/base
-
 # 只准备依赖环境，输出应用绝对路径（供脚本使用）
 app=$(./target/jstart --quiet resolve /path/to/app.jar)
 
 # 声明式启动：launch spec（.jstart，本地路径或 http(s) url）
+# war 必须写进 [app] entry，再 run —— 解压后启动内嵌 tomcat（--port/--path 透传给引擎）
 cat > app.jstart <<'EOF'
 [app]
 entry = /path/to/app.war

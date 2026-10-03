@@ -146,6 +146,49 @@ unittest {
   ]);
   assert(resolver.resolveDependencies(bareJar).length == 0);
   assert(resolver.mainClassOf(bareJar) == "org.example.Main");
+
+ }
+
+unittest {
+  // 目录 target 缺少依赖清单（war 目录的常见情况）必须返回空列表，而不是抛异常：
+  // isFile/isDir 对不存在路径会抛 FileException，曾导致 resolve/run <dir> 崩溃。
+  import std.conv : to;
+  import std.file : dirEntries, exists, isDir, mkdirRecurse, remove, tempDir, SpanMode;
+  import std.path : buildPath;
+  import std.process : thisProcessID;
+
+  import jstart.repo : LocalRepo;
+
+  void rmTree(string path) {
+    if (!exists(path)) {
+      return;
+    }
+    if (isDir(path)) {
+      foreach (e; dirEntries(path, SpanMode.shallow)) {
+        rmTree(e.name);
+      }
+    }
+    remove(path);
+  }
+
+  auto tmpBase = buildPath(tempDir(), "jstart-dir-deps-" ~ thisProcessID.to!string);
+  scope (exit) rmTree(tmpBase);
+  auto resolver = new Resolver(new LocalRepo(buildPath(tmpBase, "repo"), tmpBase), [], false);
+
+  // ① 裸目录（无 WEB-INF）
+  auto bare = buildPath(tmpBase, "bare");
+  mkdirRecurse(bare);
+  assert(resolver.resolveDependencies(bare).length == 0);
+
+  // ② 有 WEB-INF/classes 但没有依赖清单
+  auto classes = buildPath(tmpBase, "classes");
+  mkdirRecurse(buildPath(classes, "WEB-INF/classes"));
+  assert(resolver.resolveDependencies(classes).length == 0);
+
+  // ③ 只有 META-INF/beangle 目录、缺 dependencies 文件
+  auto markerDir = buildPath(tmpBase, "markerdir");
+  mkdirRecurse(buildPath(markerDir, "WEB-INF/classes/META-INF/beangle"));
+  assert(resolver.resolveDependencies(markerDir).length == 0);
 }
 
 unittest {
@@ -183,14 +226,22 @@ unittest {
   assert(missing.length == 1, "release 缺件应报 Missing");
   assert(resolver.dependencyPath(rel) == local.filePath(rel));
 
-  // SNAPSHOT：快照库中放时间戳文件后，dependencyPath 指向该时间戳文件。
+  // SNAPSHOT：没有快照上游时本地命中即可用（不发请求、不报错），本地缺失才报 Missing；
+  // 此时 dependencyPath 指向命中的时间戳文件。--offline 语义相同（只是不拉取）。
   auto snap = parseGav("org.test:demo:1.0-SNAPSHOT", "org.test:demo:1.0-SNAPSHOT");
+  missing = resolver.ensureDependencies([snap], 1);
+  assert(missing.length == 1, "未配置快照上游且本地缺失时应报 Missing");
   auto dir = buildPath(tmpBase, "org/test/demo/1.0-SNAPSHOT");
   mkdirRecurse(dir);
   auto tsFile = buildPath(dir, "demo-1.0-20260101.010101-2.jar");
   write(tsFile, "snapshot-bytes");
   missing = resolver.ensureDependencies([snap], 1);
-  assert(missing.length == 0, "本地时间戳命中不下载");
+  assert(missing.length == 0, "没配快照上游时本地已有快照应可用");
   assert(resolver.dependencyPath(snap) == tsFile,
       "classpath 应指向时间戳文件: " ~ resolver.dependencyPath(snap));
+  auto offlineResolver = new Resolver(local, [], false, true, true);
+  missing = offlineResolver.ensureDependencies([snap], 1);
+  assert(missing.length == 0, "offline 下本地时间戳命中不下载");
+  assert(offlineResolver.dependencyPath(snap) == tsFile,
+      "classpath 应指向时间戳文件: " ~ offlineResolver.dependencyPath(snap));
 }

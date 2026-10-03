@@ -23,7 +23,7 @@ jstart 用四个子命令覆盖同一职责：
 | `classpath` | `launcher.Classpath` | 输出 `Main-Class@classpath` |
 | `repo` | `launcher.Repo` | 离线仓库整合（复制缺失构件） |
 | `run` | `resolve.sh` + `launch.sh` | 准备环境后 exec 成 java |
-| war 引擎 run | `sas.sh` | 解压 war 到 `<base>/webapps/<ctx>`，exec `org.beangle.sas.engine.<name>.Bootstrap`（[war-engine.md](war-engine.md)） |
+| war 引擎 run | `sas.sh` | 运行引擎入口 main（准备容器环境、写 argv），再 exec 容器；docBase 归引擎（[engine.md](engine.md)） |
 
 保留 `resolve`/`classpath` 是为了兼容 launch.sh 式的脚本解耦；`run` 则把两步合并进
 单个进程。
@@ -50,7 +50,9 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 ```text
 <根>/<组件键>/app.pid          run 在 exec 前写、stop 读（实例是否在跑就靠它）
 <根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
-<根>/<组件键>/webapps/<ctx>/   war 的解压目录（引擎的 --base 就是组件目录）
+<根>/<组件键>/webapps/<ctx>/   引擎解压出的 docBase（引擎的 --base 就是组件目录）
+<根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给入口 main
+<根>/<组件键>/engine-entry.argv 引擎入口 main 写出的最终启动命令（NUL 分隔 argv）
 ```
 
 - **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复 `run` 会被
@@ -74,10 +76,10 @@ source/jstart/bspatch.d         BSDIFF40 内置实现；宿主 bspatch 优先，
 source/jstart/gzip.d            增量重建 tar.gz 用的 gunzip/gzip（gzip -n -6，走宿主命令）
 source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的解压）、Manifest Main-Class 解析
 source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifest（纯函数，可单测）
-source/jstart/engine.d           war 引擎：主类映射、内置默认依赖目录（tomcat/undertow，
-                                 tomcat 可带版本后缀）、解压布局/参数扫描、[engine] 行占位符展开
+source/jstart/engine.d           war 引擎：入口 main 选择与协议常量、内置默认依赖目录
+                                 （tomcat/undertow/Dist）、[engine] 行占位符展开、entry-out argv 解析
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
-                                 （[app]/[runtime]/[args]/[deps]/[engine]，通用运行时命名）
+                                 （[app]/[runtime]/[args]/[deps]/[engine]/[webapp <id>]）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
 source/jstart/native.d          native tar.gz：解压到给定目录（临时目录+改名，支持并发）、
@@ -116,11 +118,14 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
    `java <runtime-options> -cp <cp> <Main-Class> [app-args...]`。运行时可执行文件取
    spec `[app] runtime`（缺省 `$JAVA_HOME`/PATH 的 java，JVM 家目录自动补 `bin/java`），
    运行时参数取 `[runtime]` 段与命令行 `-D`/`-X` 追加，应用参数取 `[args]` 段与
-   命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class：
-   解析（可选）`[app] engine`（tomcat 可带版本后缀，如 `tomcat-11.0.24`）与
-   `[engine]` 段（行内 `{tomcat.version}`/`{sas.version}` 占位符先展开；段存在即为
-   权威，否则回退内置默认目录）后，解压 war 到 `<base>/webapps/<ctx>` 并 exec 引擎
-   Bootstrap，见 [war-engine.md](war-engine.md)。
+   命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class，
+   且只能从 launch spec 的 `[app] entry` 进入（裸 war 目标由 `run` 直接拒绝；
+   `resolve`/`fetch`/`repo` 不受限）：
+   解析（可选）`[app] engine`（入口 main：含 `.` 的值当 FQCN，否则内置别名
+   `tomcat`/`undertow`，tomcat 可带版本后缀如 `tomcat-11.0.24`）与 `[engine]` 段
+   （行内 `{tomcat.version}`/`{sas.version}` 占位符先展开；段存在即为权威，否则回退
+   内置默认目录）后，运行引擎入口 main 准备环境，再 exec 它写出的最终命令，见
+   [engine.md](engine.md)/[war-engine.md](war-engine.md)。
 
 ## 仓库与校验策略
 
@@ -128,22 +133,32 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
   （默认 `~/.m2/repository`，`--local=` 覆盖）；SNAPSHOT **时间戳**构件
   （`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）只落在**独立的快照库**（默认
   `~/.m2/snapshots`）——repository 内不会出现时间戳文件名，快照库内只放带时间戳的
-  文件，二者不混合。时间戳由构建工具以 UTC 生成并编码在文件名里，“是否最新”看本地
-  时间戳文件名即可（字符串即时间序）：**不比较本地 mtime 与远端 Last-Modified，也
-  不解析远端 `maven-metadata.xml`**。显式 `--local=<dir>` 时快照时间戳文件也定位到该
-  base 下的快照路径（对齐 boot 显式 base 语义），二者仍按 maven 发布/快照布局区分
-  存放。
-- 远程默认顺序：阿里云 public → 华为云 maven → Maven Central；`--remote=` 覆盖时
-  Central 总会保留在末尾（对齐原版行为）。
+  文件，二者不混合。时间戳由构建工具以 UTC 生成并编码在文件名里，字符串即时间序：
+  解析 `-SNAPSHOT` 别名时按 `--remote` 顺序询问上游——先 HEAD 别名读 micdn 的
+  `latest` 响应头，再取版本目录的 `maven-metadata.xml`（`<snapshotVersions>` 按
+  extension/classifier 取最新，老式元数据回退 `<snapshot>` 的 timestamp/buildNumber）——
+  得到时间戳文件名后落盘到快照库；本地已有该时间戳文件且 `.sha1` 通过就不再下载。上游
+  都解析不出时退回本地快照库已有的最新时间戳文件，离线可用；不比较本地 mtime 与远端
+  Last-Modified。显式 `--local=<dir>` 时快照时间戳文件也定位到该 base 下的快照路径
+  （对齐 boot 显式 base 语义），二者仍按 maven 发布/快照布局区分存放。
+- 远程列表分两份（`Resolver.remotes` / `Resolver.snapshotRemotes`）：
+  - **正式版**：默认阿里云 public → 华为云 maven → Maven Central；`--remote=` 覆盖时
+    Central 总会保留在末尾（对齐原版行为）；
+  - **SNAPSHOT**：只用 `--snapshot-remote`，**不兜到 `--remote`**，也**不追加 Central、
+    不给默认镜像**；不配时本地快照库命中即用（不发请求、不报错），只有本地缺失、需要
+    拉取才报错（`--offline` 只是不拉取，语义等同于没配上游）。开发版一般来自专用快照
+    仓库，兜到 `--remote`/公共镜像既无必要也会造成"没配快照上游却从公网拉开发版"的意外。
 - sha1 语义（对齐原版）：
   - 本地已有 jar 且 `.sha1` 齐全 → 校验，不匹配则删除重下；本地已有但无 `.sha1`
     → 直接接受，不发网络请求（无需下载时忽略校验）；
   - 一旦发生下载（release 与 SNAPSHOT 均如此），从同一远程补拉 `.sha1` 复核，
     不匹配则删除并尝试下一远程；远程无 `.sha1` 时接受（verify aborted）；
-  - SNAPSHOT 构件：优先本地快照库（默认 `~/.m2/snapshots`，`--local` 显式给定时
-    用该 base，镜像 boot `LocalSnapshot`）中最新时间戳构建；没有则下载远端
-    `-SNAPSHOT` 字面文件；下载后同样从同一远程复核 `.sha1`（远程无 `.sha1`
-    时接受，与 release 语义一致）。
+  - SNAPSHOT 构件：每次向上游解析最新时间戳文件（`latest` 头或
+    `maven-metadata.xml`），落盘到本地快照库（默认 `~/.m2/snapshots`，`--local`
+    显式给定时用该 base，镜像 boot `LocalSnapshot`）后从同一远程复核 `.sha1`
+    （远程无 `.sha1` 时接受，与 release 语义一致）；本地已有该时间戳文件且校验通过
+    则跳过下载。上游解析不出时退回本地快照库最新时间戳文件，最后才下载远端
+    `-SNAPSHOT` 字面文件。
 - 下载统一走宿主 `curl` 命令：`--fail --silent --show-error -L`，先写同目录
   `.name.part` 临时文件再 rename，避免跨设备移动与半截文件；多依赖下载默认并发
   （`--jobs=N`，默认 10，`1` 为串行），每个依赖各自独立 curl 进程；远端支持 Range
@@ -154,14 +169,15 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 
 - **不解析传递依赖**：依赖描述文件是唯一来源，只逐行处理显式依赖（见流程第 3 步），
   不读 POM、不展开传递依赖；全部运行期依赖须由构建期插件写全，漏写以 Missing 失败。
-- `run` jar 目标支持带 `Main-Class` 的瘦 jar；war 目标走内置引擎（对应 beangle sas
-  `sas.sh`）：解压到 `<base>/webapps/<ctx>` 后 exec 引擎 Bootstrap，tomcat/undertow
-  都有内置默认依赖目录、可被 launch spec `[engine]` 段显式罗列覆盖（详见
-  [war-engine.md](war-engine.md)）；可执行 war（自带 Main-Class）与"解压目录目标走
-  引擎"暂不支持。
+- `run` jar 目标支持带 `Main-Class` 的瘦 jar；war 目标须由 launch spec 声明
+  （`[app] entry`）后走内置引擎（对应 beangle sas `sas.sh`）：jstart 运行引擎入口 main
+  准备环境、再 exec 容器，docBase 布局与解压都归引擎；tomcat/undertow 都有内置默认依赖
+  目录、可被 launch spec `[engine]` 段显式罗列覆盖。entry 是已解压 webapp 目录时，
+  声明 `[app] engine` 也走引擎（直接用该目录，不解压）；可执行 war（自带 Main-Class）
+  不支持。
 - 并发粒度："跨依赖"由 `--jobs` 控制，单文件 Range 分段由远端支持与文件大小自动
-  决定（≥1MB 最多 4 段）；不做跨次运行的断点续传，也不实现 boot 的 `.diff`
-  增量补丁（按取舍决定）。
+  决定（≥1MB 最多 4 段）；`fetch` 支持 bsdiff 增量补丁（native tar.gz 解压后比对、
+  jar/war 直接比对，见 [commands.md](commands.md)），但**不做跨次运行的断点续传**。
 - 以 Java 工件为主，同时支持 native 发行包：`run` 的终点是 java（jar 走 `Main-Class`，
   war 走内置引擎）或解压出的 native 可执行文件（tar.gz）；两者共用同一个 exec 入口，
   launch spec 用通用运行时命名，其他运行时（python3/node 等）仍可继续扩展但尚未实现。

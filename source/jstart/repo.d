@@ -9,7 +9,7 @@ import std.conv : to;
 import std.digest : digest, toHexString;
 import std.digest.sha : SHA1;
 import std.file : dirEntries, exists, isDir, mkdirRecurse, read, readText, SpanMode;
-import std.path : baseName, dirName;
+import std.path : baseName;
 import std.process : environment;
 import std.string : indexOf, lastIndexOf, startsWith, strip, toLower;
 
@@ -51,6 +51,16 @@ final class LocalRepo {
     return base ~ a.layoutPath;
   }
 
+  /// 快照库中该工件的版本目录（绝对路径，不带尾斜杠）。
+  string snapshotDirOf(Artifact a) const {
+    return snapshotBase ~ a.dirPath;
+  }
+
+  /// 快照库中该工件某个具体文件（通常是时间戳文件）的绝对路径。
+  string snapshotPathFor(Artifact a, string fileName) const {
+    return snapshotDirOf(a) ~ "/" ~ fileName;
+  }
+
   /**
    * Latest local timestamped snapshot file for a snapshot artifact, e.g.
    * <snapshotBase>/g/a/1.0-SNAPSHOT/a-1.0-20260101.010101-2.jar, or ""
@@ -65,7 +75,7 @@ final class LocalRepo {
     if (ver.endsWith("-SNAPSHOT")) {
       ver = ver[0 .. $ - "-SNAPSHOT".length];
     }
-    auto dir = dirName(snapshotBase ~ a.layoutPath);
+    auto dir = snapshotDirOf(a);
     if (!exists(dir) || !isDir(dir)) {
       return "";
     }
@@ -166,12 +176,16 @@ string parseSha1Text(string text) {
  * Returns true when matched, false on mismatch.
  */
 bool verifySha1(LocalRepo local, Artifact a) {
-  auto sha1File = local.filePath(a.sha1);
+  return verifySha1File(local.filePath(a), local.filePath(a.sha1));
+}
+
+/** 校验任意文件与其 `.sha1` 伴随文件；伴随文件缺失时视为通过（无从校验）。 */
+bool verifySha1File(string file, string sha1File) {
   if (!exists(sha1File)) {
     return true; // nothing to verify against
   }
   auto expected = parseSha1Text(readText(sha1File));
-  auto actual = sha1OfFile(local.filePath(a));
+  auto actual = sha1OfFile(file);
   return expected.length == 40 && expected == actual;
 }
 
@@ -183,7 +197,13 @@ struct RemoteRepo {
   string base;
 }
 
-/** Default remote repositories: aliyun, huaweicloud and maven central. */
+/**
+ * Default remote repositories: aliyun, huaweicloud and maven central.
+ *
+ * 这是「内置镜像 + Central 兜底」策略的唯一出处：调用方（sas 等）只透传自己配置的
+ * 仓库列表，不再各拼一份默认值；`buildRemotes` 在给定列表缺少 Central 时补到末尾
+ * （对齐 beangle/boot 行为）。需要完全离线时用 `--offline`，不要依赖空 `--remote`。
+ */
 RemoteRepo[] defaultRemotes() {
   return [
     RemoteRepo("aliyun", "https://maven.aliyun.com/repository/public"),
@@ -200,6 +220,31 @@ RemoteRepo[] buildRemotes(string spec = "") {
   if (spec.strip.length == 0) {
     return defaultRemotes();
   }
+  auto remotes = parseRemotes(spec);
+  auto central = defaultRemotes()[2];
+  foreach (r; remotes) {
+    if (r.base == central.base) {
+      return remotes;
+    }
+  }
+  remotes ~= central;
+  return remotes;
+}
+
+/**
+ * SNAPSHOT 解析专用的上游列表：**只用 spec 里显式给出的仓库**，不追加 Central、不给
+ * 缺省镜像；spec 为空即空列表（只用本地快照库）。
+ *
+ * 开发版构件通常来自专用的快照/开发仓库，把它兜到公共镜像既没必要、也会造成
+ * 「明明没配快照上游却从公网拉开发版」的意外；普通构件仍由 [[buildRemotes]] 提供默认
+ * 镜像与 Central 兜底。两者可以不同（`jstart.resolver` 分别持有 remotes / snapshotRemotes）。
+ */
+RemoteRepo[] buildSnapshotRemotes(string spec = "") {
+  return parseRemotes(spec);
+}
+
+/// 解析逗号分隔的仓库 spec：补 http://、去尾斜杠、丢弃空项；不附加任何默认值。
+private RemoteRepo[] parseRemotes(string spec) {
   RemoteRepo[] remotes;
   foreach (b; spec.split(",")) {
     auto base = b.strip;
@@ -214,12 +259,5 @@ RemoteRepo[] buildRemotes(string spec = "") {
     }
     remotes ~= RemoteRepo(base, base);
   }
-  auto central = defaultRemotes()[2];
-  foreach (r; remotes) {
-    if (r.base == central.base) {
-      return remotes;
-    }
-  }
-  remotes ~= central;
   return remotes;
 }

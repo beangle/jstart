@@ -41,6 +41,12 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 | `test/jstart/download_test.d` | 并行下载（--jobs 并发/串行可观测）与 Range 分段下载合并、内容校验 |
 | `test/jstart/spec_test.d` | launch spec 识别/完整解析（含 [app] runtime/engine 与旧 java/[jvm] 告警）、行号告警、未知段、deps/engine 段原样保留等 |
 | `test/jstart/engine_test.d` | 引擎主类映射、tomcat 内置默认依赖、上下文路径/解压目录推导、--path/--base 扫描、引擎依赖去重合并 |
+| `test/jstart/args_test.d` | CLI 选项解析：子命令与布尔开关（`--verbose`/`--quiet`/`--offline`/`--force`/`--print`）、带值选项（`--snapshot-remote`/`--main`/`--base`/`--instance` 等）、target 与 rest 切分、数字选项钳制 |
+| `test/jstart/mainclass_test.d` | 主类优先级（`--main` > `[app] main` > Manifest `Main-Class`）与类名语法校验（挡掉路径/url/空格） |
+| `test/jstart/base_test.d` | 组件键/base 推导、pid 文件读写、残留/被复用 pid 检测、SIGTERM/SIGKILL 停止路径 |
+| `test/jstart/fetch_test.d` | 发行仓库 url/补丁命名、基线推断、带 classifier 的快照查找、端到端 fetch（补丁探测 → bspatch → gzip → sha1 校验，本地静态服务） |
+| `test/jstart/snapshot_test.d` | SNAPSHOT 时间戳文件名/元数据解析、micdn `latest` 响应头与 `maven-metadata.xml` 回退、令牌只加在 GET（本地 127.0.0.1 静态服务） |
+| `test/jstart/native_test.d` | tar.gz 目标识别、解压缓存、发行包内可执行文件探测 |
 
 ## 冒烟测试
 
@@ -52,8 +58,15 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 - 二次 resolve：本地缓存命中（无网络请求）；
 - run：参数（`--port=8080`、普通参数）透传并 exec 成功；
 - gav 目标 resolve；
-- war 引擎：真实下载 tomcat 三件套，`run --print` 输出 Bootstrap 命令、验证
-  `<base>/webapps/<ctx>` 解压布局与参数透传；
+- info：结构化输出 app/main/依赖来源与本地落盘路径；
+- native（tar.gz）：现场打包 demo，验证 resolve/`run --print`/参数转发与解压目录；
+- fetch：本地文件与增量补丁路径（`--from`，本地静态服务，不联网）；
+- 实例与 stop：重复 base 拒绝启动，stop 指定/无参/重复调用的退出码与 pid 文件清理；
+- 多 webapp spec：`[webapp]` 段 → `engine-webapps.tsv` → Dist 引擎 → `entry-out`（本地
+  fake dist 引擎），并验证内嵌引擎与 `classpath` 被拒；
+- war 引擎：`run --print` 输出引擎入口 main 命令、验证 `--entry`/参数透传（引擎 jar 用
+  本地空文件，不联网）；另用本地 `FakeEngine` 端到端验证"入口 main 写 argv → exec 最终
+  命令"（`engine-entry.argv` 落盘与参数转发）；
 - 真实组件运行测试（可选，联网+大下载+java 17+）：`bash test/war-run-test.sh`
   用 `org.beangle.otk:beangle-otk-ws:war:0.0.29` 端到端启动并验证 HTTP 响应与
   docBase 清理；`--engine=undertow` 切换 undertow 引擎（默认复用

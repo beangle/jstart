@@ -1,5 +1,6 @@
 /**
- * Unit tests for jstart.repo: 本地仓库路径展开、sha1 文本解析、远程列表（Central 恒在末尾）。
+ * Unit tests for jstart.repo: 本地仓库路径展开、sha1 文本解析、远程列表（普通构件追加
+ * Central；SNAPSHOT 的上游不追加、无默认）。
  *
  * Test code lives outside of source/, mirroring the beangle micdn
  * layout. It is only compiled by the dub "unittest" configuration,
@@ -7,7 +8,7 @@
  */
 module test.jstart.repo_test;
 
-import jstart.repo : LocalRepo, buildRemotes, parseSha1Text;
+import jstart.repo : LocalRepo, buildRemotes, buildSnapshotRemotes, parseSha1Text;
 import std.process : environment;
 
 unittest {
@@ -29,6 +30,16 @@ unittest {
 
   auto defaults = buildRemotes();
   assert(defaults.length == 3);
+
+  // SNAPSHOT 上游不追加 Central、不给默认镜像：只用显式给出的列表
+  assert(buildSnapshotRemotes().length == 0);
+  assert(buildSnapshotRemotes("").length == 0);
+  auto snapRemotes = buildSnapshotRemotes("https://repo.example.com/snapshots");
+  assert(snapRemotes.length == 1);
+  assert(snapRemotes[0].base == "https://repo.example.com/snapshots");
+  auto two = buildSnapshotRemotes("http://a/maven, https://b/maven/");
+  assert(two.length == 2);
+  assert(two[0].base == "http://a/maven" && two[1].base == "https://b/maven");
 }
 
 unittest {

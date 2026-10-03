@@ -2,11 +2,12 @@
 # Real war engine test: run org.beangle.otk:beangle-otk-ws:war:0.0.29 with the
 # built-in tomcat engine end-to-end.
 #
-# Verifies: gav war 解析下载依赖（sha1 校验）、爆炸布局、exec 引擎 Bootstrap、
-# Tomcat 启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
+# Verifies: gav war 解析下载依赖（sha1 校验）、引擎入口 main 准备 docBase（EmbedCreator）、
+# exec 容器、Tomcat 启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
 #
 # Requires: network (first run downloads ~100MB into the local repo), java 17+
-# (tomcat 11), curl, and a built jstart (target/jstart).
+# (tomcat 11), curl, a built jstart (target/jstart), and a sas engine jar with
+# the entry main (org.beangle.sas.engine.<name>.EmbedCreator, 0.13.17+).
 #
 # Usage:
 #   bash test/war-run-test.sh [--local=<repo>] [--port=<port>] [--path=/]

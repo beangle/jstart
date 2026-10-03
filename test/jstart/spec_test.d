@@ -8,9 +8,9 @@
 module test.jstart.spec_test;
 
 import std.array : join;
-import std.string : startsWith;
+import std.string : indexOf, startsWith;
 
-import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec;
+import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec, validateLaunchSpec;
 
 unittest {
   // spec 识别：唯一形式是 .jstart 后缀（本地路径或 http(s) url，url 忽略查询串）。
@@ -237,4 +237,133 @@ unittest {
   assert(spec.engine.length == 0);
   assert(!spec.hasEngineDeps);
   assert(warnings.length == 0);
+}
+
+unittest {
+  // [app] main 与 [app] engine / [engine] 互斥，由 validateLaunchSpec 报错
+  string[] warnings;
+  auto withEngine = parseLaunchSpec(
+      "[app]\nentry = app.war\nmain = org.example.Main\nengine = tomcat\n", warnings);
+  assert(validateLaunchSpec(withEngine).length > 0);
+
+  auto withEngineDeps = parseLaunchSpec(
+      "[app]\nentry = app.war\nmain = org.example.Main\n[engine]\n", warnings);
+  assert(validateLaunchSpec(withEngineDeps).length > 0);
+
+  auto mainOnly = parseLaunchSpec("[app]\nentry = app.jar\nmain = org.example.Main\n", warnings);
+  assert(validateLaunchSpec(mainOnly).length == 0);
+
+  auto engineOnly = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n", warnings);
+  assert(validateLaunchSpec(engineOnly).length == 0);
+}
+
+unittest {
+  // 多应用：[webapp <id>] 段逐个声明 entry/path；重复的 id 由段头 id 决定。
+  enum text = "[app]\nbase = /var/tmp/jstart/demo\n" ~
+    "[webapp portal]\n" ~
+    "entry = portal.war\n" ~
+    "path = /portal\n" ~
+    "[webapp admin]\n" ~
+    "entry = admin.war\n" ~
+    "path = /admin/\n";
+  string[] warnings;
+  auto spec = parseLaunchSpec(text, warnings);
+  assert(warnings.length == 0, warnings.join(","));
+  assert(spec.webapps.length == 2);
+  assert(spec.webapps[0].id == "portal");
+  assert(spec.webapps[0].entry == "portal.war");
+  assert(spec.webapps[0].path == "/portal");
+  assert(spec.webapps[1].id == "admin");
+  assert(spec.webapps[1].entry == "admin.war");
+  assert(spec.webapps[1].path == "/admin/");
+  assert(spec.base == "/var/tmp/jstart/demo");
+  assert(validateLaunchSpec(spec).length == 0, validateLaunchSpec(spec));
+}
+
+unittest {
+  // [webapp] 段头缺 id 或未知键：告警但不崩，spec.webapps 只收有效段。
+  string[] warnings;
+  auto spec = parseLaunchSpec("[webapp]\nentry = a.war\n", warnings);
+  assert(spec.webapps.length == 0);
+  assert(warnings.length == 1);
+
+  warnings = null;
+  spec = parseLaunchSpec("[webapp portal]\nentry = a.war\nweird = x\n", warnings);
+  assert(spec.webapps.length == 1);
+  assert(warnings.length == 1);
+  assert(warnings[0].indexOf("unknown [webapp] key") >= 0);
+}
+
+unittest {
+  // 多应用校验：每个 webapp 需要 entry 和 path，缺一不可。
+  string[] warnings;
+  auto noPath = parseLaunchSpec("[webapp a]\nentry = a.war\n", warnings);
+  assert(validateLaunchSpec(noPath).length > 0);
+
+  auto noEntry = parseLaunchSpec("[webapp a]\npath = /a\n", warnings);
+  assert(validateLaunchSpec(noEntry).length > 0);
+
+  auto ok = parseLaunchSpec("[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(ok).length == 0);
+}
+
+unittest {
+  // 归一化后重复的 context path（/a、/a/、a）视为冲突；id 也不能重复。
+  string[] warnings;
+  auto dupPath = parseLaunchSpec(
+      "[webapp a]\nentry = a.war\npath = /a\n[webapp b]\nentry = b.war\npath = /a/\n",
+      warnings);
+  assert(validateLaunchSpec(dupPath).length > 0);
+
+  auto dupRoot = parseLaunchSpec(
+      "[webapp a]\nentry = a.war\npath = /\n[webapp b]\nentry = b.war\npath = /\n", warnings);
+  assert(validateLaunchSpec(dupRoot).length > 0);
+
+  auto dupId = parseLaunchSpec(
+      "[webapp a]\nentry = a.war\npath = /a\n[webapp a]\nentry = b.war\npath = /b\n",
+      warnings);
+  assert(validateLaunchSpec(dupId).length > 0);
+
+  auto badId = parseLaunchSpec("[webapp a b]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(badId).length > 0);
+}
+
+unittest {
+  // 多应用与单应用的键互斥：entry/main/[deps] 都不能和 [webapp] 段共存。
+  string[] warnings;
+  auto withEntry = parseLaunchSpec(
+      "[app]\nentry = app.war\n[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(withEntry).length > 0);
+
+  auto withMain = parseLaunchSpec(
+      "[app]\nmain = org.example.Main\n[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(withMain).length > 0);
+
+  auto withDeps = parseLaunchSpec(
+      "[deps]\norg.slf4j:slf4j-api:2.0.17\n[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(withDeps).length > 0);
+}
+
+unittest {
+  // 多应用必须走 Dist 模式：内置别名与 *EmbedCreator 都被拒绝，ServerCreator FQCN 放行。
+  string[] warnings;
+  auto aliasEngine = parseLaunchSpec(
+      "[app]\nengine = tomcat\n[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(aliasEngine).length > 0);
+
+  auto embed = parseLaunchSpec(
+      "[app]\nengine = org.beangle.sas.engine.tomcat.EmbedCreator\n"
+      ~ "[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(embed).length > 0);
+
+  auto dist = parseLaunchSpec(
+      "[app]\nengine = org.beangle.sas.engine.tomcat.ServerCreator\n"
+      ~ "[webapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(dist).length == 0, validateLaunchSpec(dist));
+
+  // engine 缺省（空）留给 run 层选 ServerCreator；[engine] 依赖段与 [webapp] 段兼容。
+  auto defaulted = parseLaunchSpec(
+      "[webapp a]\nentry = a.war\npath = /a\n[engine]\n"
+      ~ "org.beangle.sas:beangle-sas-engine:0.13.17\n", warnings);
+  assert(validateLaunchSpec(defaulted).length == 0, validateLaunchSpec(defaulted));
 }

@@ -12,8 +12,7 @@ module app;
 import std.algorithm : endsWith;
 import std.array : join;
 import std.conv : to;
-import std.file : dirEntries, exists, isDir, isFile, mkdirRecurse, readText, remove,
-  SpanMode;
+import std.file : exists, isDir, isFile, readText, remove, write;
 import std.path : buildPath;
 import std.stdio : stderr, writeln;
 import std.string : startsWith, strip;
@@ -23,16 +22,18 @@ import jstart.base : PidInfo, currentPid, nativeDirName, pidFilePath, processAli
   processStartTime, readPidFile, removePidFile, resolveBase, stopApplication, stopNotRunning,
   writePidFile;
 import jstart.distrepo : fetchDist;
-import jstart.engine : appendEngineDeps, defaultEngineDeps, engineMainClass, expandEngineDeps,
-  parseEngineSel, scanEngineArgs, warDocBaseDir, warDocBaseName;
-import jstart.launcher : printCommand, printJavaCommand, runJarApp, runNativeApp;
+import jstart.engine : EngineSel, appendEngineDeps, defaultDistEngineDeps, defaultEngineDeps,
+  distTomcatEntryMain, entryArgvFile, entryClasspathFile, expandEngineDeps, parseEngineSel,
+  parseEntryArgv, webappsPlanFile;
+import jstart.http : runProcessCapture;
+import jstart.launcher : execCommand, javaFor, printCommand, printJavaCommand, runJarApp,
+  runNativeApp;
 import jstart.mainclass : MainClass, MainSource, isPlausibleMainClass, pickMainClass,
   sourceName;
 import jstart.native : extractTarGz, findExecutable, isNativeTarget, targetGav;
-import jstart.repo : LocalRepo, RemoteRepo, buildRemotes;
+import jstart.repo : LocalRepo, RemoteRepo, buildRemotes, buildSnapshotRemotes;
 import jstart.resolver : Resolver;
-import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec;
-import jstart.zipfile : explodeZip;
+import jstart.spec : LaunchSpec, isSpecFile, parseLaunchSpec, validateLaunchSpec;
 
 /// Version of the jstart binary.
 enum jstartVersion = "0.0.1";
@@ -46,6 +47,8 @@ struct BootArgs {
   string[] rest;
   string local;
   string remote;
+  /// --snapshot-remote: SNAPSHOT 专用上游（不兜到 --remote）
+  string snapshotRemote;
   /// --from: fetch 的增量补丁基线版本
   string from;
   /// --base: base 根目录（默认 /var/tmp/jstart；组件目录为 <base>/<组件键>）
@@ -62,12 +65,16 @@ struct BootArgs {
   bool force;
   /// --source: 源仓库目录（repo 命令从该仓库复制依赖）
   string source;
-  bool preferWar;
   /// --print: 只打印将要执行的命令，不 exec。
   bool print;
   /// 并行下载并发数（--jobs），1 = 串行。
   int jobs = 10;
+  /// --verbose: 输出解析/下载/写 pid/启动命令等过程细节。
+  bool verbose;
+  /// --quiet: 连告警也静默（比默认更安静）。
   bool quiet;
+  /// --offline: 只用本地仓库，不做任何远程探测与下载。
+  bool offline;
   bool help;
   bool showVersion;
 }
@@ -82,8 +89,8 @@ BootArgs parseArgs(string[] args) {
       r.showVersion = true;
     } else if (a == "--quiet" || a == "-q") {
       r.quiet = true;
-    } else if (a == "--preferwar") {
-      r.preferWar = true;
+    } else if (a == "--verbose" || a == "-v") {
+      r.verbose = true;
     } else if (a == "--print") {
       r.print = true;
     } else if (a.startsWith("--jobs=")) {
@@ -100,6 +107,8 @@ BootArgs parseArgs(string[] args) {
       r.local = a["--local=".length .. $];
     } else if (a.startsWith("--remote=")) {
       r.remote = a["--remote=".length .. $];
+    } else if (a.startsWith("--snapshot-remote=")) {
+      r.snapshotRemote = a["--snapshot-remote=".length .. $];
     } else if (a.startsWith("--source=")) {
       r.source = a["--source=".length .. $];
     } else if (a.startsWith("--from=")) {
@@ -123,6 +132,8 @@ BootArgs parseArgs(string[] args) {
       r.stopTimeout = n < 1 ? 1 : n;
     } else if (a == "--force") {
       r.force = true;
+    } else if (a == "--offline") {
+      r.offline = true;
     } else if (r.target.length == 0 && (a == "resolve" || a == "classpath" || a == "info"
         || a == "run" || a == "repo" || a == "fetch" || a == "stop")) {
       r.command = a;
@@ -143,9 +154,10 @@ void usage() {
   writeln("Usage:");
   writeln("  jstart [options] run <target> [args...]");
   writeln("      Prepare dependencies then exec the runtime: the process");
-  writeln("      becomes the runtime itself (java for jar targets; war targets");
-  writeln("      run with the built-in tomcat engine, see docs/war-engine.md;");
-  writeln("      tar.gz targets are extracted and their executable is run).");
+  writeln("      becomes the runtime itself (java for jar targets; a war target");
+  writeln("      must be declared by a launch spec's [app] entry and runs the");
+  writeln("      built-in engine, see docs/war-engine.md; tar.gz targets are");
+  writeln("      extracted and their executable is run).");
   writeln("      Unrecognized args (like --port=8080) are passed to the");
   writeln("      application; -D/-X* args go to the runtime. <target> may");
   writeln("      also be a launch spec (.jstart) declaring main/entry/runtime/args");
@@ -189,13 +201,15 @@ void usage() {
   writeln("  run 需要可启动的应用本体：jar/gav/url/解压目录，或写成 launch spec");
   writeln("  （.jstart，支持本地或 http(s)，见 docs/launch-spec.md）。本地文件 target 只接受");
   writeln("  jar/war/解压目录；纯文本依赖清单已不支持。");
+  writeln("  war 例外：run 不能直接吃 war（本地/url/gav 皆然），必须写 launch spec 并用");
+  writeln("  [app] entry 声明；resolve/fetch/repo 仍可直接接受 war。");
   writeln("  java 目标的主类按 --main > launch spec [app] main > jar 内 MANIFEST.MF");
   writeln("  Main-Class 的顺序确定（解压目录没有 manifest，只能靠前两者）。");
   writeln("  tar.gz（native）目标：取发行包（同 fetch，gav 时含增量补丁）后解压到");
   writeln("  <base>/app（base = <base 根>/<组件键>，根默认 /var/tmp/jstart），");
   writeln("  exec 解压出的可执行文件，[args]/命令行参数按序附加在其后；resolve 输出该");
   writeln("  可执行文件路径，可执行文件位置用 launch spec [app] exec= 指定。");
-  writeln("  base：组件的运行基目录（pid 文件、native 解压、war 爆炸都在其中）。一个组件");
+  writeln("  base：组件的运行基目录（pid 文件、native 解压、引擎 docBase 与 argv 都在其中）。一个组件");
   writeln("  的一个 base 只能跑一个实例——跑多个副本请给每个副本不同的 --base/--instance；");
   writeln("  参数不参与实例身份，因此 run/stop 不需要给同样的参数。");
   writeln("");
@@ -204,6 +218,15 @@ void usage() {
   writeln("  --source=<dir>   source repository for the repo command");
   writeln("                   (default ~/.m2/repository, must differ from --local)");
   writeln("  --remote=<urls>  comma separated remote repositories");
+  writeln("                   (release artifacts; Central is appended, and the");
+  writeln("                   built-in mirrors are used when the option is absent)");
+  writeln("  --snapshot-remote=<urls>  optional comma separated SNAPSHOT upstreams;");
+  writeln("                   used for SNAPSHOT only, never falling back to --remote");
+  writeln("                   (no default mirrors, no Central fallback); without it a");
+  writeln("                   SNAPSHOT already in the local snapshot library is used");
+  writeln("                   as-is, and only a missing one is an error");
+  writeln("  --offline        use the local repositories only: no remote probing");
+  writeln("                   and no downloads (missing artifacts fail instead)");
   writeln("  --from=<version> fetch/native gav: delta baseline version (default: the");
   writeln("                   newest local version lower than the requested one)");
   writeln("  --base=<dir>     run/stop: the base root, replacing the default");
@@ -222,12 +245,20 @@ void usage() {
   writeln("  --timeout=<sec>  stop: seconds to wait after SIGTERM (default 15)");
   writeln("  --force          run: start even if the pid file says it is running;");
   writeln("                   stop: SIGKILL after the timeout");
-  writeln("  --preferwar      for gav targets, prefer the war packaging");
   writeln("  --print          run only: print the command to execute (no exec)");
   writeln("  --jobs=N         parallel dependency downloads (default 10, 1 = serial)");
-  writeln("  --quiet          suppress info output");
+  writeln("  --verbose, -v    show progress details (resolve/download/explode/exec)");
+  writeln("  --quiet          suppress warnings and progress (exit code still tells)");
   writeln("  -h, --help       show this help");
   writeln("  -V, --version    print the version");
+}
+
+/**
+ * 过程细节（resolving/downloading/exploding/running 等）是否输出：只有
+ * --verbose 打开且未给 --quiet 时才输出；默认只保留告警与命令结果。
+ */
+private bool showProgress(BootArgs opts) {
+  return opts.verbose && !opts.quiet;
 }
 
 int main(string[] args) {
@@ -268,8 +299,8 @@ int main(string[] args) {
   }
 
   auto localRepo = new LocalRepo(opts.local);
-  auto remotes = buildRemotes(opts.remote);
-  auto resolver = new Resolver(localRepo, remotes, !opts.quiet, opts.preferWar);
+  auto resolver = new Resolver(localRepo, remotesOf(opts), showProgress(opts),
+      opts.quiet, opts.offline, snapshotRemotesOf(opts));
 
   // launch spec：target 必须以 .jstart 结尾（本地路径或 http(s) url）。
   // http(s) spec 先下载并缓存到本地仓库，再按本地文件解析。
@@ -283,7 +314,14 @@ int main(string[] args) {
   }
   LaunchSpec spec;
   auto specMode = tryLoadSpec(opts, specLocal, spec);
-  if (specMode && spec.entry.length == 0) {
+  if (specMode) {
+    auto invalid = validateLaunchSpec(spec);
+    if (invalid.length > 0) {
+      stderr.writeln(invalid);
+      return 1;
+    }
+  }
+  if (specMode && spec.webapps.length == 0 && spec.entry.length == 0) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
   }
@@ -319,6 +357,12 @@ int main(string[] args) {
     return code;
   }
 
+  // 多应用 spec（[webapp <id>]）：一个 dist 引擎在同一 JVM 里跑多个 webapp，各占一个
+  // context path。stop 已按 base 处理，这里处理 run/resolve/info/classpath。
+  if (specMode && spec.webapps.length > 0) {
+    return runMultiWebapp(opts, resolver, spec);
+  }
+
   // native（GraalVM tar.gz）目标：取包 -> 解压 -> 定位可执行文件，后面直接
   // exec 它（没有 JVM，也没有单独的运行时）。
   auto target = specMode ? spec.entry : opts.target;
@@ -326,7 +370,7 @@ int main(string[] args) {
   string nativeArchive;
   string nativeRoot;
   string appPath;
-  // base：组件的运行基目录（pid 文件、native 解压、war 爆炸都在其中）。run 需要，
+  // base：组件的运行基目录（pid 文件、native 解压、引擎 docBase 与 argv 都在其中）。run 需要，
   // native 的 resolve/info 因为要解压也需要。
   string base;
   if (opts.command == "run" || nativeMode) {
@@ -360,13 +404,13 @@ int main(string[] args) {
     // 解压到 <base>/app：base 按组件（--base/--instance 可换），不用包旁目录兜底。
     auto extractDir = buildPath(base, nativeDirName);
     string[] candidates;
-    auto extracted = extractTarGz(nativeArchive, !opts.quiet, false, extractDir);
+    auto extracted = extractTarGz(nativeArchive, showProgress(opts), false, extractDir);
     if (extracted.ok) {
       appPath = findExecutable(extracted.dir, execHint, artifactId, candidates);
     }
     if (appPath.length == 0 && extracted.ok && extracted.reused) {
       // 复用的解压目录不完整/被改动：强制重解一次
-      extracted = extractTarGz(nativeArchive, !opts.quiet, true, extractDir);
+      extracted = extractTarGz(nativeArchive, showProgress(opts), true, extractDir);
       if (extracted.ok) {
         appPath = findExecutable(extracted.dir, execHint, artifactId, candidates);
       }
@@ -384,9 +428,10 @@ int main(string[] args) {
       return 1;
     }
   }
-  if (specMode && !appPath.endsWith(".war")
+  if (specMode && !nativeMode && !appPath.endsWith(".war") && !isDir(appPath)
       && (spec.engine.length > 0 || spec.hasEngineDeps) && !opts.quiet) {
-    stderr.writeln("Warning: [app] engine / [engine] applies to war targets only, ignored.");
+    stderr.writeln("Warning: [app] engine / [engine] applies to war targets "
+        ~ "(a war file or an exploded webapp directory), ignored.");
   }
   Archive[] deps;
   if (specMode && spec.hasDeps) {
@@ -426,13 +471,25 @@ int main(string[] args) {
   }
 
   // command == "run"
-  if (appPath.endsWith(".war")) {
-    if (!opts.quiet && (opts.hasMain || (specMode && spec.main.length > 0))) {
-      warnIgnoredMain(opts, specMode, spec, "war");
-      stderr.writeln("Note: a war runs the engine's bootstrap class; "
-          ~ "pick the engine with [app] engine (see docs/war-engine.md).");
+  // 引擎目标：war 文件，或"目录 + 显式 [app] engine/[engine] 声明"的已解压 webapp。
+  // 后者让 jstart 按 spec 启动一个解压好的 web 项目目录（引擎直接用它作 docBase）。
+  auto engineDeclared = specMode && (spec.engine.length > 0 || spec.hasEngineDeps);
+  if (appPath.endsWith(".war") || (engineDeclared && isDir(appPath))) {
+    // war 只能通过 launch spec 运行：引擎 / 参数 / base 都需要显式声明
+    // （见 docs/engine.md）。resolve/fetch/repo 对 war 的支持不受此限制。
+    if (appPath.endsWith(".war") && !specMode) {
+      stderr.writeln("war targets must run through a launch spec: write a .jstart file\n"
+          ~ "  [app]\n  entry = " ~ opts.target ~ "\n  engine = tomcat\n"
+          ~ "then run `jstart run app.jstart` (see docs/engine.md). "
+          ~ "resolve/fetch still accept a war directly.");
+      return 1;
     }
-    return runWar(opts, resolver, appPath, deps, specMode, spec, base);
+    if (!opts.quiet && (opts.hasMain || (specMode && spec.main.length > 0))) {
+      warnIgnoredMain(opts, true, spec, "war");
+      stderr.writeln("Note: a war runs an engine entry main; "
+          ~ "pick it with [app] engine (see docs/engine.md).");
+    }
+    return runEngine(opts, resolver, appPath, deps, spec, base);
   }
   if (mainClass.empty) {
     stderr.writeln("Cannot find Main-Class in MANIFEST.MF of " ~ appPath);
@@ -468,60 +525,64 @@ int main(string[] args) {
   if (opts.print) {
     return printJavaCommand(classpath, mainClass.name, runtimeOptions, appArgs, runtimeCmd);
   }
-  return runJarApp(classpath, mainClass.name, runtimeOptions, appArgs, !opts.quiet, runtimeCmd);
+  return runJarApp(classpath, mainClass.name, runtimeOptions, appArgs, showProgress(opts),
+      runtimeCmd);
 }
 
 /**
- * run 的 war 引擎分支：把 war 爆炸到 <base>/webapps/<name>，用应用 classpath +
- * 引擎依赖 exec 引擎 Bootstrap（进程仍变为 java，无父子等待）。
+ * run 的引擎分支：先运行**引擎入口 main** 准备引擎环境（解压 war/发行包、写
+ * 容器配置），再 exec 它写出的最终启动命令（进程仍变为 java，无父子等待）。
  *
- * - 引擎选择：launch spec [app] engine（war 缺省 tomcat；jar/其它运行时忽略）；
- *   tomcat 可带版本后缀 tomcat-<版本>，无后缀用内置默认版本；
- * - 引擎依赖：[engine] 段逐行罗列（存在即为准，不依赖内置行；行内可用
- *   {tomcat.version}/{sas.version} 占位符引用内置版本），缺省回退 tomcat
- *   内置默认（等价 sas.sh 的三个 download 行，engine = tomcat-<版本> 时用指定
- *   版本重钉两个 tomcat-embed jar）；undertow 依赖较多，须显式罗列；
- * - base 就是组件的 base（--base/--instance/[app] base）：引擎的 --base 也用它，
- *   爆炸到 <base>/webapps/<name>，pid 文件是 <base>/app.pid -- 一个 base 一个实例；
- * - --path= 被"读取"用于爆炸布局（最后一次出现生效，与引擎 CmdOptions 一致），之后
- *   仍原样转发给引擎；[args] 里的 --base= 不再作为 base（会被丢弃，避免与注入的
- *   --base=<base> 冲突），--port 等参数不读取、直接透传；
- * - 爆炸目录每次运行前重建（引擎关闭时会自行删除 docBase，与 sas.sh 的 rm -rf 语义一致）。
+ * 与旧实现（jstart 自行爆炸 war 后直接 exec Bootstrap）不同：docBase 布局与 war
+ * 爆炸都收敛到引擎侧，jstart 不再镜像布局公式，也不再有"跨仓库契约"。协议见
+ * docs/engine.md。
+ *
+ * - [app] engine：内置别名 tomcat|undertow（war 缺省 tomcat，可带 tomcat 版本
+ *   后缀），或含 "." 的入口 main FQCN；
+ * - [engine] 段：引擎 jar 清单（同 [deps] 语法，行内可用
+ *   {tomcat.version}/{sas.version} 占位符）；段存在即为准。缺省用内置目录
+ *   （tomcat 支持 engine = tomcat-<版本> 重钉两个 tomcat-embed jar）；FQCN 入口
+ *   main 没有内置目录，必须显式声明 [engine]；
+ * - 入口 main 以 `java -cp <引擎 jar> <entryMain> --base= --entry= --app-classpath-file=
+ *   --entry-out= [--app-jvm-arg=...] <透传参数>` 运行，把最终 argv（NUL 分隔）
+ *   写入 --entry-out 文件；非 0 退出即失败；
+ * - base 就是组件的 base（--base/--instance/[app] base）；--path/--port 等参数
+ *   一律原样交给入口 main 转发（jstart 不再读取 --path）；
+ * - --print：照常准备（跑入口 main），但只打印最终命令不 exec。
  */
-private int runWar(BootArgs opts, Resolver resolver, string warPath,
-    Archive[] appDeps, bool specMode, LaunchSpec spec, string base) {
-  // 引擎选择：war 缺省 tomcat；tomcat 后可带版本（tomcat-11.0.24），无后缀或
-  // 非 tomcat 引擎用内置默认版本。
-  auto engineSel = specMode && spec.engine.length > 0 ? spec.engine : "tomcat";
-  string engineName;
-  string engineVersion;
-  string engineMain;
+private int runEngine(BootArgs opts, Resolver resolver, string entry,
+    Archive[] appDeps, LaunchSpec spec, string base) {
+  EngineSel sel;
   try {
-    auto sel = parseEngineSel(engineSel);
-    engineName = sel.name;
-    engineVersion = sel.ver;
-    engineMain = engineMainClass(engineName);
+    sel = parseEngineSel(spec.engine.length > 0 ? spec.engine : "tomcat");
   } catch (Exception e) {
     stderr.writeln(e.msg);
     return 1;
   }
 
-  // 引擎依赖：[engine] 段罗列为准（占位符先展开）；没有则用内置默认目录
-  // （tomcat 支持 engine = tomcat-<版本> 重钉内置 embed jar）。
+  // 引擎依赖：[engine] 段罗列为准（占位符先展开）；别名缺省用内置目录，
+  // FQCN 入口 main 没有内置目录。
   Archive[] engineDeps;
-  if (specMode && spec.hasEngineDeps) {
+  if (spec.hasEngineDeps) {
     auto lines = spec.engineDeps.dup;
     foreach (i, line; lines) {
-      lines[i] = expandEngineDeps(line, engineVersion);
+      lines[i] = expandEngineDeps(line, sel.ver);
     }
     engineDeps = resolver.parseDependencyText(lines.join("\n"));
-  } else {
+  } else if (sel.aliasName.length > 0) {
     try {
-      engineDeps = defaultEngineDeps(engineName, engineVersion);
+      engineDeps = defaultEngineDeps(sel.aliasName, sel.ver);
     } catch (Exception e) {
       stderr.writeln(e.msg);
       return 1;
     }
+  } else if (sel.entryMain == distTomcatEntryMain) {
+    // 全量 tomcat（ServerCreator）也有内置目录：beangle-sas-engine + tomcat 发行包 zip。
+    engineDeps = defaultDistEngineDeps(sel.ver);
+  } else {
+    stderr.writeln("Engine entry main " ~ sel.entryMain
+        ~ " has no built-in dependency catalog: declare its jars in the [engine] section.");
+    return 1;
   }
   auto merged = appendEngineDeps(appDeps, engineDeps);
   auto missing = resolver.ensureDependencies(merged, opts.jobs);
@@ -530,18 +591,19 @@ private int runWar(BootArgs opts, Resolver resolver, string warPath,
     return 1;
   }
 
-  // 运行时参数与 app args 拆分（与 jar 分支一致）。
-  string[] runtimeOptions = specMode ? spec.runtimeOptions.dup : null;
-  string[] appArgs = specMode ? spec.args.dup : null;
+  // 运行时参数与透传参数拆分（与 jar 分支一致）：[runtime] 与 -D/-X 归 java（作为
+  // --app-jvm-arg 交给入口 main 写进最终命令），其余（含 --path/--port）原样透传。
+  string[] runtimeOptions = spec.runtimeOptions.dup;
+  string[] passthrough = spec.args.dup;
   foreach (a; opts.rest) {
     if (a.startsWith("-D") || a.startsWith("-X")) {
-      runtimeOptions ~= a; // -D/-X 是 java 运行时参数，仍归运行时
+      runtimeOptions ~= a;
     } else {
-      appArgs ~= a;
+      passthrough ~= a;
     }
   }
 
-  if (!opts.print && specMode && spec.workingDir.length > 0) {
+  if (!opts.print && spec.workingDir.length > 0) {
     auto dir = expandLocalPath(spec.workingDir);
     if (!changeDir(dir)) {
       stderr.writeln("Cannot chdir to " ~ dir);
@@ -549,68 +611,291 @@ private int runWar(BootArgs opts, Resolver resolver, string warPath,
     }
   }
 
-  // --path= 例外读取：仅用于决定爆炸位置，参数本身原样转发。--base 已是 jstart
-  // 选项（不再从 [args] 里读；[args] 里的 --base 在下面被丢弃，避免与注入的
-  // --base=<base> 冲突）。
-  string ctxPath;
-  string ignoredBase;
-  scanEngineArgs(appArgs, ctxPath, ignoredBase);
-  auto name = warDocBaseName(ctxPath);
-  if (name.length == 0) {
-    stderr.writeln("Unsafe context path for war explosion: --path=" ~ ctxPath);
-    return 1;
-  }
-  auto docBase = warDocBaseDir(base, name);
+  auto java = javaFor(spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "");
+  // 引擎 jar 与应用依赖分开：应用依赖写进 --app-classpath-file 交给入口 main，由它
+  // 连同解压后的 docBase/WEB-INF 一起拼进最终 classpath（WEB-INF 的位置只有引擎知道）。
+  auto engineCp = resolver.depsClasspath(engineDeps);
+  auto appCp = resolver.buildClasspath("", appDeps);
+  auto entryOut = buildPath(base, entryArgvFile);
+  // 应用依赖 classpath 可能很长，写入文件由入口 main 读取，避免命令行超长
+  auto appCpFile = buildPath(base, entryClasspathFile);
+  write(appCpFile, appCp);
 
-  if (!opts.quiet) {
-    writeln("Exploding " ~ warPath ~ " -> " ~ docBase);
+  auto engineCmd = [java, "-cp", engineCp, sel.entryMain,
+      "--base=" ~ base, "--entry=" ~ entry, "--app-classpath-file=" ~ appCpFile,
+      // 本地仓库地址透传给引擎入口 main（ServerCreator 转成 -Dsas.repo），
+      // 使容器内的 DependencyClassLoader 也认 --local（快照与正式版同库）
+      "--Dsas.repo=" ~ resolver.local.base,
+      "--entry-out=" ~ entryOut];
+  foreach (o; runtimeOptions) {
+    engineCmd ~= "--app-jvm-arg=" ~ o;
   }
-  rmTree(docBase);
-  mkdirRecurse(docBase);
-  auto extracted = explodeZip(warPath, docBase);
-  if (extracted == 0) {
-    stderr.writeln("Cannot explode " ~ warPath ~ " into " ~ docBase);
-    return 1;
-  }
-  // 引擎（sas Server.Config.guessDocBase）会探测 classpath 上的目录资源；war
-  // 没有 WEB-INF/classes 时补一个空目录，避免 getResource("") 为 null。
-  auto classesDir = docBase ~ "/WEB-INF/classes";
-  if (!exists(classesDir)) {
-    mkdirRecurse(classesDir);
-  }
+  engineCmd ~= passthrough;
 
-  auto classpath = resolver.buildClasspath(docBase, merged);
-  auto runtimeCmd = specMode && spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "";
-  // --base 已消费（决定爆炸位置）：不再重复转发，统一放到 --base=<最终值>。
-  string[] restArgs;
-  foreach (a; appArgs) {
-    if (!a.startsWith("--base=")) {
-      restArgs ~= a;
-    }
-  }
-  auto engineArgs = ["--base=" ~ base] ~ restArgs;
   if (opts.print) {
-    return printJavaCommand(classpath, engineMain, runtimeOptions, engineArgs, runtimeCmd);
-  }
-  return runJarApp(classpath, engineMain, runtimeOptions, engineArgs, !opts.quiet, runtimeCmd);
-}
-
-/** 递归删除目录/文件（爆炸前清理历史残留）。 */
-private void rmTree(string path) {
-  if (!exists(path)) {
-    return;
-  }
-  if (isDir(path)) {
-    foreach (e; dirEntries(path, SpanMode.shallow)) {
-      rmTree(e.name);
+    // 只打印：上次运行留下的 argv 文件存在时打印真实启动命令，否则打印引擎准备
+    // 命令（准备过程可能有副作用，--print 不执行它）。
+    if (exists(entryOut)) {
+      auto saved = parseEntryArgv(readText(entryOut));
+      if (saved.length > 0) {
+        return printCommand(saved);
+      }
     }
+    return printCommand(engineCmd);
   }
-  remove(path);
+  if (exists(entryOut)) {
+    remove(entryOut); // 清掉上次残留，避免引擎准备失败时误读旧命令
+  }
+
+  auto pr = runProcessCapture(engineCmd, opts.verbose);
+  if (pr.status != 0) {
+    stderr.writeln("Engine entry main failed (exit " ~ pr.status.to!string ~ "): "
+        ~ sel.entryMain);
+    return pr.status;
+  }
+  if (opts.verbose && pr.stdoutText.strip.length > 0) {
+    stderr.writeln(pr.stdoutText.strip);
+  }
+  if (!exists(entryOut)) {
+    stderr.writeln("Engine entry main did not write " ~ entryOut);
+    return 1;
+  }
+  auto argv = parseEntryArgv(readText(entryOut));
+  if (argv.length == 0) {
+    stderr.writeln("Engine entry main wrote an empty launch command to " ~ entryOut);
+    return 1;
+  }
+  return execCommand(argv, showProgress(opts));
 }
 
 /**
- * 主类只对 java（jar/gav-jar/解压目录）目标有意义：war 跑引擎的 Bootstrap 类
- * （用 [app] engine 选引擎），native（tar.gz）跑 [app] exec。这两种目标上给出
+ * 多应用 spec（`[webapp <id>]`）：一个 **dist 引擎**在同一 JVM 里跑多个 webapp，每个
+ * 一个独立 context path。设计约定见 docs/engine.md：
+ *
+ *  - 多应用只走 Dist 模式，内嵌引擎（tomcat/undertow 别名、*EmbedCreator）只跑一个 webapp，
+ *    在 spec 校验阶段即被拒绝；
+ *  - jstart 逐个取回 webapp（war 文件或已解压目录）并**补齐各自依赖到本地仓库**——运行时
+ *    由容器内每个 Context 自己的 DependencyClassLoader 按 war 清单解析（sas.repo 透传），
+ *    jstart 不把多应用的依赖合并进同一个 JVM classpath（那样会串味）；
+ *  - 每个 webapp 的入口与 context path 写进 `<base>/engine-webapps.tsv`（一行一个：
+ *    `id \t entry \t path`），用 `--webapps-file=` 交给入口 main；单应用仍走
+ *    `--entry=`/`--path=`/`--app-classpath-file=`；
+ *  - 一个 base = 一个实例：一份 pid、一套 `webapps/`，多应用共享启停生命周期。
+ */
+private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
+  import std.format : format;
+
+  // base 与单应用一致（--base/--instance/[app] base）；多应用共享一个 base。
+  auto base = resolveBase(opts.target, baseOption(opts, spec), opts.instance);
+  if (base.length == 0) {
+    stderr.writeln("Cannot prepare the component base for " ~ opts.target
+        ~ "; pass a writable --base=<dir>.");
+    return 1;
+  }
+  // 一个 base 一份 pid：多应用共享启停生命周期（stop 只需 base）。
+  string pidPath;
+  if (opts.command == "run" && !opts.print) {
+    bool fatal;
+    pidPath = preparePidFile(opts, base, opts.target, fatal);
+    if (fatal) {
+      return 1;
+    }
+  }
+  scope (exit) removePidOnExit(pidPath);
+
+  // 逐个取回 webapp 并补齐依赖：容器内 DependencyClassLoader 按 sas.repo 从本地仓库解析
+  // 每个 war 的清单，因此这里必须确保构件已就位（与单应用同为 jstart 的解析结果）。
+  string[] entries;
+  bool missingAny;
+  foreach (w; spec.webapps) {
+    auto entry = resolver.fetchTarget(w.entry);
+    if (entry.length == 0) {
+      return 1;
+    }
+    entries ~= entry;
+    auto deps = resolver.resolveDependencies(entry);
+    auto missing = resolver.ensureDependencies(deps, opts.jobs);
+    if (missing.length > 0) {
+      stderr.writeln(format("[webapp %s] missing: %s", w.id, missing.join(",")));
+      missingAny = true;
+    }
+  }
+
+  if (opts.command == "resolve") {
+    foreach (entry; entries) {
+      writeln(entry);
+    }
+    return missingAny ? 1 : 0;
+  }
+  if (opts.command == "info") {
+    if (missingAny) {
+      return 1;
+    }
+    return printMultiWebappInfo(opts, resolver, spec, entries);
+  }
+  if (opts.command == "classpath") {
+    stderr.writeln("classpath is not supported for multi-webapp specs: each webapp has "
+        ~ "its own classpath (use `info`).");
+    return 2;
+  }
+  // command == "run"
+  if (missingAny) {
+    return 1;
+  }
+  if (opts.hasMain || spec.main.length > 0) {
+    warnIgnoredMain(opts, true, spec, "multi-webapp");
+  }
+
+  // 引擎：多应用只走 Dist。缺省 ServerCreator；给 FQCN 时按 FQCN，引擎依赖 [engine] 段为准，
+  // 否则用 ServerCreator 的内置目录（beangle-sas-engine + tomcat 发行包 zip）。
+  EngineSel sel;
+  try {
+    sel = parseEngineSel(spec.engine.length > 0 ? spec.engine : distTomcatEntryMain);
+  } catch (Exception e) {
+    stderr.writeln(e.msg);
+    return 1;
+  }
+  Archive[] engineDeps;
+  if (spec.hasEngineDeps) {
+    auto lines = spec.engineDeps.dup;
+    foreach (i, line; lines) {
+      lines[i] = expandEngineDeps(line, sel.ver);
+    }
+    engineDeps = resolver.parseDependencyText(lines.join("\n"));
+  } else if (sel.entryMain == distTomcatEntryMain) {
+    engineDeps = defaultDistEngineDeps(sel.ver);
+  } else {
+    stderr.writeln("Engine entry main " ~ sel.entryMain
+        ~ " has no built-in dependency catalog: declare its jars in the [engine] section.");
+    return 1;
+  }
+  auto missingEngine = resolver.ensureDependencies(engineDeps, opts.jobs);
+  if (missingEngine.length > 0) {
+    stderr.writeln("Missing: " ~ missingEngine.join(","));
+    return 1;
+  }
+
+  // 运行参数与应用参数拆分（与单应用 war 分支一致）：[runtime] 与 -D/-X 归 java，其余透传。
+  string[] runtimeOptions = spec.runtimeOptions.dup;
+  string[] passthrough = spec.args.dup;
+  foreach (a; opts.rest) {
+    if (a.startsWith("-D") || a.startsWith("-X")) {
+      runtimeOptions ~= a;
+    } else {
+      passthrough ~= a;
+    }
+  }
+
+  if (!opts.print && spec.workingDir.length > 0) {
+    auto dir = expandLocalPath(spec.workingDir);
+    if (!changeDir(dir)) {
+      stderr.writeln("Cannot chdir to " ~ dir);
+      return 1;
+    }
+  }
+
+  // webapps 计划文件：每行 id \t entry \t path，交给入口 main（ServerCreator）逐个建 Context。
+  auto planPath = buildPath(base, webappsPlanFile);
+  string plan;
+  foreach (i, w; spec.webapps) {
+    plan ~= w.id ~ "\t" ~ entries[i] ~ "\t" ~ w.path ~ "\n";
+  }
+  write(planPath, plan);
+
+  auto java = javaFor(spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "");
+  auto engineCp = resolver.depsClasspath(engineDeps);
+  auto entryOut = buildPath(base, entryArgvFile);
+  auto engineCmd = [java, "-cp", engineCp, sel.entryMain,
+      "--base=" ~ base, "--webapps-file=" ~ planPath,
+      // 本地仓库地址透传（ServerCreator 转成 -Dsas.repo），容器内每个 Context 的
+      // DependencyClassLoader 都从同一个仓库解析各自 war 的依赖清单。
+      "--Dsas.repo=" ~ resolver.local.base,
+      "--entry-out=" ~ entryOut];
+  foreach (o; runtimeOptions) {
+    engineCmd ~= "--app-jvm-arg=" ~ o;
+  }
+  engineCmd ~= passthrough;
+
+  if (opts.print) {
+    if (exists(entryOut)) {
+      auto saved = parseEntryArgv(readText(entryOut));
+      if (saved.length > 0) {
+        return printCommand(saved);
+      }
+    }
+    return printCommand(engineCmd);
+  }
+  if (exists(entryOut)) {
+    remove(entryOut);
+  }
+
+  auto pr = runProcessCapture(engineCmd, opts.verbose);
+  if (pr.status != 0) {
+    stderr.writeln("Engine entry main failed (exit " ~ pr.status.to!string ~ "): "
+        ~ sel.entryMain);
+    return pr.status;
+  }
+  if (opts.verbose && pr.stdoutText.strip.length > 0) {
+    stderr.writeln(pr.stdoutText.strip);
+  }
+  if (!exists(entryOut)) {
+    stderr.writeln("Engine entry main did not write " ~ entryOut);
+    return 1;
+  }
+  auto argv = parseEntryArgv(readText(entryOut));
+  if (argv.length == 0) {
+    stderr.writeln("Engine entry main wrote an empty launch command to " ~ entryOut);
+    return 1;
+  }
+  return execCommand(argv, showProgress(opts));
+}
+
+/// 多应用 info：先给仓库/上游信息，再按 webapp 列出落盘路径、context path 与依赖。
+private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec spec,
+    string[] entries) {
+  import std.format : format;
+
+  import jstart.archive : Artifact, LocalFile, RemoteFile;
+
+  writeln("target: " ~ opts.target);
+  writeln("type: multi-webapp");
+  writeln("webapps: " ~ spec.webapps.length.to!string);
+  writeln("local: " ~ resolver.local.base);
+  writeln("snapshots: " ~ resolver.local.snapshotBase);
+  string[] remotes;
+  foreach (r; resolver.remotes) {
+    remotes ~= r.base;
+  }
+  writeln("remotes: " ~ remotes.join(","));
+  string[] snapshotRemotes;
+  foreach (r; resolver.snapshotRemotes) {
+    snapshotRemotes ~= r.base;
+  }
+  writeln("snapshot-remotes: " ~ snapshotRemotes.join(","));
+  foreach (i, w; spec.webapps) {
+    auto deps = resolver.resolveDependencies(entries[i]);
+    writeln(format("webapp %s: app=%s path=%s deps=%d", w.id, entries[i], w.path, deps.length));
+    foreach (j, dep; deps) {
+      string kind;
+      if (cast(Artifact) dep !is null) {
+        kind = "gav";
+      } else if (cast(LocalFile) dep !is null) {
+        kind = "local";
+      } else if (cast(RemoteFile) dep !is null) {
+        kind = "http";
+      } else {
+        kind = "other";
+      }
+      writeln(format("  dep %d: %s %s -> %s", j + 1, kind, dep.raw,
+          resolver.dependencyPath(dep)));
+    }
+  }
+  return 0;
+}
+
+/**
+ * 主类只对 java（jar/gav-jar/解压目录）目标有意义：war 跑引擎入口 main
+ * （用 [app] engine 选入口 main），native（tar.gz）跑 [app] exec。这两种目标上给出
  * --main 或 [app] main 时告警忽略，不静默吞掉。
  */
 private void warnIgnoredMain(BootArgs opts, bool specMode, LaunchSpec spec, string kind) {
@@ -671,6 +956,11 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
     remotes ~= r.base;
   }
   writeln("remotes: " ~ remotes.join(","));
+  string[] snapshotRemotes;
+  foreach (r; resolver.snapshotRemotes) {
+    snapshotRemotes ~= r.base;
+  }
+  writeln("snapshot-remotes: " ~ snapshotRemotes.join(","));
   writeln("deps: " ~ deps.length.to!string);
   foreach (i, dep; deps) {
     string kind;
@@ -750,7 +1040,7 @@ private string preparePidFile(BootArgs opts, string base, string app, out bool f
     fatal = true;
     return "";
   }
-  if (!opts.quiet) {
+  if (showProgress(opts)) {
     writeln("Pid file " ~ path ~ " (pid " ~ to!string(currentPid()) ~ ")");
   }
   return path;
@@ -862,7 +1152,14 @@ private int runRepo(BootArgs opts) {
   // （repo 是离线整合，不做联网下载，http(s) spec 在此处先行拒绝）。
   LaunchSpec spec;
   auto specMode = tryLoadSpec(opts, target, spec);
-  if (specMode && spec.entry.length == 0) {
+  if (specMode) {
+    auto invalid = validateLaunchSpec(spec);
+    if (invalid.length > 0) {
+      stderr.writeln(invalid);
+      return 1;
+    }
+  }
+  if (specMode && spec.webapps.length == 0 && spec.entry.length == 0) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
   }
@@ -874,9 +1171,20 @@ private int runRepo(BootArgs opts) {
     }
     return 1;
   }
-  auto resolver = new Resolver(localRepo, [], !opts.quiet);
+  auto resolver = new Resolver(localRepo, [], showProgress(opts), opts.quiet, opts.offline);
   Archive[] deps;
-  if (specMode) {
+  if (specMode && spec.webapps.length > 0) {
+    // 多应用：逐 webapp 整合依赖（[deps] 与 [webapp] 段互斥，各 webapp 用自身 war 清单）。
+    foreach (w; spec.webapps) {
+      auto entry = expandLocalPath(w.entry);
+      if (!exists(entry) || (!isFile(entry) && !isDir(entry))) {
+        stderr.writeln("repo: [webapp " ~ w.id
+            ~ "] entry must be a local file or directory: " ~ w.entry);
+        return 1;
+      }
+      deps ~= resolver.resolveDependencies(entry);
+    }
+  } else if (specMode) {
     auto entry = expandLocalPath(spec.entry);
     if (!exists(entry) || (!isFile(entry) && !isDir(entry))) {
       stderr.writeln("repo: launch spec entry must be a local file or directory: " ~ spec.entry);
@@ -924,8 +1232,8 @@ private int runFetch(BootArgs opts) {
     return 2;
   }
   auto localRepo = new LocalRepo(opts.local);
-  auto remotes = buildRemotes(opts.remote);
-  auto resolver = new Resolver(localRepo, remotes, !opts.quiet, opts.preferWar);
+  auto resolver = new Resolver(localRepo, remotesOf(opts), showProgress(opts),
+      opts.quiet, opts.offline, snapshotRemotesOf(opts));
   auto path = fetchArtifact(opts, resolver, target);
   if (path.length == 0) {
     return 1;
@@ -943,10 +1251,28 @@ private int runFetch(BootArgs opts) {
 private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
   auto gav = targetGav(target);
   if (gav.length) {
-    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, !opts.quiet);
+    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, showProgress(opts), "",
+        opts.offline);
     return r.ok ? r.path : "";
   }
   return resolver.fetchTarget(target);
+}
+
+/// 远程仓库列表：`--offline` 为空（只用本地仓库），否则按 `--remote` 解析。
+private RemoteRepo[] remotesOf(BootArgs opts) {
+  return opts.offline ? [] : buildRemotes(opts.remote);
+}
+
+/**
+ * SNAPSHOT 解析的上游：只取 `--snapshot-remote`，**不**兜到 `--remote`；不追加 Central、
+ * 不给默认镜像（见 `jstart.repo.buildSnapshotRemotes`）。为空时 SNAPSHOT 只用本地快照库
+ * （本地命中即可用，本地缺失才报错）；`--offline` 一律为空。
+ */
+private RemoteRepo[] snapshotRemotesOf(BootArgs opts) {
+  if (opts.offline) {
+    return [];
+  }
+  return buildSnapshotRemotes(opts.snapshotRemote);
 }
 
 /// gav 目标的 artifactId（用于在解压树里找同名可执行文件）；非 gav 返回 ""。
@@ -1017,5 +1343,5 @@ private int runNative(BootArgs opts, Resolver resolver, string execPath, Archive
   if (opts.print) {
     return printCommand(cmd);
   }
-  return runNativeApp(execPath, appArgs, !opts.quiet);
+  return runNativeApp(execPath, appArgs, showProgress(opts));
 }

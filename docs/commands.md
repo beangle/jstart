@@ -17,16 +17,18 @@ jstart [options] <command> <target> [args...]
 | `--local=<dir>` | 本地仓库，默认 `~/.m2/repository`；SNAPSHOT 时间戳构件默认在独立的 `~/.m2/snapshots`（不混合），显式给定时也定位到该目录下的快照路径；repo 命令里是"目标仓库" |
 | `--source=<dir>` | 仅 repo 命令：源仓库，默认 `~/.m2/repository`，须与 `--local` 不同 |
 | `--from=<version>` | fetch 命令与 native（tar.gz）gav 目标：增量补丁的基线版本；缺省取本地（含快照库）里最接近的较低版本 |
+| `--remote=<urls>` | 远程仓库，逗号分隔，含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"快照库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
+| `--snapshot-remote=<urls>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖与 gav 目标）：开发版上游，逗号分隔。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地快照库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
+| `--offline` | 只用本地仓库：不探测远端（SNAPSHOT 也不做 `latest`/元数据探测）、不下载，缺件直接失败；与 `--remote`/`--snapshot-remote` 同时给出时以离线为准 |
 | `--base=<dir>` | run/stop：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与 pid 文件"） |
 | `--instance=<name>` | run/stop：命名组件目录（`<根>/<name>-<组件指纹>`），同一组件跑多副本时用（等价于换一个 `--base`） |
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
 | `--timeout=<sec>` | stop：SIGTERM 后等待进程退出的秒数，缺省 15 |
 | `--force` | run：base 上的实例仍在运行时也照常启动（覆盖旧 pid 文件）；stop：超时后改用 SIGKILL |
-| `--remote=<urls>` | 逗号分隔的远程仓库；默认阿里云 public、华为云 maven、Maven Central；fetch 命令下是发行仓库基地址，默认 `https://sas.openurp.net/native` |
-| `--preferwar` | gav 目标优先尝试 war 打包（对应原 sas.sh 场景） |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
 | `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
-| `--quiet` / `-q` | 关闭下载/过程输出（错误仍由退出码体现） |
+| `--verbose` / `-v` | 输出过程细节：解析、下载、写 pid、将执行的启动命令与引擎入口 main 的 stdout（默认只输出告警/错误与命令结果） |
+| `--quiet` / `-q` | 在默认之上再关闭告警，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
 
@@ -50,9 +52,19 @@ jstart 维护**两个互不混合的本地目录**，取决于构件类型：
 | 快照库 | SNAPSHOT **时间戳**构件 `a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`，**全部带时间戳** | `~/.m2/snapshots`（独立，不与 repository 混合） |
 
 - release 类构件只进本地仓库，**不会**出现在快照库；
-- SNAPSHOT 时间戳构件只进快照库，**不会**与 repository 混合存放——本地判定"是否
-  已是最新"只需看快照库内时间戳文件名（字符串即时间序），命中即用，不比较 mtime、
-  不查远端；
+- SNAPSHOT 时间戳构件只进快照库，**不会**与 repository 混合存放。开发版解析与正式版
+  分开：**不套用内置镜像，也没有 Central 兜底，且不兜到 `--remote`**，只按
+  `--snapshot-remote` 解析；没有快照上游时，本地快照库命中即用（不发请求、不报错），
+  只有本地缺失、需要拉取才报错。解析 `-SNAPSHOT` 别名时逐个上游询问：先 HEAD 别名读
+  micdn 的 `latest` 响应头，再取版本目录的 `maven-metadata.xml`
+  （`<snapshotVersions>` 按 extension/classifier 取最新，
+  老式元数据回退 `<snapshot>` 的 timestamp/buildNumber），得到时间戳文件名后落盘到快照
+  库；本地已有该时间戳文件且 `.sha1` 通过就跳过下载。每个 SNAPSHOT 都会询问一次上游，
+  这样开发版每次部署都拿到最新构建；上游都解析不出时退回本地快照库已有的最新时间戳
+  文件（其次快照库里的字面别名，离线可用）。不比较 mtime 与 Last-Modified；
+  这套元数据解析只服务于 maven 依赖（`resolve`/`run` 的 jar/war 等）；`fetch`/native
+  发行包不做任何快照元数据探测（native 构建费时、包大、发布不频繁，开发版一般不上传），
+  `-SNAPSHOT` 只当字面版本名走「本地命中 → 增量补丁 → 整包下载」；
 - 显式 `--local=<dir>` 时快照时间戳文件也定位到该目录下对应快照路径（对齐 boot：
   显式给出 base 后不再另设 `~/.m2/snapshots`），但两者仍按 maven 发布/快照布局区分
   存放，文件名互不覆盖。
@@ -65,14 +77,14 @@ jstart [options] run <target> [args...]
 
 流程：解析目标 → 准备依赖 → 写 pid 文件（见"组件 base 与 pid 文件"）→ 定主类 →
 `execvp` 把自身替换为运行时
-（jar 目标 exec 应用 `Main-Class`；war 目标 exec 内置引擎 Bootstrap，见
-[war-engine.md](war-engine.md)；native tar.gz 目标 exec 包内可执行文件，见下文
-“native（tar.gz）目标”）：
+（jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎入口 main 再 exec 容器，见
+[engine.md](engine.md)/[war-engine.md](war-engine.md)；native tar.gz 目标 exec 包内
+可执行文件，见下文“native（tar.gz）目标”）：
 
 ```text
 java <runtime-options> -cp <classpath> <Main-Class> [app-args...]        # jar
-java <runtime-options> -cp <classpath> org.beangle.sas.engine.tomcat.Bootstrap \
-     --base=<base> [--port=8080 --path=/ ...]                           # war
+java -cp <引擎 jar> <entryMain> --base=<base> --entry=<war|dir> ...      # war（阶段 1）
+java <runtime-options> -cp <classpath> <容器 main> --base=<base> ...     # war（阶段 2）
 <解压出的可执行文件> [args...]                                           # native tar.gz
 ```
 
@@ -87,7 +99,7 @@ jstart run app.jar --main=com.example.Tool --port=8080   # 其余参数照常透
 jstart --quiet --main=com.example.Tool classpath app.jar  # 脚本口径同步
 ```
 
-> war 的主类由引擎 Bootstrap 决定（用 `[app] engine` 选引擎），native 用 `[app] exec`；
+> war 的主类由引擎入口 main 决定（用 `[app] engine` 选入口 main），native 用 `[app] exec`；
 > 这两种目标上给 `--main`/`[app] main` 会告警忽略。主类不参与实例身份：同一个 target
 > 换主类仍是同一个 base（要并行跑请配 `--instance`/`--base`）。
 
@@ -104,19 +116,37 @@ target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
 - 需在 classpath 前置追加路径时用环境变量 `CLASSPATH_EXTRA`（或小写
   `classpath_extra`，小写优先）。
 
-war 目标（本地 `app.war`、gav/url 落盘为 `.war`）自动进入内置引擎流程：解析并
-解压到 `<base>/webapps/<ctx>`（`base` 是组件的运行目录 `<base 根>/<组件键>`，
-根默认 `/var/tmp/jstart`，`--base=`/`--instance=`/`[app] base` 可换；
-`--path=` 决定 contextPath，缺省 `ROOT`），classpath 为解压目录的
-`WEB-INF/classes`+`WEB-INF/lib`+应用依赖+引擎依赖，然后 exec
-`org.beangle.sas.engine.<name>.Bootstrap`。引擎依赖有内置默认目录（tomcat 三件套 /
-undertow 十四件套，等价 sas.sh 两个分支），需要固定或改版本时用 launch spec 的
-`[engine]` 段显式罗列（权威，不依赖内置行）；选择引擎用 `[app] engine = tomcat|undertow`
-（war 缺省 tomcat），tomcat 可带版本后缀 `tomcat-11.0.24` 直接换内置 tomcat 版本，
-`[engine]` 行内支持 `{tomcat.version}`/`{sas.version}` 占位符引用内置版本。
-war 的引擎模式只读取 `--path=` 用于解压布局（`--base` 已是 jstart 的 base 选项，引擎
-拿到的是注入的 `--base=<base>`；`[args]` 里的 `--base=` 会被丢弃），其余参数
-（含 `--port=`）原样透传给引擎——详见 [war-engine.md](war-engine.md)。
+war 目标必须在 **launch spec** 里用 `[app] entry` 声明（`run` 不接受裸 war：本地
+`app.war`、gav、url 落盘为 `.war` 都会报错并提示写 spec；`resolve`/`fetch`/`repo`
+不受此限制）。声明后进入内置引擎流程：jstart 先运行**引擎入口 main**准备环境（解压
+war/发行包、生成容器配置、推导 docBase），再 exec 它写出的最终命令（进程变为容器）。
+`base` 是组件的运行目录 `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`，
+`--base=`/`--instance=`/`[app] base` 可换；`--path=` 由入口 main 消费（jstart 只透传）。
+引擎依赖有内置默认目录（tomcat 三件套 / undertow 二十二件套，等价 sas.sh 两个分支），
+需要固定或改版本时用 launch spec 的 `[engine]` 段显式罗列（权威，不依赖内置行）；
+引擎用 `[app] engine` 选：含 `.` 的值当入口 main 的 FQCN，否则内置别名
+`tomcat|undertow`（war 缺省 tomcat，映射 `org.beangle.sas.engine.<name>.EmbedCreator`），
+tomcat 别名可带版本后缀 `tomcat-11.0.24` 直接换内置 tomcat 版本，`[engine]` 行内支持
+`{tomcat.version}`/`{sas.version}` 占位符引用内置版本。
+`--base` 是 jstart 的 base 选项（`[args]` 里的 `--base=` 会被丢弃），其余参数
+（`--port=`/`--path=` 等）原样透传给入口 main——协议见 [engine.md](engine.md)、
+用法见 [war-engine.md](war-engine.md)。
+
+最小的 war spec：
+
+```ini
+[app]
+entry = gav://org.example:webapp:0.0.1:war   # 或本地 /path/app.war
+engine = tomcat                               # 可选，war 缺省 tomcat
+
+[args]
+--port=8080
+--path=/
+```
+
+```bash
+jstart run app.jstart
+```
 
 `--print`：不 exec，把将执行的命令打印到 stdout（逐参数 POSIX 单引号，可直接复制
 执行），用于审计与调试：
@@ -132,7 +162,7 @@ jstart run --print app.jar --port=8080
 jstart run /path/to/app.jar --port=8080 --path=/base
 jstart run org.beangle.sqlplus:beangle-sqlplus:0.0.46 data.xml
 jstart --local=/opt/repo --quiet run app.jar --port=9090
-jstart run /path/to/app.war --port=8080 --path=/base   # 内置 tomcat 引擎
+jstart run webapp.jstart --port=8080 --path=/base       # war spec（entry 为 war）
 jstart run --print app.jstart                          # spec：war 时含 [engine] 段
 jstart run https://repo.example.com/app.jstart         # 远程 spec：下载后按 entry 解析
 ```
@@ -149,7 +179,9 @@ jstart [options] resolve <target>
 app=$(jstart --quiet resolve /path/to/app.jar)   # exit=0 才使用
 ```
 
-- war/gav 目标同样适用（`--preferwar` 控制 gav 取 jar 还是 war）。
+- war 目标同样适用：`resolve /path/app.war` 只解析 war 内置依赖并打印路径，不涉及引擎。
+- 多应用 spec（`[webapp <id>]`）**每行打印一个 webapp 的落盘路径**，同样按依赖是否齐备
+  决定退出码；引擎依赖不在 `resolve` 范围内（与单应用 war 一致）。
 - native（tar.gz）目标复用 `fetch` 的取包逻辑并解压，输出的是**包内可执行文件绝对路径**
   （可直接 exec；见下文"native（tar.gz）目标"）。
 - 依赖有缺失时仍会打印路径，但退出码为 1（对齐原 AppResolver 行为），缺失清单打到
@@ -175,6 +207,9 @@ exec java -cp "$cp" "$main" "$@"
 classpath 组成顺序：`CLASSPATH_EXTRA` → 应用 jar（或解压 war 的
 `WEB-INF/classes` + `WEB-INF/lib/*.jar`）→ 各依赖本地路径。
 
+多应用 spec 没有单一 classpath，`classpath` 会明确拒绝（exit 2）：每个 webapp 的依赖由
+容器内各自的 `DependencyClassLoader` 解析，用 `info` 查看逐 webapp 的清单。
+
 ## info —— 输出结构化信息
 
 ```text
@@ -195,6 +230,8 @@ main: org.beangle.app.Main
 main source: manifest
 local: /home/user/.m2/repository
 snapshots: /home/user/.m2/snapshots
+remotes: aliyun,huaweicloud,central
+snapshot-remotes: <空：只取 --snapshot-remote，缺省为空；本地快照库命中即用>
 remotes: https://maven.aliyun.com/repository/public,...,https://repo1.maven.org/maven2
 deps: 2
 dep 1: gav org.slf4j:slf4j-api:2.0.17 -> /home/user/.m2/repository/org/slf4j/slf4j-api/2.0.17/slf4j-api-2.0.17.jar (69908 bytes)
@@ -204,6 +241,9 @@ dep 2: http https://repo.example.com/lib.jar -> /home/user/.m2/repository/repo.e
 - `kind`：`gav`（maven 构件，命中本地快照库时 `path` 为时间戳文件）/ `local` / `http`；
 - `type`：`jar`/`war`/`dir`（解压目录）/`native`（tar.gz 发行包）/`file`（其它本地文件）；
   `native` 时额外给出 `archive`（本地包路径）与 `root`（解压根目录），`app` 为可执行文件路径；
+- 多应用 spec 时 `type: multi-webapp`，先给仓库/上游信息（`local`/`snapshots`/`remotes`/
+  `snapshot-remotes`），再逐 webapp 输出 `webapp <id>: app=<路径> path=<上下文路径>
+  deps=<n>` 及其 `dep` 明细；
 - `main source`：主类来自哪里 —— `cli`（`--main=`）/`spec`（`[app] main`）/`manifest`
   （jar 内 `Main-Class`）/`none`；排查"为什么跑了另一个类"时看这一行；
 - launch spec target 时 `entry`/`main` 取自 spec，其余字段一致；
@@ -309,6 +349,12 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
 - 默认 `--remote` 为 `https://sas.openurp.net/native`（micdn 的 `/native` 端点：单根存放
   正式版与开发版，靠版本目录名里的 `-SNAPSHOT` 区分；逗号分隔可给多个，按序尝试，
   与 `resolve` 的 maven 镜像列表不同：这里不追加 Maven Central）；
+- 发行包侧不做快照语义：native 构建费时、包大、发布不频繁，开发版一般不上传，所以
+  `gav` 里的 `-SNAPSHOT` 只当字面版本名，不发 HEAD `latest`、也不取
+  `maven-metadata.xml`（与 `resolve` 的 maven 快照解析不同）；
+- 仓库配了读令牌（micdn 的 `<auth download-key="…"/>`）时设置环境变量 `micdn_token`，下载构件
+  与增量补丁会带 `Authorization: Bearer <token>`；HEAD 探测保持匿名（micdn 不限制 HEAD），
+  未设置令牌时行为不变；
 - 依赖宿主命令：`curl` 下载，增量路径另需 `bzip2`（解压补丁里的 bzip2 流），
   tar.gz 还需要 `gzip`；缺对应命令时只走整包下载；
 - 打补丁优先用系统 `bspatch`：`PATH` 上有就用（`bspatch <old> <new> <patch>`），
@@ -354,6 +400,10 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
 
 - **取包**：取包就是 `fetch` 的职责——gav 走发行仓库（默认 `--remote`，`--from` 指定增量
   基线），`http(s)://...tar.gz` url 直接下载（按主机路径缓存），本地文件原样使用；
+- **快照**：native 侧**不对 `-SNAPSHOT` 特殊照顾**——不做 `latest` 头/`maven-metadata.xml`
+  探测，`-SNAPSHOT` 只当字面版本名（本地命中 → 增量补丁 → 整包下载）。native 构建费时、
+  包大、发布不频繁，开发版一般不上传；确需开发版时，像正式版那样发布一个带 `-SNAPSHOT`
+  字面名的包即可，`--snapshot-remote` 对它无效；
 - **解压**：`tar -xzf` 解压到组件的 base 下（`<base>/app`），目录内的 `.jstart.stamp` 记录
   包的尺寸+mtime：标记匹配即复用，包内容变化（如增量重建后）自动重解。解压先写独立临时目录、
   再整体改名就位，因此并发/强杀残留也不会看到半个目录；旧目录改名挪走后清理，正在运行的
@@ -411,7 +461,9 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
 | `<root>/<组件键>` | 一个组件一份 | 组件目录，jstart 创建为 0700 并校验属主（同一 target 永远同一个目录） |
 | `<base>/app.pid` | 一个 base 一份 | `run` 写、`stop` 读；检测到真实进程仍在运行即拒绝重复启动 |
 | `<base>/app/` | 一个 base 一份 | native（tar.gz）的解压树（`.jstart.stamp` 在内），标记匹配时复用 |
-| `<base>/webapps/<ctx>/` | 一个 base 一份 | war 的解压目录（引擎拿到的 `--base` 就是组件目录） |
+| `<base>/webapps/<ctx>/` | 一个 base 一份 | 引擎解压出的 docBase（引擎拿到的 `--base` 就是组件目录） |
+| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给入口 main |
+| `<base>/engine-entry.argv` | 一个 base 一份 | 引擎入口 main 写出的最终启动命令（NUL 分隔 argv） |
 
 - **组件键**：target 短名 + 短指纹（本地路径先绝对化；不含任何应用参数），因此同一个 target
   无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；
@@ -469,8 +521,8 @@ jstart run /opt/app/portal.tar.gz --instance=portal-a --port=9999  # Already run
 | 形态 | 说明 |
 |------|------|
 | `/path/to/app.jar` | 瘦 jar，内含依赖描述（无描述时按自包含 jar 处理） |
-| `/path/to/app.war` | war：`resolve`/`repo` 读取 `WEB-INF/classes/...` 依赖描述；`run` 走内置引擎流程（见 [war-engine.md](war-engine.md)） |
-| `/path/dir` | 解压后的 war 目录 |
+| `/path/to/app.war` | war：`resolve`/`repo` 直接接受，读取 `WEB-INF/classes/...` 依赖描述；`run` 不接受裸 war，须在 launch spec 里用 `[app] entry` 声明（见 [war-engine.md](war-engine.md)） |
+| `/path/dir` | 解压后的 webapp 目录：作为 `run` 目标时须在 spec 里声明 `[app] engine`（引擎直接当 docBase 用，不解压）；否则按普通 java 目标（需 `--main`/`[app] main`/Manifest）；`resolve`/`repo` 直接接受 |
 | `/path/app.tar.gz` | native 发行包（GraalVM）：解压到 `<base>/app`（base = `<根>/<组件键>`，根默认 `/var/tmp/jstart`，`--base` 可改）后 exec 包内可执行文件，参数附加在其后（见"native（tar.gz）目标"） |
 | `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[deps]` |
 | `/path/app.jstart` | launch spec：ini 式声明 main/entry/runtime/args/可选 [deps]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |

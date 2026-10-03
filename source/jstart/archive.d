@@ -16,7 +16,7 @@ module jstart.archive;
 import std.algorithm : canFind;
 import std.array : split;
 import std.process : environment;
-import std.string : indexOf, replace, startsWith, strip;
+import std.string : endsWith, indexOf, replace, startsWith, strip;
 
 /** Maven packaging types recognized in the third part of a 4-part gav. */
 immutable string[] mavenPackagings = [
@@ -60,6 +60,11 @@ final class Artifact : Archive {
     return ver.canFind("SNAPSHOT");
   }
 
+  /// 去掉 `-SNAPSHOT` 后的版本基（正式版原样返回），即快照时间戳文件名里的版本部分。
+  string baseVersion() const {
+    return ver.endsWith("-SNAPSHOT") ? ver[0 .. $ - "-SNAPSHOT".length] : ver;
+  }
+
   /// A copy with another packaging, e.g. jar -> war.
   Artifact withPackaging(string p) const {
     return new Artifact(raw, groupId, artifactId, ver, classifier, p);
@@ -87,6 +92,11 @@ final class Artifact : Archive {
   /// Maven2 repository relative path, e.g. /org/slf4j/slf4j-api/2.0.17/slf4j-api-2.0.17.jar
   string layoutPath() const {
     return "/" ~ groupId.replace(".", "/") ~ "/" ~ artifactId ~ "/" ~ ver ~ "/" ~ fileName;
+  }
+
+  /// 版本目录的仓库相对路径，e.g. /org/slf4j/slf4j-api/2.0.17
+  string dirPath() const {
+    return "/" ~ groupId.replace(".", "/") ~ "/" ~ artifactId ~ "/" ~ ver;
   }
 }
 

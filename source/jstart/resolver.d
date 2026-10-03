@@ -24,6 +24,7 @@ import jstart.archive : Archive, Artifact, LocalFile, RemoteFile,
   expandLocalPath, parseArchive, parseGav;
 import jstart.http : downloadFile, downloadFileSmart;
 import jstart.repo : LocalRepo, RemoteRepo, verifySha1;
+import jstart.snapshot : fetchSnapshot, localSnapshotFile;
 import jstart.zipfile : manifestMainClass, readZipEntry;
 
 /** Whether a file name looks like a jar/war archive. */
@@ -41,18 +42,31 @@ private string toText(ubyte[] data) {
  */
 final class Resolver {
   LocalRepo local;
+  /// 普通（正式版）构件与依赖的上游：`--remote` 的默认镜像与 Maven Central 兜底在此。
   RemoteRepo[] remotes;
-  /// Prefer war packaging when resolving a gav artifact.
-  bool preferWar;
+  /**
+     SNAPSHOT 的上游：**不**套用 `--remote` 的默认镜像与 Central 兜底，只用调用方显式
+     给出的列表（sas 传 `<SnapshotRepo remote>`）；为空表示不代理，只用本地快照库。
+     与 [[remotes]] 分开，是因为开发版一般来自专用仓库，兜到公共镜像没有意义。
+   */
+  RemoteRepo[] snapshotRemotes;
+  /// 过程细节（解析/下载/命中本地）是否输出，由调用方决定。
   bool verbose;
+  /// 静默：连错误也只在退出码里体现（--quiet）。
+  bool quiet;
+  /// 离线：只用本地仓库，http(s) 目标/远程文件依赖不下载（--offline）。
+  bool offline;
   /// Snapshot 构件解析到的本地时间戳文件（raw -> path）。
   string[string] snapshotFiles;
 
-  this(LocalRepo local, RemoteRepo[] remotes, bool verbose = true, bool preferWar = false) {
+  this(LocalRepo local, RemoteRepo[] remotes, bool verbose = true,
+      bool quiet = false, bool offline = false, RemoteRepo[] snapshotRemotes = []) {
     this.local = local;
     this.remotes = remotes;
     this.verbose = verbose;
-    this.preferWar = preferWar;
+    this.quiet = quiet;
+    this.offline = offline;
+    this.snapshotRemotes = snapshotRemotes;
   }
 
   // ------------------------------------------------------------- target
@@ -69,6 +83,10 @@ final class Resolver {
       return "";
     }
     if (s.startsWith("http://") || s.startsWith("https://")) {
+      if (offline) {
+        error("Offline: cannot download " ~ s);
+        return "";
+      }
       auto rf = new RemoteFile(s, s);
       auto target = remoteLocalPath(rf);
       if (!exists(target)) {
@@ -96,17 +114,21 @@ final class Resolver {
     return "";
   }
 
-  /** Download a gav artifact (and its war sibling when preferWar). */
+  /** Download a gav artifact; SNAPSHOT returns its timestamped file. */
   private string fetchGav(Artifact a) {
-    if (preferWar && a.packaging == "jar") {
-      auto war = a.withPackaging("war");
-      if (ensureArtifact(war)) {
-        return local.filePath(war);
-      }
-    }
-    if (!ensureArtifact(a)) {
+    string ts;
+    if (!ensureArtifact(a, ts)) {
       error("Cannot download " ~ a.raw);
       return "";
+    }
+    return rememberSnapshot(a, ts);
+  }
+
+  /// 记录 SNAPSHOT 命中的时间戳文件（classpath 用）并返回本地路径；非快照返回仓库布局路径。
+  private string rememberSnapshot(Artifact a, string timestamped) {
+    if (timestamped.length) {
+      snapshotFiles[a.raw] = timestamped;
+      return timestamped;
     }
     return local.filePath(a);
   }
@@ -143,7 +165,9 @@ final class Resolver {
       } // 其它普通文件不再当作依赖清单读取（纯文本清单已不支持）
     } else if (isDir(appPath)) {
       auto nested = appPath ~ "/WEB-INF/classes/META-INF/beangle/dependencies";
-      if (isFile(nested)) {
+      // isFile/isDir 底层是 std.file.getAttributes，对不存在（含中间目录缺失）的路径
+      // 会抛 FileException，必须先 exists 守卫——目录里没有依赖清单是常态。
+      if (exists(nested) && isFile(nested)) {
         content = readText(nested);
       }
     } else {
@@ -238,27 +262,19 @@ final class Resolver {
   /// Ensure one dependency; true when it is present or downloaded.
   private bool ensureOne(Archive dep, out string snapshotPath) {
     snapshotPath = "";
-    bool ok;
     if (auto a = cast(Artifact) dep) {
-      if (a.isSnapshot) {
-        auto tsFile = local.snapshotPathOf(a);
-        if (tsFile.length) {
-          snapshotPath = tsFile;
-          return true;
-        }
-      }
-      ok = ensureArtifact(a);
+      // SNAPSHOT 的最新构建解析（远端 latest/元数据 → 本地快照库）在 ensureArtifact 内
+      return ensureArtifact(a, snapshotPath);
     } else if (auto lf = cast(LocalFile) dep) {
-      ok = exists(lf.file);
+      auto ok = exists(lf.file);
       if (!ok && verbose) {
         writeln("Cannot find " ~ lf.file);
       }
+      return ok;
     } else if (auto rf = cast(RemoteFile) dep) {
-      ok = ensureRemoteFile(rf);
-    } else {
-      ok = true;
+      return ensureRemoteFile(rf);
     }
-    return ok;
+    return true;
   }
 
   /** Ensure a remote file dependency is cached under the local repo. */
@@ -266,6 +282,10 @@ final class Resolver {
     auto target = remoteLocalPath(rf);
     if (exists(target)) {
       return true;
+    }
+    if (offline) {
+      error("Offline: cannot download " ~ rf.url);
+      return false;
     }
     if (verbose) {
       writeln("Downloading " ~ rf.url);
@@ -296,8 +316,28 @@ final class Resolver {
      * Ensure a single artifact exists in the local repository.
      * Existing files are checked against their .sha1 companion; missing or
      * corrupted ones are downloaded by trying the remotes in order.
+     *
+     * SNAPSHOT 走 [[ensureSnapshot]]：只在快照上游（[[snapshotRemotes]]，来自
+     * `--snapshot-remote`）与本地快照库范围内解析，**不会**兜到 [[remotes]]（`--remote`）
+     * ——没配快照上游时本地命中即用、本地缺失才报错，开发版不会因为「没配快照上游」而
+     * 跑去公共镜像。命中时间戳文件（或本地字面别名）时通过 snapshotPath 回传其绝对
+     * 路径，供 classpath 与返回值使用。
      */
   bool ensureArtifact(Artifact a) {
+    string ignored;
+    return ensureArtifact(a, ignored);
+  }
+
+  bool ensureArtifact(Artifact a, out string snapshotPath) {
+    snapshotPath = "";
+    if (a.isSnapshot) {
+      return ensureSnapshot(a, snapshotPath);
+    }
+    return ensurePlainArtifact(a);
+  }
+
+  /** 正式版构件的下载/校验。 */
+  private bool ensurePlainArtifact(Artifact a) {
     auto file = local.filePath(a);
     auto sha1File = local.filePath(a.sha1);
     auto needDownload = !exists(file);
@@ -307,7 +347,7 @@ final class Resolver {
         if (verifySha1(local, a)) {
           return true;
         }
-        logInfo("Error sha1 for " ~ a.raw ~ ",Remove it.");
+        error("Error sha1 for " ~ a.raw ~ ",Remove it.");
         remove(file);
         remove(sha1File);
         needDownload = true;
@@ -316,6 +356,10 @@ final class Resolver {
     }
 
     if (needDownload) {
+      if (offline) {
+        error("Offline: missing " ~ a.raw);
+        return false;
+      }
       foreach (remote; remotes) {
         auto url = remote.base ~ a.layoutPath;
         logInfo("Downloading " ~ url);
@@ -327,7 +371,7 @@ final class Resolver {
         auto sha1Url = remote.base ~ a.sha1.layoutPath;
         if (downloadFile(sha1Url, sha1File, false, "")) {
           if (!verifySha1(local, a)) {
-            logInfo("Error sha1 for " ~ a.raw ~ ",Remove it.");
+            error("Error sha1 for " ~ a.raw ~ ",Remove it.");
             remove(file);
             remove(sha1File);
             continue; // try the next remote
@@ -335,10 +379,46 @@ final class Resolver {
         }
         return true;
       }
-      logInfo("Not found(" ~ to!string(remotes.length) ~ " mirrors):" ~ a.raw);
+      error("Not found(" ~ to!string(remotes.length) ~ " mirrors):" ~ a.raw);
       return false;
     }
     return true;
+  }
+
+  // ----------------------------------------------------------- snapshot
+
+  /**
+     确保一个 SNAPSHOT 构件就位。快照上游只看 [[snapshotRemotes]]（来自
+     `--snapshot-remote`，**不**兜到 `--remote`，也不含默认镜像与 Central）：
+
+      - 配了上游：按上游顺序解析最新时间戳文件（实现见
+        [[jstart.snapshot.fetchSnapshot]]：micdn 的 `latest` 头，或版本目录的
+        `maven-metadata.xml`），落盘到本地快照库并复核 `.sha1`；解析不出或上游不可达时
+        退回本地快照库里已有的时间戳文件（其次字面别名），不报错。
+      - 没配上游：既不发任何请求也不报错，直接用本地快照库里已有的文件。
+      - 没配上游且本地也没有该文件时才报错——需要拉取却没有任何地址可问。
+
+     `--offline` 只是"不拉取"，语义等同"没配上游"，同样允许命中的本地快照文件。
+   */
+  private bool ensureSnapshot(Artifact a, out string snapshotPath) {
+    snapshotPath = "";
+    if (offline) {
+      snapshotPath = localSnapshotFile(local, a, verbose);
+      return snapshotPath.length > 0;
+    }
+    auto localPath = localSnapshotFile(local, a, verbose);
+    if (snapshotRemotes.length == 0) {
+      if (localPath.length == 0) {
+        error("Cannot fetch SNAPSHOT " ~ a.raw ~ ": not in the local snapshot library"
+            ~ " and no snapshot upstream is configured. Pass --snapshot-remote=<url>,"
+            ~ " or place the artifact in the local snapshot library and use --offline.");
+        return false;
+      }
+      snapshotPath = localPath;
+      return true;
+    }
+    snapshotPath = fetchSnapshot(local, snapshotRemotes, a, verbose).path;
+    return snapshotPath.length > 0;
   }
 
   // --------------------------------------------------------- classpath
@@ -357,25 +437,44 @@ final class Resolver {
     if (extra.length) {
       paths ~= extra.split(pathSeparator);
     }
-    if (isFile(appPath) && appPath.endsWith(".jar")) {
-      paths ~= appPath;
-    } else if (isDir(appPath)) {
-      auto classes = appPath ~ "/WEB-INF/classes";
-      if (exists(classes)) {
-        paths ~= classes;
-      }
-      auto lib = appPath ~ "/WEB-INF/lib";
-      if (exists(lib) && isDir(lib)) {
-        string[] libs;
-        foreach (e; dirEntries(lib, SpanMode.shallow)) {
-          if (e.isFile && e.name.endsWith(".jar")) {
-            libs ~= e.name;
-          }
+    // appPath 允许为空（引擎分支只要依赖 classpath）：isFile/isDir 对空串会抛
+    // FileException（std.file.getAttributes），必须先守卫。
+    if (appPath.length > 0) {
+      if (isFile(appPath) && appPath.endsWith(".jar")) {
+        paths ~= appPath;
+      } else if (isDir(appPath)) {
+        auto classes = appPath ~ "/WEB-INF/classes";
+        if (exists(classes)) {
+          paths ~= classes;
         }
-        libs.sort;
-        paths ~= libs;
+        auto lib = appPath ~ "/WEB-INF/lib";
+        if (exists(lib) && isDir(lib)) {
+          string[] libs;
+          foreach (e; dirEntries(lib, SpanMode.shallow)) {
+            if (e.isFile && e.name.endsWith(".jar")) {
+              libs ~= e.name;
+            }
+          }
+          libs.sort;
+          paths ~= libs;
+        }
       }
     }
+    foreach (dep; deps) {
+      paths ~= dependencyPath(dep);
+    }
+    return paths.join(pathSeparator);
+  }
+
+  /**
+     Classpath of a resolved dependency list only: no entry classes/libs and
+     no CLASSPATH_EXTRA. The engine branch uses this for the engine jars
+     (`--app-classpath-file` carries the application deps separately, and the
+     webapp's own WEB-INF entries are added by the engine, which is the only
+     side that knows the docBase).
+   */
+  string depsClasspath(Archive[] deps) {
+    string[] paths;
     foreach (dep; deps) {
       paths ~= dependencyPath(dep);
     }
@@ -412,7 +511,7 @@ final class Resolver {
   }
 
   private void error(string msg) {
-    if (verbose) {
+    if (!quiet) {
       stderr.writeln(msg);
     }
   }

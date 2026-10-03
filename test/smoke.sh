@@ -48,7 +48,7 @@ check() { # check <desc> <actual> <expected-exit> <expect-contains>
     failures=$((failures + 1))
     return
   fi
-  if [ -n "$contains" ] && ! printf '%s' "$out" | grep -q "$contains"; then
+  if [ -n "$contains" ] && ! printf '%s' "$out" | grep -q -e "$contains"; then
     echo "FAIL $desc: output does not contain '$contains'" >&2
     failures=$((failures + 1))
     return
@@ -87,7 +87,7 @@ check "resolve cached" "$code" 0 "$T/app.jar"
 
 echo "== run forwards args (needs java + compiled class) =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
-  out="$("$JSTART" --local="$REPO" run "$T/app.jar" --port=8080 demo)"; code=$?
+  out="$("$JSTART" --local="$REPO" --verbose run "$T/app.jar" --port=8080 demo)"; code=$?
   sweep "$(printf '%s' "$out" | sed -n 's/^Pid file \(.*\) (pid .*/\1/p')"
   check "run exit" "$code" 0 "hello-from-jar"
   printf '%s' "$out" | grep -q "arg:--port=8080" || { echo "FAIL run arg forwarding" >&2; failures=$((failures + 1)); }
@@ -104,7 +104,7 @@ if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   cp -r "$T/classes/." "$T/nomain/"
   (cd "$T/nomain" && zip -qr "$T/nomain.jar" .)
 
-  out="$("$JSTART" run "$T/nomain.jar" --main=org.jstarttest.Hello 2>&1)"; code=$?
+  out="$("$JSTART" --verbose run "$T/nomain.jar" --main=org.jstarttest.Hello 2>&1)"; code=$?
   sweep "$(printf '%s' "$out" | sed -n 's/^Pid file \(.*\) (pid .*/\1/p')"
   check "run --main" "$code" 0 "hello-from-jar"
   out="$("$JSTART" --quiet run "$T/nomain.jar" 2>&1)"; code=$?
@@ -131,36 +131,65 @@ echo "== gav target =="
 out="$("$JSTART" --local="$REPO" --quiet resolve org.slf4j:slf4j-api:2.0.17)"; code=$?
 check "gav resolve" "$code" 0 "slf4j-api-2.0.17.jar"
 
-echo "== war engine --print (downloads engine jars) =="
+echo "== war engine (spec-only; [engine] 用本地文件，不联网) =="
 mkdir -p "$T/war/WEB-INF"
 printf '<web-app/>\n' > "$T/war/WEB-INF/web.xml"
 (cd "$T/war" && zip -qr "$T/app.war" .)
-out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.war" --port=8080 --path=/demo --base="$T/sas" 2>&1)"; code=$?
-check "war print exit" "$code" 0 "org.beangle.sas.engine.tomcat.Bootstrap"
-check "war engine jar" "$code" 0 "tomcat-embed-core-11.0.21.jar"
+# run 不再直接吃 war：必须先写 launch spec（[app] entry + engine）
+out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.war" --port=8080 2>&1)"; code=$?
+check "bare war run rejected" "$code" 1 "must run through a launch spec"
+
+# [app] main 与 [app] engine 互斥：spec 里同时写 main 和 engine 直接报错
+cat > "$T/bad.jstart" <<INI
+[app]
+entry = $T/app.war
+main = org.example.Main
+engine = tomcat
+INI
+out="$("$JSTART" --local="$REPO" --quiet run --print "$T/bad.jstart" 2>&1)"; code=$?
+check "main+engine rejected" "$code" 1 "mutually exclusive"
+
+# --print 只打印引擎准备命令，不真的运行入口 main；引擎 jar 用本地空文件即可
+mkdir -p "$T/engine"
+: > "$T/engine/beangle-sas-engine-0.13.17.jar"
+: > "$T/engine/tomcat-embed-core-11.0.21.jar"
+cat > "$T/app.jstart" <<INI
+[app]
+entry = $T/app.war
+engine = tomcat
+
+[engine]
+$T/engine/beangle-sas-engine-0.13.17.jar
+$T/engine/tomcat-embed-core-11.0.21.jar
+
+[args]
+--path=/demo
+INI
+out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.jstart" --port=8080 --base="$T/sas" 2>&1)"; code=$?
+check "war print exit" "$code" 0 "org.beangle.sas.engine.tomcat.EmbedCreator"
+check "war engine jar" "$code" 0 "beangle-sas-engine-0.13.17.jar"
+check "war entry" "$code" 0 "--entry=$T/app.war"
+check "war classpath" "$code" 0 "--app-classpath-file="
 check "war port" "$code" 0 "'--port=8080'"
 check "war context" "$code" 0 "'--path=/demo'"
 check "war ignores --main" "$code" 0 "ignored for war targets"
-# --base 是根：组件目录 <根>/<组件键> 由 jstart 建，引擎拿到的是组件目录
+# --base 是根：组件目录 <根>/<组件键> 由 jstart 建（spec 目标的组件键取 spec 文件名）
+# jstart 不再自己爆炸 war：docBase 布局与爆炸都归引擎入口 main（见 docs/engine.md）
 warBase="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
 case "$warBase" in
-  "$T/sas"/app.war-*) ;;
+  "$T/sas"/app.jstart-*) ;;
   *) echo "FAIL war --base layout: $warBase" >&2; failures=$((failures + 1)) ;;
 esac
-[ -f "$warBase/webapps/demo/WEB-INF/web.xml" ] || { echo "FAIL war exploded layout" >&2; failures=$((failures + 1)); }
 
-# 未显式 --base 时用默认根 /var/tmp/jstart：爆炸到
-# <base>/webapps/<ctx>，pid 文件是 <base>/app.pid，一个 base 只跑一个实例
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.war" --path=/iso)"; code=$?
+# 未显式 --base 时用默认根 /var/tmp/jstart（组件目录 <根>/<组件键>）
+out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.jstart" --path=/iso)"; code=$?
 check "war default base" "$code" 0 "base=/var/tmp/jstart/"
 baseIso="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
 case "$baseIso" in
-  /var/tmp/jstart/app.war-*) ;;
+  /var/tmp/jstart/app.jstart-*) ;;
   *) echo "FAIL war default base layout: $baseIso" >&2; failures=$((failures + 1)) ;;
 esac
-[ -f "$baseIso/webapps/iso/WEB-INF/web.xml" ] \
-  || { echo "FAIL war default base explode" >&2; failures=$((failures + 1)); }
-[ -n "$baseIso" ] && rm -rf "$baseIso"
+[ -n "$baseIso" ] && sweep "$baseIso"
 
 echo
 if command -v tar >/dev/null 2>&1; then
@@ -245,8 +274,8 @@ SH
   BA="$T/inst-a"
   BB="$T/inst-b"
   # 一个组件多副本：各给一个 base（参数只影响应用，不参与实例身份）
-  "$JSTART" run "$SLEEPER" --base="$BA" --port=8081 >"$T/inst-a.log" 2>&1 &
-  "$JSTART" run "$SLEEPER" --base="$BB" --port=8082 --path=/b >"$T/inst-b.log" 2>&1 &
+  "$JSTART" --verbose run "$SLEEPER" --base="$BA" --port=8081 >"$T/inst-a.log" 2>&1 &
+  "$JSTART" --verbose run "$SLEEPER" --base="$BB" --port=8082 --path=/b >"$T/inst-b.log" 2>&1 &
   sleep 3
   pidA="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/inst-a.log")"
   pidB="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/inst-b.log")"
@@ -307,7 +336,7 @@ JAVA
     > "$T/sleeper-classes/META-INF/MANIFEST.MF"
   (cd "$T/sleeper-classes" && zip -qr "$T/sleeper.jar" .)
 
-  "$JSTART" --local="$REPO" run "$T/sleeper.jar" --port=9700 >"$T/jar-run.log" 2>&1 &
+  "$JSTART" --local="$REPO" --verbose run "$T/sleeper.jar" --port=9700 >"$T/jar-run.log" 2>&1 &
   for i in $(seq 1 60); do grep -q "Pid file" "$T/jar-run.log" 2>/dev/null && break; sleep 1; done
   pidJ="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/jar-run.log")"
   pidPathJ="$(sed -n 's/^Pid file \(.*\) (pid .*/\1/p' "$T/jar-run.log")"
@@ -324,20 +353,186 @@ else
   echo "skip jar stop test (javac/java missing)"
 fi
 
-echo "== pid/stop for war (tomcat engine) =="
-if command -v java >/dev/null 2>&1; then
+echo "== war engine end-to-end: entry main -> entry-out argv -> exec =="
+if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
+  # 一个最小引擎入口 main：把最终 argv（NUL 分隔）写到 --entry-out，jstart 再 exec 它。
+  # [app] engine 用 FQCN，覆盖完整协议：准备 -> entry-out -> exec（不依赖真实 sas）。
+  mkdir -p "$T/fakeengine/META-INF"
+  cat > "$T/src/org/jstarttest/FakeEngine.java" <<'JAVA'
+package org.jstarttest;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.io.File;
+public class FakeEngine {
+    public static void main(String[] args) throws Exception {
+        String entryOut = null, appCp = "";
+        for (String a : args) {
+            if (a.startsWith("--entry-out=")) entryOut = a.substring("--entry-out=".length());
+            else if (a.startsWith("--app-classpath-file=")) {
+                java.nio.file.Path f = java.nio.file.Paths.get(a.substring("--app-classpath-file=".length()));
+                if (java.nio.file.Files.exists(f)) appCp = new String(java.nio.file.Files.readAllBytes(f), "UTF-8").trim();
+            }
+        }
+        String java = System.getProperty("java.home") + "/bin/java";
+        String cp = System.getProperty("java.class.path");
+        if (appCp.length() > 0) cp = cp + File.pathSeparator + appCp;
+        String[] argv = {java, "-cp", cp, "org.jstarttest.Sleeper"};
+        try (OutputStream os = new FileOutputStream(entryOut)) {
+            for (String s : argv) { os.write(s.getBytes("UTF-8")); os.write(0); }
+        }
+    }
+}
+JAVA
+  javac -d "$T/fakeengine" "$T/src/org/jstarttest/FakeEngine.java" "$T/src/org/jstarttest/Sleeper.java"
+  (cd "$T/fakeengine" && zip -qr "$T/fake-engine.jar" .)
+
+  cat > "$T/engine.jstart" <<INI
+[app]
+entry = $T/app.war
+engine = org.jstarttest.FakeEngine
+
+[engine]
+$T/fake-engine.jar
+INI
   warport=$((20000 + RANDOM % 10000))
-  "$JSTART" --local="$REPO" run "$T/app.war" --port="$warport" --path=/smoke --base="$T/sas-stop" \
+  "$JSTART" --local="$REPO" --verbose run "$T/engine.jstart" --port="$warport" --path=/smoke --base="$T/sas-stop" \
     >"$T/war-run.log" 2>&1 &
   for i in $(seq 1 120); do grep -q "Pid file" "$T/war-run.log" 2>/dev/null && break; sleep 1; done
   pidW="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-run.log")"
   [ -n "$pidW" ] || { echo "FAIL war pid not recorded" >&2; failures=$((failures + 1)); }
+  # jstart 应 exec 入口 main 写出的 argv（Sleeper 启动并打印 sleeper-up）
+  for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-run.log" 2>/dev/null && break; sleep 0.5; done
+  grep -q "sleeper-up" "$T/war-run.log" \
+    || { echo "FAIL engine argv not exec'd: $(cat "$T/war-run.log")" >&2; failures=$((failures + 1)); }
+  ls "$T/sas-stop"/engine.jstart-*/engine-entry.argv >/dev/null 2>&1 \
+    || { echo "FAIL engine-entry.argv not written" >&2; failures=$((failures + 1)); }
   # stop 只要 base，不需要 run 时的 --port/--path
-  out="$("$JSTART" --local="$REPO" stop "$T/app.war" --base="$T/sas-stop" 2>&1)"; code=$?
+  out="$("$JSTART" --local="$REPO" stop "$T/engine.jstart" --base="$T/sas-stop" 2>&1)"; code=$?
   check "stop war app" "$code" 0 "Stopped pid"
   proc_gone "$pidW" || { echo "FAIL war pid still alive" >&2; failures=$((failures + 1)); }
 else
-  echo "skip war stop test (java missing)"
+  echo "skip war engine test (javac/java missing)"
+fi
+
+echo "== multi-webapp spec: [webapp] -> webapps-file -> dist engine -> entry-out =="
+if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
+  # 一个假的 dist 引擎入口 main：校验 --webapps-file 有多少行、每行 id/entry/path 是否
+  # 完整、entry 是否真实存在，再 exec 一个回显计划文件的短程序（不依赖真实 sas）。
+  cat > "$T/src/org/jstarttest/PlanEcho.java" <<'JAVA'
+package org.jstarttest;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+public class PlanEcho {
+    public static void main(String[] args) throws Exception {
+        System.out.println("plan-up");
+        for (String l : Files.readAllLines(Paths.get(args[0]))) System.out.println("row:" + l);
+        while (true) { Thread.sleep(1000); }
+    }
+}
+JAVA
+  cat > "$T/src/org/jstarttest/FakeDistEngine.java" <<'JAVA'
+package org.jstarttest;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+public class FakeDistEngine {
+    public static void main(String[] args) throws Exception {
+        String entryOut = null, webappsFile = null;
+        for (String a : args) {
+            if (a.startsWith("--entry-out=")) entryOut = a.substring("--entry-out=".length());
+            else if (a.startsWith("--webapps-file=")) webappsFile = a.substring("--webapps-file=".length());
+        }
+        if (entryOut == null || webappsFile == null)
+            throw new IllegalStateException("missing args: " + Arrays.toString(args));
+        List<String> rows = Files.readAllLines(Paths.get(webappsFile));
+        if (rows.size() != 2) throw new IllegalStateException("expected 2 webapps, got " + rows.size());
+        for (String r : rows) {
+            String[] c = r.split("\t", -1);
+            if (c.length != 3 || c[0].isEmpty() || c[1].isEmpty() || c[2].isEmpty())
+                throw new IllegalStateException("bad plan row: " + r);
+            if (!new File(c[1]).exists()) throw new IllegalStateException("missing entry " + c[1]);
+        }
+        String java = System.getProperty("java.home") + "/bin/java";
+        String cp = System.getProperty("java.class.path");
+        String[] argv = {java, "-cp", cp, "org.jstarttest.PlanEcho", webappsFile};
+        try (OutputStream os = new FileOutputStream(entryOut)) {
+            for (String s : argv) { os.write(s.getBytes("UTF-8")); os.write(0); }
+        }
+    }
+}
+JAVA
+  javac -d "$T/fakedist" "$T/src/org/jstarttest/FakeDistEngine.java" \
+    "$T/src/org/jstarttest/PlanEcho.java"
+  (cd "$T/fakedist" && zip -qr "$T/fake-dist.jar" .)
+
+  mkdir -p "$T/multi-a/WEB-INF/classes" "$T/multi-b/WEB-INF/classes"
+  echo portal > "$T/multi-a/WEB-INF/classes/marker.txt"
+  echo admin > "$T/multi-b/WEB-INF/classes/marker.txt"
+  (cd "$T/multi-a" && zip -qr "$T/portal.war" .)
+  (cd "$T/multi-b" && zip -qr "$T/admin.war" .)
+
+  cat > "$T/multi.jstart" <<INI
+[app]
+engine = org.jstarttest.FakeDistEngine
+
+[webapp portal]
+entry = $T/portal.war
+path = /portal
+
+[webapp admin]
+entry = $T/admin.war
+path = /admin
+
+[engine]
+$T/fake-dist.jar
+INI
+  "$JSTART" --local="$REPO" --verbose run "$T/multi.jstart" --base="$T/multi-stop" \
+    >"$T/multi-run.log" 2>&1 &
+  for i in $(seq 1 120); do grep -q "plan-up" "$T/multi-run.log" 2>/dev/null && break; sleep 0.5; done
+  grep -q "plan-up" "$T/multi-run.log" \
+    || { echo "FAIL multi-webapp engine argv not exec'd: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
+  grep -q "row:portal" "$T/multi-run.log" \
+    || { echo "FAIL portal plan row missing: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
+  grep -q "row:admin" "$T/multi-run.log" \
+    || { echo "FAIL admin plan row missing: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
+  grep -q "/portal" "$T/multi-run.log" \
+    || { echo "FAIL portal context path missing" >&2; failures=$((failures + 1)); }
+  grep -q "/admin" "$T/multi-run.log" \
+    || { echo "FAIL admin context path missing" >&2; failures=$((failures + 1)); }
+  pidM="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/multi-run.log")"
+  [ -n "$pidM" ] || { echo "FAIL multi-webapp pid not recorded" >&2; failures=$((failures + 1)); }
+  # resolve/info 按 webapp 逐个给出；classpath 对多应用无意义，明确拒绝
+  out="$("$JSTART" --local="$REPO" resolve "$T/multi.jstart" 2>&1)"; code=$?
+  check "resolve multi-webapp" "$code" 0 "portal.war"
+  printf '%s' "$out" | grep -q "admin.war" \
+    || { echo "FAIL resolve missing admin entry: $out" >&2; failures=$((failures + 1)); }
+  out="$("$JSTART" --local="$REPO" info "$T/multi.jstart" 2>&1)"; code=$?
+  check "info multi-webapp" "$code" 0 "type: multi-webapp"
+  printf '%s' "$out" | grep -q "path=/admin" \
+    || { echo "FAIL info missing admin path: $out" >&2; failures=$((failures + 1)); }
+  out="$("$JSTART" --local="$REPO" classpath "$T/multi.jstart" 2>&1)"; code=$?
+  check "classpath multi-webapp rejected" "$code" 2 "not supported"
+  # 多应用只走 Dist：内嵌别名（tomcat/undertow）在 spec 校验阶段被拒
+  cat > "$T/multi-bad.jstart" <<INI
+[app]
+engine = tomcat
+
+[webapp a]
+entry = $T/portal.war
+path = /a
+INI
+  out="$("$JSTART" --local="$REPO" run "$T/multi-bad.jstart" --base="$T/multi-bad" 2>&1)"; code=$?
+  check "multi-webapp rejects embed engine" "$code" 1 "dist engine"
+  # stop 只需 base
+  out="$("$JSTART" --local="$REPO" stop "$T/multi.jstart" --base="$T/multi-stop" 2>&1)"; code=$?
+  check "stop multi-webapp" "$code" 0 "Stopped pid"
+  proc_gone "$pidM" || { echo "FAIL multi-webapp pid still alive" >&2; failures=$((failures + 1)); }
+else
+  echo "skip multi-webapp test (javac/java missing)"
 fi
 
 echo
