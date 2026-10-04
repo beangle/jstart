@@ -7,7 +7,7 @@
 #
 # Requires: network (first run downloads ~100MB into the local repo), java 17+
 # (tomcat 11), curl, a built jstart (target/jstart), and a sas engine jar with
-# the entry class (org.beangle.sas.engine.<name>.EmbedCreator, 0.13.17+).
+# the entry class (org.beangle.sas.engine.<name>.EmbedCreator, 0.14.0+).
 #
 # Usage:
 #   bash test/war-run-test.sh [--local=<repo>] [--port=<port>] [--path=/]
@@ -40,14 +40,14 @@ case "$ENGINE" in
   tomcat)
     ENGINE_JAR="tomcat-embed-core-11.0.21.jar"
     STARTED_LOG="Tomcat started"
-    ENGINE_DEPS="org.beangle.sas:beangle-sas-engine:0.13.17
+    ENGINE_DEPS="org.beangle.sas:beangle-sas-engine:0.14.0
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21"
     ;;
   undertow)
     ENGINE_JAR="undertow-core-2.4.4.Final.jar"
     STARTED_LOG="Undertow started"
-    ENGINE_DEPS="org.beangle.sas:beangle-sas-engine:0.13.17
+    ENGINE_DEPS="org.beangle.sas:beangle-sas-engine:0.14.0
 io.undertow:undertow-core:2.4.4.Final
 io.undertow.ee:undertow-servlet:2.0.2.Final
 io.undertow.ee:undertow-websockets:2.0.2.Final
@@ -135,7 +135,7 @@ for a in "\$@"; do
 done
 exec "$JAVA" -cp "\$(cat "\$engineCpFile")" org.beangle.sas.engine.$ENGINE.EmbedCreator \\
   --base="\$base" --entry="\$entry" --app-classpath-file="\$appCpFile" \\
-  --Dsas.repo="\$localRepo" --entry-out="\$entryOut" "\${rest[@]}"
+  --Dbas.repo="\$localRepo" --entry-out="\$entryOut" "\${rest[@]}"
 SH
 chmod +x "$T/engine-init"
 
