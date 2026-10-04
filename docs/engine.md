@@ -92,7 +92,7 @@ printf '%s\0' java -cp "$cp" com.example.ContainerMain > "$entryOut"
 
 ### `--entry` 是文件还是目录
 
-- **文件（war）**：引擎按自己的公式解压到 `docBase`（beangle/sas 的公式见下），
+- **文件（war）**：引擎按自己的公式解压到 `docBase`（beangle/bas 的公式见下），
   解压必须带 **zip-slip 防护**（跳过解析到目标目录之外的条目）。
 - **目录（已解压 webapp）**：引擎**直接**把该目录当 `docBase`，不复制、不解压——
   方便本地前端/后端项目以目录形式发布调试。
@@ -104,7 +104,7 @@ launch spec 用 `[engine]` 段的 `init` 键指定 init 命令（路径，或“
 ```ini
 [engine]
 init = /opt/engine/bin/tomcat-init     # 必填：可执行文件/路径或命令行，或一行命令（如 basctl make tomcat-dist）
-org.beangle.sas:beangle-sas-engine:0.13.17   # 其余行：引擎依赖（同 [libs] 语法）
+org.beangle.bas:beangle-bas-engine:0.13.17   # 其余行：引擎依赖（同 [libs] 语法）
 ```
 
 - `init` 是**命令行**，不是 java 类；jstart 不做别名/FQCN 映射，也没有内置引擎。
@@ -167,7 +167,7 @@ webapp 各自独立），最后只写出一份最终 argv。
 ```ini
 [engine]                       # 引擎依赖，每行与 [libs] 同语法（init 之外的行）
 init = /opt/engine/bin/tomcat-init
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 ```
@@ -179,9 +179,9 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
   仍只认显式清单，**不解析传递依赖**。
 - SNAPSHOT 依赖按 `--snapshot-remote` 解析（不回退 `--remote`）；本地快照库已有则可用。
 
-### beangle/sas 的容器：`basctl make`
+### beangle/bas 的容器：`basctl make`
 
-jstart 不内置 sas 的入口类映射。sas 容器（tomcat/undertow 的嵌入与发行版部署）的
+jstart 不内置 bas 的入口类映射。bas 容器（tomcat/undertow 的嵌入与发行版部署）的
 creator 由 [`basctl`](https://github.com/beangle/basctl) 提供，直接以**命令行**形式写进
 spec，无需 wrapper 脚本：
 
@@ -191,7 +191,7 @@ entry = org.beangle.otk:beangle-otk-ws:war:0.0.29
 
 [engine]
 init = basctl make tomcat-dist        # 或 tomcat-embed / undertow-embed
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-dist 的发行包（其余类型写各自的引擎 jar）
 
 [args]
@@ -210,7 +210,7 @@ org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-dist 的发行包（其余类�
 | `--jsp=true\|false` | 是否启用 JSP（缺省 `false`）：决定 `conf/web.xml` 与 jasper/ecj 的保留 |
 | `--listener=<class[:k=v;k2=v2]>` | Server 级 `<Listener>`，可重复；缺省用 Jre/ThreadLocal 泄漏防护 |
 
-详见 basctl 的 `docs/engine-creator.md`。sas 侧只保留容器运行时类，不再内置 creator。
+详见 basctl 的 `docs/engine-creator.md`。bas 侧只保留容器运行时类，不再内置 creator。
 
 ## 参数语义
 
@@ -225,7 +225,7 @@ org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-dist 的发行包（其余类�
 
 ## docBase 布局（归属引擎）
 
-basctl 的引擎入口按 `--base` + `--path` 推导（与 beangle/sas `Server.Config` 语义一致）：
+basctl 的引擎入口按 `--base` + `--path` 推导（与 beangle/bas `Server.Config` 语义一致）：
 
 | `--path` | docBase |
 |----------|---------|
@@ -245,7 +245,7 @@ entry = /path/app.war          # 也可是 g:a:v:war / gav://...:war / 已解压
 
 [engine]                       # 必填：init 命令（入口）+ 引擎/容器 jar
 init = /opt/engine/bin/tomcat-init
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
@@ -287,4 +287,4 @@ base 都需要显式声明，正是 launch spec 的职责。`resolve`/`fetch`/`r
   脚本支持受限（用 .bat/.exe 或在 WSL/Cygwin 下运行）。
 - 解压走引擎自己的 zip 实现（zip-slip 防护）；超大 war 视引擎实现而定。
 - "可执行 war"（自带 Main-Class 的 Spring Boot 式 fat war）不支持，war 一律按引擎运行。
-- 容器行为（参数消费、docBase 删除时机）随 beangle/sas 版本演进，以 sas 源码语义为准。
+- 容器行为（参数消费、docBase 删除时机）随 beangle/bas 版本演进，以 bas 源码语义为准。

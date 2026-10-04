@@ -98,7 +98,7 @@ entry = /path/to/app.war
 
 [engine]
 init = /opt/engine/bin/tomcat-init
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.24
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 

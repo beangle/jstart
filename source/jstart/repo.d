@@ -200,7 +200,7 @@ struct RemoteRepo {
 /**
  * Default remote repositories: aliyun, huaweicloud and maven central.
  *
- * 这是「内置镜像 + Central 兜底」策略的唯一出处：调用方（sas 等）只透传自己配置的
+ * 这是「内置镜像 + Central 兜底」策略的唯一出处：调用方（bas 等）只透传自己配置的
  * 仓库列表，不再各拼一份默认值；`buildRemotes` 在给定列表缺少 Central 时补到末尾
  * （对齐 beangle/boot 行为）。需要完全离线时用 `--offline`，不要依赖空 `--remote`。
  */

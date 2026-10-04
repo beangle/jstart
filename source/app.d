@@ -431,7 +431,7 @@ int main(string[] args) {
     }
   }
   // [libs] 叠加在 entry 内置依赖清单之上（追加/覆盖）：先 libs 后内置，同名 g:a 以
-  // libs 为准（与 sas `libs` 的 merge 一致）。native 包内无清单时 libs 即全部依赖。
+  // libs 为准（与 bas `libs` 的 merge 一致）。native 包内无清单时 libs 即全部依赖。
   Archive[] entryDeps = nativeMode ? null : resolver.resolveDependencies(appPath);
   Archive[] deps = entryDeps;
   if (specMode && spec.libs.length > 0) {
@@ -488,7 +488,7 @@ int main(string[] args) {
       stderr.writeln("war targets must run through a launch spec: write a .jstart file\n"
           ~ "  [app]\n  entry = " ~ opts.target ~ "\n\n"
           ~ "  [engine]\n  init = /path/to/engine-init\n"
-          ~ "  org.beangle.sas:beangle-sas-engine:<ver>\n"
+          ~ "  org.beangle.bas:beangle-bas-engine:<ver>\n"
           ~ "then run `jstart run app.jstart` (see docs/engine.md). "
           ~ "resolve/fetch still accept a war directly.");
     } else {

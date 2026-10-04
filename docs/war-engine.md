@@ -41,7 +41,7 @@ entry = /path/app.war        # 也可是 g:a:v:war 或 gav://...:war
 
 [engine]                     # 必填：init 命令（入口）+ 引擎/容器 jar
 init = basctl make tomcat-embed
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
@@ -59,7 +59,7 @@ jstart run app.jstart
 
 ## docBase 布局（归引擎）
 
-引擎按 `--base` + `--path` 推导 docBase（beangle/sas `Server.Config`，由 basctl 的引擎入口消费），
+引擎按 `--base` + `--path` 推导 docBase（beangle/bas `Server.Config`，由 basctl 的引擎入口消费），
 并在准备阶段把 war 解压到那里；jstart 只传参数，**不感知解压公式**。公式与重建/清理
 时机见 [engine.md](engine.md)：
 
@@ -91,7 +91,7 @@ jstart run app.jstart
 - `-D`/`-X` 开头的命令行参数与 `[runtime]` 段归 JVM，作为 `--app-jvm-arg` 交给 init 命令
   写进最终命令；
 - `--port=8080` 等其余参数不读取、按序原样透传（端口由引擎消费，被占用时自动探测空闲
-  端口或报错）。注意 **sas 引擎只消费 `--path/--port/--dev/--base`**，其余打印
+  端口或报错）。注意 **bas 引擎只消费 `--path/--port/--dev/--base`**，其余打印
   `ignore param` 后忽略——war 没有"应用主类参数"的概念，应用级配置由 webapp 自身处理。
 
 ## 引擎与依赖声明
@@ -104,7 +104,7 @@ entry = gav://org.example:webapp:0.0.1:war
 
 [engine]
 init = basctl make tomcat-embed     # 必填：引擎 init 命令（路径，或“程序 + 参数”）
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
@@ -134,7 +134,7 @@ jstart 不在代码里内置 tomcat/undertow 的 jar 清单，也不内置入口
 ```ini
 [engine]
 init = basctl make tomcat-embed
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.24
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 ```
@@ -150,7 +150,7 @@ entry = /path/app.war
 
 [engine]
 init = basctl make undertow-embed
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 io.undertow:undertow-core:2.4.4.Final
 io.undertow.ee:undertow-servlet:2.0.2.Final
 io.undertow.ee:undertow-websockets:2.0.2.Final
@@ -175,7 +175,7 @@ io.smallrye.common:smallrye-common-annotation:2.14.0
 [engine]
 init = basctl make tomcat-embed
 /opt/mirror/tomcat-embed-core-11.0.21.jar       # 本地引擎 jar（支持 ~ 与 ${VAR}）
-https://repo.example.com/sas/beangle-sas-engine.jar
+https://repo.example.com/bas/beangle-bas-engine.jar
 ```
 
 3. **引擎 JVM 参数**：与 jar 目标一致写 `[runtime]`；引擎自身参数
@@ -239,7 +239,7 @@ entry = org.beangle.otk:beangle-otk-ws:war:0.0.29
 
 [engine]
 init = basctl make tomcat-embed
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
@@ -252,7 +252,7 @@ jstart run otk.jstart --port=8080
 ```
 
 > init 命令 `basctl make <type>` 消费 jstart 的协议参数并写出容器启动命令。用真实组件
-> 跑本测试前，本地仓库需有该版本的 sas 引擎 jar（或让 jstart 按 `[engine]` 行联网下载）。
+> 跑本测试前，本地仓库需有该版本的 bas 引擎 jar（或让 jstart 按 `[engine]` 行联网下载）。
 
 ## 限制
 
@@ -263,5 +263,5 @@ jstart run otk.jstart --port=8080
   解释器约定，脚本支持受限；
 - "可执行 war"（自带 Main-Class 的 Spring Boot 式 fat war）不支持，war 一律按
   引擎模式运行；
-- init 命令与 docBase 公式随 beangle/sas 版本演进；容器行为（参数消费、docBase 删除
-  时机）以 sas 源码语义为准。
+- init 命令与 docBase 公式随 beangle/bas 版本演进；容器行为（参数消费、docBase 删除
+  时机）以 bas 源码语义为准。

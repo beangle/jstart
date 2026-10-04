@@ -46,7 +46,7 @@ final class Resolver {
   RemoteRepo[] remotes;
   /**
      SNAPSHOT 的上游：**不**套用 `--remote` 的默认镜像与 Central 兜底，只用调用方显式
-     给出的列表（sas 传 `<SnapshotRepo remote>`）；为空表示不代理，只用本地快照库。
+     给出的列表（bas 传 `<SnapshotRepo remote>`）；为空表示不代理，只用本地快照库。
      与 [[remotes]] 分开，是因为开发版一般来自专用仓库，兜到公共镜像没有意义。
    */
   RemoteRepo[] snapshotRemotes;

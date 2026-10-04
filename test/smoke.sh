@@ -178,7 +178,7 @@ check "bare war run rejected" "$code" 1 "must run through a launch spec"
 
 # 引擎 jar 用本地空文件即可（--print 走完解析但不执行脚本）
 mkdir -p "$T/engine"
-: > "$T/engine/beangle-sas-engine-0.13.17.jar"
+: > "$T/engine/beangle-bas-engine-0.13.17.jar"
 : > "$T/engine/tomcat-embed-core-11.0.21.jar"
 
 # [app] main 与 [engine] 段互斥：spec 里同时写 main 和 [engine] init 直接报错
@@ -227,13 +227,13 @@ entry = $T/app.war
 
 [engine]
 init = $T/engine/init.sh
-$T/engine/beangle-sas-engine-0.13.17.jar
+$T/engine/beangle-bas-engine-0.13.17.jar
 $T/engine/tomcat-embed-core-11.0.21.jar
 
 [args]
 --path=/demo
 INI
-out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.jstart" --port=8080 --base="$T/sas" 2>&1)"; code=$?
+out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.jstart" --port=8080 --base="$T/bas" 2>&1)"; code=$?
 check "war print exit" "$code" 0 "$T/engine/init.sh"
 check "war entry" "$code" 0 "--entry=$T/app.war"
 check "war engine classpath" "$code" 0 "--engine-classpath-file="
@@ -246,7 +246,7 @@ check "war ignores --main" "$code" 0 "ignored for engine targets"
 # jstart 不再自己爆炸 war：docBase 布局与爆炸都归引擎 init 脚本（见 docs/engine.md）
 warBase="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
 case "$warBase" in
-  "$T/sas"/app.jstart-*) ;;
+  "$T/bas"/app.jstart-*) ;;
   *) echo "FAIL war --base layout: $warBase" >&2; failures=$((failures + 1)) ;;
 esac
 
@@ -426,7 +426,7 @@ echo "== war engine end-to-end: init -> entry-out argv -> exec =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   # 一个最小引擎 init 脚本：读 jstart 写好的 classpath 文件，把最终 argv（NUL 分隔）
   # 写到 --entry-out，jstart 再 exec 它。覆盖完整协议：准备 -> entry-out -> exec
-  # （不依赖真实 sas）。
+  # （不依赖真实 bas）。
   mkdir -p "$T/fakeengine/META-INF"
   javac -d "$T/fakeengine" "$T/src/org/jstarttest/Sleeper.java"
   (cd "$T/fakeengine" && zip -qr "$T/fake-engine.jar" .)
@@ -456,7 +456,7 @@ init = $T/fake-engine-init
 $T/fake-engine.jar
 INI
   warport=$((20000 + RANDOM % 10000))
-  "$JSTART" --local="$REPO" --verbose run "$T/engine.jstart" --port="$warport" --path=/smoke --base="$T/sas-stop" \
+  "$JSTART" --local="$REPO" --verbose run "$T/engine.jstart" --port="$warport" --path=/smoke --base="$T/bas-stop" \
     >"$T/war-run.log" 2>&1 &
   for i in $(seq 1 120); do grep -q "Pid file" "$T/war-run.log" 2>/dev/null && break; sleep 1; done
   pidW="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-run.log")"
@@ -465,10 +465,10 @@ INI
   for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-run.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "sleeper-up" "$T/war-run.log" \
     || { echo "FAIL engine argv not exec'd: $(cat "$T/war-run.log")" >&2; failures=$((failures + 1)); }
-  ls "$T/sas-stop"/engine.jstart-*/engine-entry.argv >/dev/null 2>&1 \
+  ls "$T/bas-stop"/engine.jstart-*/engine-entry.argv >/dev/null 2>&1 \
     || { echo "FAIL engine-entry.argv not written" >&2; failures=$((failures + 1)); }
   # stop 只要 base，不需要 run 时的 --port/--path
-  out="$("$JSTART" --local="$REPO" stop "$T/engine.jstart" --base="$T/sas-stop" 2>&1)"; code=$?
+  out="$("$JSTART" --local="$REPO" stop "$T/engine.jstart" --base="$T/bas-stop" 2>&1)"; code=$?
   check "stop war app" "$code" 0 "Stopped pid"
   proc_gone "$pidW" || { echo "FAIL war pid still alive" >&2; failures=$((failures + 1)); }
 else
@@ -490,7 +490,7 @@ init = bash $T/fake-engine-cmd.sh
 $T/fake-engine.jar
 INI
   cmdport=$((20000 + RANDOM % 10000))
-  "$JSTART" --local="$REPO" --verbose run "$T/engine-cmd.jstart" --port="$cmdport" --path=/smoke --base="$T/sas-cmd" \
+  "$JSTART" --local="$REPO" --verbose run "$T/engine-cmd.jstart" --port="$cmdport" --path=/smoke --base="$T/bas-cmd" \
     >"$T/war-cmd.log" 2>&1 &
   for i in $(seq 1 120); do grep -q "Pid file" "$T/war-cmd.log" 2>/dev/null && break; sleep 1; done
   pidC="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-cmd.log")"
@@ -498,7 +498,7 @@ INI
   for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-cmd.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "sleeper-up" "$T/war-cmd.log" \
     || { echo "FAIL init command not exec'd: $(cat "$T/war-cmd.log")" >&2; failures=$((failures + 1)); }
-  out="$("$JSTART" --local="$REPO" stop "$T/engine-cmd.jstart" --base="$T/sas-cmd" 2>&1)"; code=$?
+  out="$("$JSTART" --local="$REPO" stop "$T/engine-cmd.jstart" --base="$T/bas-cmd" 2>&1)"; code=$?
   check "stop command-form init" "$code" 0 "Stopped pid"
   proc_gone "$pidC" || { echo "FAIL command-form pid still alive" >&2; failures=$((failures + 1)); }
 else
@@ -509,7 +509,7 @@ echo "== multi-webapp spec: [subapp] -> <base>/engine-subapps.jstart -> dist eng
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   # 一个假的 dist 引擎 init 脚本：按 --base 约定读 <base>/engine-subapps.jstart（launch
   # spec 片段），校验 [subapp <id>] 段数、每段的 entry/path 是否完整、entry 是否真实存在、
-  # libs 是否带过来，再 exec 一个回显计划文件的短程序（不依赖真实 sas，也不经命令行传计划）。
+  # libs 是否带过来，再 exec 一个回显计划文件的短程序（不依赖真实 bas，也不经命令行传计划）。
   cat > "$T/src/org/jstarttest/PlanEcho.java" <<'JAVA'
 package org.jstarttest;
 import java.nio.file.Files;

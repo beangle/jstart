@@ -141,7 +141,7 @@ entry = gav://org.example:webapp:0.0.1:war   # 或本地 /path/app.war
 
 [engine]                                      # 必填：init 命令 + 引擎/容器 jar
 init = /opt/engine/bin/tomcat-init            # init 命令（路径，或“程序 + 参数”；不是 java 类）
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 

@@ -25,7 +25,7 @@
   采用通用运行时命名（`[app] runtime` + `[runtime]` 段，旧 `[app] java`/`[jvm]` 已移除并告警）
 - war 引擎：war 只能从 launch spec（`[app] entry` 为 war/目录）进入 `run`，裸 war 目标
   会报错（`resolve`/`fetch`/`repo` 仍直接接受 war）；jstart 运行**引擎入口 main**准备
-  环境、再 exec 它写出的最终命令（入口 main 为 `org.beangle.sas.engine.<name>.EmbedCreator`，
+  环境、再 exec 它写出的最终命令（入口 main 为 `org.beangle.bas.engine.<name>.EmbedCreator`，
   全量 tomcat 用 `tomcat.ServerCreator`；tomcat/undertow 均有内置默认依赖目录，`[app] engine`
   选入口 main、`[engine]` 段罗列引擎依赖覆盖内置默认；war 的解压与 docBase 归引擎，
   见 [engine.md](engine.md) 与 [war-engine.md](war-engine.md)）

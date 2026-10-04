@@ -106,7 +106,7 @@ working_dir = ${APP_HOME}
   | 用途 | 补依赖（写新的 `g:a`）与换版本（写同名 `g:a` 的不同版本）都是这一条规则 |
 
   该规则在 jstart 侧（应用 classpath）与容器侧（`DependencyClassLoader` 合并 war 清单）
-  一致，也与 sas `Webapp libs` 的 merge 一致；`[subapp <id>] libs` 同样遵循。
+  一致，也与 bas `Webapp libs` 的 merge 一致；`[subapp <id>] libs` 同样遵循。
 - 不写 `[libs]` 时只用 entry 内的依赖描述（jar/war/解压目录各位置规则与现有
   `resolveDependencies` 完全一致）；native（tar.gz）包内没有清单，`[libs]` 即为全部依赖；
 - `[app] main` 与 entry 内 Manifest `Main-Class` 都缺失时，`run` 报
@@ -161,7 +161,7 @@ entry = /path/app.war          # war 目标（本地文件/gav/http 均可）
 
 [engine]                       # init 必填；其余行是引擎启动器依赖，同 [libs] 语法
 init = /opt/engine/bin/tomcat-init   # 引擎 init 命令（路径，或“程序 + 参数”；不是 java 类）
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
@@ -202,7 +202,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 ```ini
 [engine]
 init = /opt/engine/bin/tomcat-dist-init                # 必填：引擎 init 命令（路径，或“程序 + 参数”）
-org.beangle.sas:beangle-sas-engine:0.13.17
+org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat:tomcat:11.0.21:zip                   # 多 context 用全量 tomcat 发行包
 
 [subapp portal]
@@ -225,7 +225,7 @@ path = /admin
 - **`libs` 是该 webapp 的扩展依赖**（gav 坐标，可多行、一行可逗号分隔多个）：覆盖规则与
   顶层 `[libs]` 完全相同——按 `groupId:artifactId` 判同名（不看版本），同名取 libs 的
   版本，追加/覆盖在该 war 的 `META-INF/beangle/dependencies` 清单之上，由引擎的
-  `DependencyClassLoader` 合并（对齐 sas 的 `Webapp libs`）。jstart 会先把它们取回本地
+  `DependencyClassLoader` 合并（对齐 bas 的 `Webapp libs`）。jstart 会先把它们取回本地
   仓库——引擎只在本地仓库里找、缺失即报错；被覆盖的旧版本不再需要下载。`[subapp] libs`
   只认 gav（引擎侧只支持 gav），顶层 `[libs]` 另支持本地文件/远程 url。
 - **与单应用的键互斥**：`[app] entry`、`[app] main`、`[libs]` 都不能和 `[subapp]` 段

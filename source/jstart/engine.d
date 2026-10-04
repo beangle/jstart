@@ -15,7 +15,7 @@
  *   [engine]
  *   init = /opt/engine/bin/acme-tomcat-init         # 必填：可执行文件路径
  *   init = basctl make tomcat-dist                # 或命令行（程序 + 参数）
- *   org.beangle.sas:beangle-sas-engine:0.13.17      # 引擎 jar（同 [libs] 语法，可选）
+ *   org.beangle.bas:beangle-bas-engine:0.13.17      # 引擎 jar（同 [libs] 语法，可选）
  *   org.apache.tomcat.embed:tomcat-embed-core:11.0.21
  *
  * The `init` value is a command line (an executable path, optionally with

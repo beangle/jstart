@@ -201,7 +201,7 @@ unittest {
     "entry = app.war\n" ~
     "[engine]\n" ~
     "init = /opt/engine/bin/tomcat-init\n" ~
-    "org.beangle.sas:beangle-sas-engine:0.13.10\n" ~
+    "org.beangle.bas:beangle-bas-engine:0.13.10\n" ~
     "org.apache.tomcat.embed:tomcat-embed-core:11.0.21\n" ~
     "[args]\n" ~
     "--port=8080\n";
@@ -211,7 +211,7 @@ unittest {
   assert(spec.engineInit == "/opt/engine/bin/tomcat-init");
   assert(spec.hasEngine);
   assert(spec.engineDeps.length == 2, spec.engineDeps.join(","));
-  assert(spec.engineDeps[0] == "org.beangle.sas:beangle-sas-engine:0.13.10");
+  assert(spec.engineDeps[0] == "org.beangle.bas:beangle-bas-engine:0.13.10");
   assert(spec.engineDeps[1] == "org.apache.tomcat.embed:tomcat-embed-core:11.0.21");
   assert(spec.args.length == 1 && spec.args[0] == "--port=8080");
 }
@@ -233,7 +233,7 @@ unittest {
 
   // [engine] 段存在但没有 init：validateLaunchSpec 报错（init 必填）。
   auto noInit = parseLaunchSpec("[app]\nentry = app.war\n[engine]\n"
-      ~ "org.beangle.sas:beangle-sas-engine:0.13.10\n", warnings);
+      ~ "org.beangle.bas:beangle-bas-engine:0.13.10\n", warnings);
   assert(noInit.hasEngine);
   assert(validateLaunchSpec(noInit).length > 0);
 
@@ -282,7 +282,7 @@ unittest {
 unittest {
   // 多应用：[subapp <id>] 段逐个声明 entry/path；重复的 id 由段头 id 决定。
   enum text = "[app]\nbase = /var/tmp/jstart/demo\n"
-    ~ "[engine]\ninit = /opt/engine/dist-init\norg.beangle.sas:beangle-sas-engine:0.13.17\n" ~
+    ~ "[engine]\ninit = /opt/engine/dist-init\norg.beangle.bas:beangle-bas-engine:0.13.17\n" ~
     "[subapp portal]\n" ~
     "entry = portal.war\n" ~
     "path = /portal\n" ~
@@ -408,7 +408,7 @@ unittest {
 
   // 有 [engine] 段但没有 init 也被拒绝（只看 init，不看依赖行）。
   auto noInit = parseLaunchSpec(
-      "[engine]\norg.beangle.sas:beangle-sas-engine:0.13.17\n"
+      "[engine]\norg.beangle.bas:beangle-bas-engine:0.13.17\n"
       ~ "[subapp a]\nentry = a.war\npath = /a\n", warnings);
   assert(validateLaunchSpec(noInit).length > 0);
   assert(validateLaunchSpec(noInit).indexOf("init") >= 0);
@@ -442,7 +442,7 @@ unittest {
 
   // 只有依赖、没有 init 也算 engine（parse 层），但 validate 会报错——类型先于校验。
   auto engineDepsOnly = parseLaunchSpec(
-      "[app]\nentry = app.war\n[engine]\norg.beangle.sas:beangle-sas-engine:0.13.17\n",
+      "[app]\nentry = app.war\n[engine]\norg.beangle.bas:beangle-bas-engine:0.13.17\n",
       warnings);
   assert(launchType(engineDepsOnly) == LaunchType.engine);
 
@@ -458,8 +458,8 @@ unittest {
   // [app] instance：可选的显式组件目录名（<base 根>/<instance>），限安全路径段。
   string[] warnings;
   auto spec = parseLaunchSpec(
-      "[app]\nentry = app.war\nbase = /srv/sas\ninstance = platform.server1\n", warnings);
-  assert(spec.base == "/srv/sas");
+      "[app]\nentry = app.war\nbase = /srv/bas\ninstance = platform.server1\n", warnings);
+  assert(spec.base == "/srv/bas");
   assert(spec.instance == "platform.server1");
   assert(validateLaunchSpec(spec).length == 0);
   assert(warnings.length == 0, warnings[0]);

@@ -274,7 +274,7 @@ unittest {
 
   auto local = new LocalRepo(localBase, snapBase);
   auto resolver = new Resolver(local, [RemoteRepo("test", base)], false);
-  // SNAPSHOT 上游与普通上游分开：本用例显式给出（生产由 sas 的 <SnapshotRepo remote> 传）
+  // SNAPSHOT 上游与普通上游分开：本用例显式给出（生产由 bas 的 <SnapshotRepo remote> 传）
   resolver.snapshotRemotes = [RemoteRepo("test", base)];
 
   auto demo = parseGav("org.example:demo:1.0-SNAPSHOT", "org.example:demo:1.0-SNAPSHOT");

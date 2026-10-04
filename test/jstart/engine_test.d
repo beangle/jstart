@@ -32,16 +32,16 @@ unittest {
   auto local = new LocalFile("/opt/lib/x.jar", "/opt/lib/x.jar");
   auto engineCore = new Artifact("org.apache.tomcat.embed:tomcat-embed-core:11.0.21",
       "org.apache.tomcat.embed", "tomcat-embed-core", "11.0.21", "", "jar");
-  auto engineSas = new Artifact("org.beangle.sas:beangle-sas-engine:0.13.17",
-      "org.beangle.sas", "beangle-sas-engine", "0.13.17", "", "jar");
+  auto engineBas = new Artifact("org.beangle.bas:beangle-bas-engine:0.13.17",
+      "org.beangle.bas", "beangle-bas-engine", "0.13.17", "", "jar");
   auto remote = new RemoteFile("https://repo/x.jar", "https://repo/x.jar");
 
   auto merged = appendEngineDeps([cast(Archive) slf4j, local],
-      [cast(Archive) engineCore, cast(Archive) slf4j, cast(Archive) engineSas, remote]);
+      [cast(Archive) engineCore, cast(Archive) slf4j, cast(Archive) engineBas, remote]);
   assert(merged.length == 5, merged.length.to!string);
   assert(cast(LocalFile) merged[1] !is null);
   assert(cast(Artifact) merged[2] is engineCore);
-  assert(cast(Artifact) merged[3] is engineSas, "重复 slf4j 应被去重");
+  assert(cast(Artifact) merged[3] is engineBas, "重复 slf4j 应被去重");
   assert(cast(RemoteFile) merged[4] !is null);
 }
 

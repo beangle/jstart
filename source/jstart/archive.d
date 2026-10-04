@@ -190,7 +190,7 @@ Archive[] mergeLibraries(Archive[] libs, Archive[] base) {
   return result;
 }
 
-/// 合并去重键：gav 用 group:artifact（对齐 sas `Dependency.Resolver.merge`），其余用原始行。
+/// 合并去重键：gav 用 group:artifact（对齐 bas `Dependency.Resolver.merge`），其余用原始行。
 private string libraryKey(Archive a) {
   if (auto art = cast(Artifact) a) {
     return art.groupId ~ ":" ~ art.artifactId;

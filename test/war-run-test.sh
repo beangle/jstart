@@ -6,8 +6,8 @@
 # EmbedCreator）、exec 容器、Tomcat 启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
 #
 # Requires: network (first run downloads ~100MB into the local repo), java 17+
-# (tomcat 11), curl, a built jstart (target/jstart), and a sas engine jar with
-# the entry class (org.beangle.sas.engine.<name>.EmbedCreator, 0.14.0+).
+# (tomcat 11), curl, a built jstart (target/jstart), and a bas engine jar with
+# the entry class (org.beangle.bas.engine.<name>.EmbedCreator, 0.14.0+).
 #
 # Usage:
 #   bash test/war-run-test.sh [--local=<repo>] [--port=<port>] [--path=/]
@@ -40,14 +40,14 @@ case "$ENGINE" in
   tomcat)
     ENGINE_JAR="tomcat-embed-core-11.0.21.jar"
     STARTED_LOG="Tomcat started"
-    ENGINE_DEPS="org.beangle.sas:beangle-sas-engine:0.14.0
+    ENGINE_DEPS="org.beangle.bas:beangle-bas-engine:0.14.0
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21"
     ;;
   undertow)
     ENGINE_JAR="undertow-core-2.4.4.Final.jar"
     STARTED_LOG="Undertow started"
-    ENGINE_DEPS="org.beangle.sas:beangle-sas-engine:0.14.0
+    ENGINE_DEPS="org.beangle.bas:beangle-bas-engine:0.14.0
 io.undertow:undertow-core:2.4.4.Final
 io.undertow.ee:undertow-servlet:2.0.2.Final
 io.undertow.ee:undertow-websockets:2.0.2.Final
@@ -79,7 +79,7 @@ if [ ! -x "$JSTART" ]; then
 fi
 
 T="$(mktemp -d /tmp/jstart-war-test.XXXXXX)"
-BASE="$T/sas"
+BASE="$T/bas"
 LOG="$T/run.log"
 failures=0
 
@@ -114,7 +114,7 @@ check "resolve outputs .war" "printf '%s' \"$out\" | grep -q 'beangle-otk-ws-0.0
 echo "== run with built-in $ENGINE engine (via [engine] init script) =="
 echo "port=$PORT path=$CPATH repo=$REPO engine=$ENGINE"
 
-# 引擎入口脚本：jstart 把解析好的 classpath 写成文件交给脚本，脚本再委托 sas 的
+# 引擎入口脚本：jstart 把解析好的 classpath 写成文件交给脚本，脚本再委托 bas 的
 # EmbedCreator（真实容器入口）产出最终命令。init 是文件路径，不是 java 类。
 JAVA="$(command -v java)"
 cat > "$T/engine-init" <<SH
@@ -133,7 +133,7 @@ for a in "\$@"; do
     *) rest+=("\$a") ;;
   esac
 done
-exec "$JAVA" -cp "\$(cat "\$engineCpFile")" org.beangle.sas.engine.$ENGINE.EmbedCreator \\
+exec "$JAVA" -cp "\$(cat "\$engineCpFile")" org.beangle.bas.engine.$ENGINE.EmbedCreator \\
   --base="\$base" --entry="\$entry" --app-classpath-file="\$appCpFile" \\
   --Dbas.repo="\$localRepo" --entry-out="\$entryOut" "\${rest[@]}"
 SH

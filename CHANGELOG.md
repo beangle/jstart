@@ -37,7 +37,7 @@
   按 war 清单解析，不合并进同一 JVM classpath）。交付文件走 **launch spec 片段**
   `<base>/engine-subapps.jstart`（一段一个 `[subapp <id>]`，含 entry/path/libs），脚本按
   `--base` 约定读取；`libs` 是 per-webapp 的扩展依赖（gav，追加在 war 清单之上，同名以
-  libs 为准，对齐 sas `Webapp libs`），jstart 先取回本地仓库。`resolve`/`info` 按 webapp
+  libs 为准，对齐 bas `Webapp libs`），jstart 先取回本地仓库。`resolve`/`info` 按 webapp
   逐个输出，`classpath` 明确拒绝，`stop` 一次停整组
 - **spec 互斥校验**：`[app] main` 与 `[engine]` 段互斥，同时声明直接报错（jar 跑主类、
   引擎目标由 init 脚本启动，语义冲突）
@@ -92,12 +92,12 @@
   于 maven 依赖解析
 - **war 引擎运行**：war 只能从 launch spec 进入 `run`（`[app] entry` 为 war 文件/gav；
   裸 war 目标对 `run` 直接报错，`resolve`/`fetch`/`repo` 仍直接接受 war）。jstart 把
-  war/已解压目录交给**引擎入口 main**（`org.beangle.sas.engine.<name>.EmbedCreator`，可用
+  war/已解压目录交给**引擎入口 main**（`org.beangle.bas.engine.<name>.EmbedCreator`，可用
   FQCN 覆盖）：入口 main 准备环境、把最终 argv 写入 `engine-entry.argv` 后退出，jstart
   再 exec；war 的解压与 docBase 布局归引擎（jstart 不再自己爆炸，跨仓库契约取消，见
   docs/engine.md）。`[app] engine` 选入口 main、`[engine]` 段显式罗列引擎依赖以覆盖
   内置默认（tomcat/undertow）；`--base` 例外解析，`--path`/`--port` 等原样透传
-- **引擎内置目录（undertow）**：对齐 sas 0.13.17 的 Jakarta EE 10 拆分——
+- **引擎内置目录（undertow）**：对齐 bas 0.13.17 的 Jakarta EE 10 拆分——
   `io.undertow.ee:undertow-servlet/-websockets`（不再用 `io.undertow:undertow-servlet`）、
   undertow-core 2.4.4/XNIO 3.8.16/jboss 3.6.3+3.9.2/wildfly 2.0.1，并补齐
   `jakarta.servlet-api`/`jakarta.websocket(-client)-api` 与 wildfly-common 需要的
