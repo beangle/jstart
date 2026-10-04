@@ -43,7 +43,7 @@ unittest {
   // 带值选项：原样取值，空值也保留（--main 由 hasMain 区分"没给"）
   auto o = parseArgs(["--local=/l", "--remote=http://r1,http://r2",
       "--snapshot-remote=http://s1", "--source=/s", "--from=1.0",
-      "--base=/b", "--instance=n", "--main=com.example.Main",
+      "--base=/b", "--main=com.example.Main",
       "--jobs=4", "--timeout=30"]);
   assert(o.local == "/l");
   assert(o.remote == "http://r1,http://r2");
@@ -51,7 +51,6 @@ unittest {
   assert(o.source == "/s");
   assert(o.from == "1.0");
   assert(o.base == "/b");
-  assert(o.instance == "n");
   assert(o.mainClass == "com.example.Main" && o.hasMain);
   assert(o.jobs == 4 && o.stopTimeout == 30);
 

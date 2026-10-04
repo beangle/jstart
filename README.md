@@ -29,7 +29,7 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   （不发请求、不报错），只有本地缺失、需要拉取才报错（`--offline` 只是不联网、不拉取）。
 - `stop` 子命令按 **base** 停止 `run` 启动的实例：`run` 在 exec 前把 pid 写入
   `<base>/app.pid`（base = `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
-  整体替换这个根，`--instance=<name>` 命名组件目录，launch spec 可用 `[app] base` 固定）。
+  整体替换这个根，launch spec 可用 `[app] base` 固定根、`[app] instance` 固定组件目录名）。
   **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复启动会被拒绝
   （`--force` 可覆盖），`stop <target>` 不需要重复 run 时的参数；要跑多个副本就给每个副本
   一个 base。
@@ -49,18 +49,15 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   （见 [docs/launch-spec.md](docs/launch-spec.md)）。
   主类按 `--main=<class>` > launch spec `[app] main` > jar 内 `MANIFEST.MF` 的
   `Main-Class` 确定：jar 的 Main-Class 不适用（或想跑 jar 里/依赖里的另一个类）时用
-  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎入口 main 启动，
+  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎 init 脚本启动，
   native 用 `[app] exec`，给 `--main` 会告警忽略）。
-- war 目标用内置引擎启动：jstart 先运行**引擎入口 main**（准备容器环境、写出最终启动
-  命令）再 exec 容器（默认引擎 tomcat，映射 `org.beangle.sas.engine.tomcat.EmbedCreator`；
-  组件目录默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根）；
-  引擎选择与依赖可在 launch spec 声明（`[app] engine` + `[engine]` 段，
- 见 [docs/war-engine.md](docs/war-engine.md)）。`engine = tomcat` 用内置默认版本，
-  `engine = tomcat-11.0.24` 直接指定 tomcat 版本；`[engine]` 行支持
-  `{tomcat.version}`/`{sas.version}` 占位符引用内置版本，不必手写重复版本号。
-- 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，交给
-  **Dist 引擎**（`org.beangle.sas.engine.tomcat.ServerCreator`，可省略即缺省）在同一 JVM 里各
-  建一个 context。多应用只走 Dist 模式（内嵌 `tomcat`/`undertow`、`*EmbedCreator` 会被拒），
+- war 目标由 spec 声明的**引擎 init 脚本**启动（不再有内置引擎/别名）：jstart 先运行
+  `[engine] init = <脚本路径>`（准备容器环境、写出最终启动命令）再 exec 容器；组件目录
+  默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根。`init` 是脚本/可执行
+  **文件路径**（不是 java 类），jstart 不内置任何引擎目录，引擎与容器 jar 由 `[engine]`
+  其余行逐行写全（同 `[libs]` 语法）；见 [docs/war-engine.md](docs/war-engine.md)。
+- 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，
+  `[engine] init` 脚本负责在同一 JVM 里各建一个 context（通常调用 sas 的 `ServerCreator`），
   各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一份 pid
   （`stop` 一次停整组）；见 [docs/engine.md](docs/engine.md)。
 - native（tar.gz）目标：`g:a:tar.gz:<classifier>:v`、本地 `*.tar.gz` 或 `http(s)` url 时，
@@ -69,13 +66,13 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   全部归应用），可执行文件位置可用 launch spec `[app] exec=` 指定，缺省探测
   `<name>/bin/<exe>`，`resolve` 输出该可执行文件路径。native 侧**不对 `-SNAPSHOT` 特殊
   照顾**：不做快照元数据探测，`-SNAPSHOT` 只是字面版本名（本地命中 → 增量补丁 → 整包下载）。
-  `--base=<dir>` / `--instance=<name>` 可改 base（不会写到包旁；`/tmp` 的 noexec、tmpfs、
-  清理周期等影响见 [docs/commands.md](docs/commands.md)）。
+  `--base=<dir>`（或 spec 的 `[app] base`/`[app] instance`）可改 base（不会写到包旁；
+  `/tmp` 的 noexec、tmpfs、清理周期等影响见 [docs/commands.md](docs/commands.md)）。
 - 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 - 输出分级：默认只输出告警/错误与命令结果（`resolve` 的路径、`classpath` 的
   `Main-Class@classpath`、`fetch` 的本地路径等）；`--verbose`/`-v` 追加解析、下载、
-  写 pid、引擎入口 main 的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连
+  写 pid、init 脚本的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连
   告警也关闭。
 
 > **项目约束**：不做传递依赖解析。依赖清单是依赖的唯一来源，应用的全部运行期依赖须由构建期
@@ -93,11 +90,16 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 app=$(./target/jstart --quiet resolve /path/to/app.jar)
 
 # 声明式启动：launch spec（.jstart，本地路径或 http(s) url）
-# war 必须写进 [app] entry，再 run —— 解压后启动内嵌 tomcat（--port/--path 透传给引擎）
+# war 必须写进 [app] entry，并在 [engine] 里给 init 脚本（--port/--path 透传给引擎）
 cat > app.jstart <<'EOF'
 [app]
 entry = /path/to/app.war
-engine = tomcat-11.0.24        # 指定 tomcat 版本；engine = tomcat 则用内置默认版本
+
+[engine]
+init = /opt/engine/bin/tomcat-init
+org.beangle.sas:beangle-sas-engine:0.13.17
+org.apache.tomcat.embed:tomcat-embed-core:11.0.24
+org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 
 [args]
 --port=8080
@@ -112,8 +114,9 @@ meta=$(./target/jstart --quiet classpath "$app")
 ./target/jstart --quiet info "$app"
 
 # 后台运行 + 按 base 停止（一个 base 一个实例；多副本各给一个 base）
-./target/jstart run /path/to/app.tar.gz --instance=app-a --port=8081 &
-./target/jstart stop /path/to/app.tar.gz --instance=app-a
+# 固定目录名 app-a 要写成 spec： [app] entry=... / base=/srv/jstart / instance=app-a
+./target/jstart run /path/to/app-a.jstart --port=8081 &
+./target/jstart stop /path/to/app-a.jstart
 
 # 离线整合：把依赖从 --source 仓库复制到 --local 仓库
 ./target/jstart repo "$app" --local=/opt/offline-repo

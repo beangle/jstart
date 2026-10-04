@@ -14,7 +14,7 @@ import std.process : Pid, spawnProcess, thisProcessID, wait;
 
 import jstart.base : PidInfo, baseRootDir, componentKey, currentPid, defaultBase, pidFileName,
   pidFilePath, processAlive, processStartTime, readPidFile, removePidFile, resolveBase,
-  stopApplication, stopNotRunning, stopOk, writePidFile, writePidFileFor;
+  isSafeInstanceName, stopApplication, stopNotRunning, stopOk, writePidFile, writePidFileFor;
 
 private void rmTree(string path) {
   import std.file : dirEntries, SpanMode;
@@ -49,29 +49,31 @@ unittest {
   auto gav = componentKey("org.beangle:demo:tar.gz:linux-amd64:1.0");
   assert(!gav.canFind(":") && !gav.canFind("/"));
 
-  // 参数不参与身份：同一个 target 永远同一个 base（--instance 才换 base）
+  // 参数不参与身份：同一个 target 永远同一个 base
   assert(componentKey("/opt/app/app.war") == componentKey("/opt/app/app.war"));
-  auto named = componentKey("/opt/app/app.war", "portal-a");
-  assert(named.startsWith("portal-a-"));
-  assert(named != componentKey("/opt/app/app.war", "portal-b"));
-  assert(named != componentKey("/opt/other/app.war", "portal-a"));
+
+  // instance 是显式的安全路径段：只允许 [A-Za-z0-9._-]，拒绝 . / .. / 分隔符 / 空格
+  assert(isSafeInstanceName("portal-a"));
+  assert(isSafeInstanceName("platform.server1"));
+  assert(!isSafeInstanceName(""));
+  assert(!isSafeInstanceName("."));
+  assert(!isSafeInstanceName(".."));
+  assert(!isSafeInstanceName("a/b"));
+  assert(!isSafeInstanceName("a b"));
+  assert(!isSafeInstanceName("a:b"));
 
   // 默认 base：<默认根>/<组件键>，目录随之创建；pid 文件固定在 <base>/app.pid
   auto dflt = defaultBase("app.war");
   if (dflt.length) {
-    auto namedBase = defaultBase("app.war", "portal-a");
     auto otherBase = defaultBase("other.war");
     scope (exit) {
       rmTree(dflt);
-      rmTree(namedBase);
       rmTree(otherBase);
     }
     assert(dflt == buildPath(baseRootDir(), componentKey("app.war")), dflt);
     assert(dflt.canFind("app.war-"), dflt);
     assert(exists(dflt));
     assert(pidFilePath(dflt) == buildPath(dflt, pidFileName));
-    // --instance 换一个 base；不同组件 base 也不同
-    assert(namedBase != dflt);
     assert(otherBase != dflt);
     // 组件目录是私有的（0700，属主本人），根目录可以是共享的
     assert(isPrivateDir(dflt), dflt ~ " should be a 0700 directory");
@@ -87,9 +89,14 @@ unittest {
   assert(isPrivateDir(customBase), customBase ~ " should be a 0700 directory");
   // 根目录缺失时自动创建；同一个根下不同组件互不干扰
   assert(exists(customRoot));
+  // [app] instance：组件目录就是 <根>/<名字>，不再拼接目标指纹
   auto customNamed = resolveBase("app.war", customRoot, "portal-a");
-  assert(customNamed == buildPath(customRoot, componentKey("app.war", "portal-a")));
+  assert(customNamed == buildPath(customRoot, "portal-a"), customNamed);
   assert(customNamed != customBase);
+  assert(isPrivateDir(customNamed), customNamed ~ " should be a 0700 directory");
+  // 非法 instance 不落到根目录之外
+  assert(resolveBase("app.war", customRoot, "../escape") == "");
+  assert(resolveBase("app.war", customRoot, "a/b") == "");
   // 根目录不强制 0700（不同用户/组件可以共用），只有组件目录必须私有
   auto sharedRoot = buildPath(tmp, "shared");
   mkdirRecurse(sharedRoot);

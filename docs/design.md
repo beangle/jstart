@@ -23,7 +23,7 @@ jstart 用四个子命令覆盖同一职责：
 | `classpath` | `launcher.Classpath` | 输出 `Main-Class@classpath` |
 | `repo` | `launcher.Repo` | 离线仓库整合（复制缺失构件） |
 | `run` | `resolve.sh` + `launch.sh` | 准备环境后 exec 成 java |
-| war 引擎 run | `sas.sh` | 运行引擎入口 main（准备容器环境、写 argv），再 exec 容器；docBase 归引擎（[engine.md](engine.md)） |
+| war 引擎 run | `sas.sh` | 运行引擎 init 脚本（准备容器环境、写 argv），再 exec 容器；docBase 归引擎（[engine.md](engine.md)） |
 
 保留 `resolve`/`classpath` 是为了兼容 launch.sh 式的脚本解耦；`run` 则把两步合并进
 单个进程。
@@ -51,13 +51,14 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 <根>/<组件键>/app.pid          run 在 exec 前写、stop 读（实例是否在跑就靠它）
 <根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
 <根>/<组件键>/webapps/<ctx>/   引擎解压出的 docBase（引擎的 --base 就是组件目录）
-<根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给入口 main
-<根>/<组件键>/engine-entry.argv 引擎入口 main 写出的最终启动命令（NUL 分隔 argv）
+<根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给 init 脚本
+<根>/<组件键>/engine-deps.classpath 引擎依赖 classpath，经 --engine-classpath-file 交给 init 脚本
+<根>/<组件键>/engine-entry.argv init 脚本写出的最终启动命令（NUL 分隔 argv）
 ```
 
 - **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复 `run` 会被
   拒绝（exit 1，`--force` 可覆盖）；要跑多个副本就给每个副本一个 base
-  （`--base=<dir>`、`--instance=<name>` 或 spec `[app] base`）；
+  （`--base=<dir>` 换根，或 spec 的 `[app] base`/`[app] instance`）；
 - `stop` 只需要组件与 base，因此**不需要重复 run 时的参数**，也不需要取包或解析依赖；
 - 解压等可变产物按 base 各存一份（多副本 = 多份解压），换来的是身份简单、run/stop
   一致：base 对上就是同一个实例；
@@ -76,8 +77,8 @@ source/jstart/bspatch.d         BSDIFF40 内置实现；宿主 bspatch 优先，
 source/jstart/gzip.d            增量重建 tar.gz 用的 gunzip/gzip（gzip -n -6，走宿主命令）
 source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的解压）、Manifest Main-Class 解析
 source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifest（纯函数，可单测）
-source/jstart/engine.d           war 引擎：入口 main 选择与协议常量、内置默认依赖目录
-                                 （tomcat/undertow/Dist）、[engine] 行占位符展开、entry-out argv 解析
+source/jstart/engine.d           war 引擎：init 脚本协议常量（argv/classpath/plan 文件名）、
+                                 entry-out argv 解析、引擎依赖合并（不内置依赖目录）
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
                                  （[app]/[runtime]/[args]/[libs]/[engine]/[subapp <id>]）
 source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
@@ -122,11 +123,9 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
    命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class，
    且只能从 launch spec 的 `[app] entry` 进入（裸 war 目标由 `run` 直接拒绝；
    `resolve`/`fetch`/`repo` 不受限）：
-   解析（可选）`[app] engine`（入口 main：含 `.` 的值当 FQCN，否则内置别名
-   `tomcat`/`undertow`，tomcat 可带版本后缀如 `tomcat-11.0.24`）与 `[engine]` 段
-   （行内 `{tomcat.version}`/`{sas.version}` 占位符先展开；段存在即为权威，否则回退
-   内置默认目录）后，运行引擎入口 main 准备环境，再 exec 它写出的最终命令，见
-   [engine.md](engine.md)/[war-engine.md](war-engine.md)。
+   解析**必填**的 `[engine] init`（入口脚本路径，不是 java 类）与 `[engine]` 其余行
+   （引擎 + 容器 jar 清单，原样解析、无占位符；jstart 不内置依赖目录）后，运行 init
+   脚本准备环境，再 exec 它写出的最终命令，见 [engine.md](engine.md)/[war-engine.md](war-engine.md)。
 
 ## 仓库与校验策略
 
@@ -171,14 +170,14 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 - **不解析传递依赖**：依赖描述文件是唯一来源，只逐行处理显式依赖（见流程第 3 步），
   不读 POM、不展开传递依赖；全部运行期依赖须由构建期插件写全，漏写以 Missing 失败。
 - `run` jar 目标支持带 `Main-Class` 的瘦 jar；war 目标须由 launch spec 声明
-  （`[app] entry`）后走内置引擎（对应 beangle sas `sas.sh`）：jstart 运行引擎入口 main
-  准备环境、再 exec 容器，docBase 布局与解压都归引擎；tomcat/undertow 都有内置默认依赖
-  目录、可被 launch spec `[engine]` 段显式罗列覆盖。entry 是已解压 webapp 目录时，
-  声明 `[app] engine` 也走引擎（直接用该目录，不解压）；可执行 war（自带 Main-Class）
-  不支持。
+  （`[app] entry`）并**显式声明引擎**（`[engine] init`）后走引擎流程：
+  jstart 运行 init 脚本准备环境、再 exec 容器，docBase 布局与解压都归引擎；jstart
+  不内置 tomcat/undertow 依赖目录（引擎中立），引擎 + 容器 jar 由 `[engine]` 段写全。
+  entry 是已解压 webapp 目录时同样声明 `[engine] init` 走引擎（直接用该目录，不解压）；
+  可执行 war（自带 Main-Class）不支持。
 - 并发粒度："跨依赖"由 `--jobs` 控制，单文件 Range 分段由远端支持与文件大小自动
   决定（≥1MB 最多 4 段）；`fetch` 支持 bsdiff 增量补丁（native tar.gz 解压后比对、
   jar/war 直接比对，见 [commands.md](commands.md)），但**不做跨次运行的断点续传**。
 - 以 Java 工件为主，同时支持 native 发行包：`run` 的终点是 java（jar 走 `Main-Class`，
-  war 走内置引擎）或解压出的 native 可执行文件（tar.gz）；两者共用同一个 exec 入口，
+  war 走 spec 声明的引擎）或解压出的 native 可执行文件（tar.gz）；两者共用同一个 exec 入口，
   launch spec 用通用运行时命名，其他运行时（python3/node 等）仍可继续扩展但尚未实现。

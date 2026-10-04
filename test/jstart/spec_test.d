@@ -10,7 +10,8 @@ module test.jstart.spec_test;
 import std.array : join;
 import std.string : indexOf, startsWith;
 
-import jstart.spec : LaunchSpec, flattenLibs, isSpecFile, parseLaunchSpec, validateLaunchSpec;
+import jstart.spec : LaunchSpec, LaunchType, flattenLibs, isSpecFile, launchType,
+  launchTypeName, parseLaunchSpec, validateLaunchSpec;
 
 unittest {
   // spec 识别：唯一形式是 .jstart 后缀（本地路径或 http(s) url，url 忽略查询串）。
@@ -194,11 +195,12 @@ unittest {
 }
 
 unittest {
-  // [app] engine 短键 + [engine] 段：war 引擎选择与引擎依赖罗列（每行同 [libs] 语法）。
+  // [engine] 段：init 是脚本路径（入口），其余行是引擎依赖（每行同 [libs] 语法）。
+  // init 行不进入 engineDeps。
   enum text = "[app]\n" ~
     "entry = app.war\n" ~
-    "engine = tomcat\n" ~
     "[engine]\n" ~
+    "init = /opt/engine/bin/tomcat-init\n" ~
     "org.beangle.sas:beangle-sas-engine:0.13.10\n" ~
     "org.apache.tomcat.embed:tomcat-embed-core:11.0.21\n" ~
     "[args]\n" ~
@@ -206,8 +208,8 @@ unittest {
   string[] warnings;
   auto spec = parseLaunchSpec(text, warnings);
   assert(warnings.length == 0, warnings.join(","));
-  assert(spec.engine == "tomcat");
-  assert(spec.hasEngineDeps);
+  assert(spec.engineInit == "/opt/engine/bin/tomcat-init");
+  assert(spec.hasEngine);
   assert(spec.engineDeps.length == 2, spec.engineDeps.join(","));
   assert(spec.engineDeps[0] == "org.beangle.sas:beangle-sas-engine:0.13.10");
   assert(spec.engineDeps[1] == "org.apache.tomcat.embed:tomcat-embed-core:11.0.21");
@@ -215,52 +217,72 @@ unittest {
 }
 
 unittest {
-  // 空 [engine] 段：显式声明"引擎无额外依赖/以罗列为准"，hasEngineDeps 为 true。
+  // [engine] 只有 init、没有依赖：合法（脚本自带 classpath 时如此），engineDeps 为空。
   string[] warnings;
-  auto spec = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n[engine]\n", warnings);
-  assert(spec.engine == "tomcat");
-  assert(spec.hasEngineDeps);
+  auto spec = parseLaunchSpec("[app]\nentry = app.war\n[engine]\ninit = /opt/init\n", warnings);
+  assert(spec.engineInit == "/opt/init");
+  assert(spec.hasEngine);
   assert(spec.engineDeps.length == 0);
   assert(warnings.length == 0);
 
-  // 没有 [engine] 段：hasEngineDeps 为 false（回退内置默认目录）。
-  auto spec2 = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n", warnings);
-  assert(spec2.engine == "tomcat");
-  assert(!spec2.hasEngineDeps);
+  // 没有 [engine] 段：hasEngine 为 false（war 会在 run 时报错要求补声明）。
+  auto spec2 = parseLaunchSpec("[app]\nentry = app.war\n", warnings);
+  assert(spec2.engineInit.length == 0);
+  assert(!spec2.hasEngine);
   assert(spec2.engineDeps.length == 0);
+
+  // [engine] 段存在但没有 init：validateLaunchSpec 报错（init 必填）。
+  auto noInit = parseLaunchSpec("[app]\nentry = app.war\n[engine]\n"
+      ~ "org.beangle.sas:beangle-sas-engine:0.13.10\n", warnings);
+  assert(noInit.hasEngine);
+  assert(validateLaunchSpec(noInit).length > 0);
+
+  // init 空值告警，且视为未声明。
+  warnings = null;
+  auto blank = parseLaunchSpec("[app]\nentry = app.war\n[engine]\ninit = \n", warnings);
+  assert(blank.engineInit.length == 0);
+  assert(warnings.length == 1 && warnings[0].indexOf("[engine] init") >= 0, warnings.join(","));
 }
 
 unittest {
-  // jar 目标可以不声明 engine：[app] engine 缺省为空，由 run 层按目标类型决定。
+  // jar 目标可以不声明 engine：engineInit 缺省为空，由 run 层按目标类型决定。
   enum text = "[app]\nentry = app.jar\nmain = org.example.Main\n";
   string[] warnings;
   auto spec = parseLaunchSpec(text, warnings);
-  assert(spec.engine.length == 0);
-  assert(!spec.hasEngineDeps);
+  assert(spec.engineInit.length == 0);
+  assert(!spec.hasEngine);
   assert(warnings.length == 0);
 }
 
 unittest {
-  // [app] main 与 [app] engine / [engine] 互斥，由 validateLaunchSpec 报错
+  // [app] main 与 [engine] 段互斥（jar 跑主类、engine 跑 init 脚本），由 validateLaunchSpec 报错。
   string[] warnings;
   auto withEngine = parseLaunchSpec(
-      "[app]\nentry = app.war\nmain = org.example.Main\nengine = tomcat\n", warnings);
+      "[app]\nentry = app.war\nmain = org.example.Main\n[engine]\ninit = /opt/init\n", warnings);
   assert(validateLaunchSpec(withEngine).length > 0);
-
-  auto withEngineDeps = parseLaunchSpec(
-      "[app]\nentry = app.war\nmain = org.example.Main\n[engine]\n", warnings);
-  assert(validateLaunchSpec(withEngineDeps).length > 0);
 
   auto mainOnly = parseLaunchSpec("[app]\nentry = app.jar\nmain = org.example.Main\n", warnings);
   assert(validateLaunchSpec(mainOnly).length == 0);
 
-  auto engineOnly = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n", warnings);
+  auto engineOnly = parseLaunchSpec("[app]\nentry = app.war\n[engine]\ninit = /opt/init\n",
+      warnings);
   assert(validateLaunchSpec(engineOnly).length == 0);
 }
 
 unittest {
+  // [app] engine 已移除：告警并忽略，不再是合法的引擎声明方式（迁移提示指向 [engine] init）。
+  string[] warnings;
+  auto spec = parseLaunchSpec("[app]\nentry = app.war\nengine = tomcat\n", warnings);
+  assert(spec.engineInit.length == 0 && !spec.hasEngine);
+  assert(warnings.length == 1, warnings.join(","));
+  assert(warnings[0].indexOf("[app] engine") >= 0 && warnings[0].indexOf("[engine] init") >= 0,
+      warnings[0]);
+}
+
+unittest {
   // 多应用：[subapp <id>] 段逐个声明 entry/path；重复的 id 由段头 id 决定。
-  enum text = "[app]\nbase = /var/tmp/jstart/demo\n" ~
+  enum text = "[app]\nbase = /var/tmp/jstart/demo\n"
+    ~ "[engine]\ninit = /opt/engine/dist-init\norg.beangle.sas:beangle-sas-engine:0.13.17\n" ~
     "[subapp portal]\n" ~
     "entry = portal.war\n" ~
     "path = /portal\n" ~
@@ -272,6 +294,7 @@ unittest {
   auto spec = parseLaunchSpec(text, warnings);
   assert(warnings.length == 0, warnings.join(","));
   assert(spec.subapps.length == 2);
+  assert(spec.engineInit == "/opt/engine/dist-init");
   assert(spec.subapps[0].id == "portal");
   assert(spec.subapps[0].entry == "portal.war");
   assert(spec.subapps[0].path == "/portal");
@@ -319,28 +342,37 @@ unittest {
   auto noEntry = parseLaunchSpec("[subapp a]\npath = /a\n", warnings);
   assert(validateLaunchSpec(noEntry).length > 0);
 
-  auto ok = parseLaunchSpec("[subapp a]\nentry = a.war\npath = /a\n", warnings);
+  auto ok = parseLaunchSpec(
+      "[engine]\ninit = /opt/dist-init\n"
+      ~ "[subapp a]\nentry = a.war\npath = /a\n", warnings);
   assert(validateLaunchSpec(ok).length == 0);
 }
 
 unittest {
   // 归一化后重复的 context path（/a、/a/、a）视为冲突；id 也不能重复。
+  // 引擎声明合法，使失败原因只可能是 path/id 冲突。
+  enum head = "[engine]\ninit = /opt/dist-init\n";
+  enum tail = "";
   string[] warnings;
   auto dupPath = parseLaunchSpec(
-      "[subapp a]\nentry = a.war\npath = /a\n[subapp b]\nentry = b.war\npath = /a/\n",
+      head ~ "[subapp a]\nentry = a.war\npath = /a\n"
+      ~ "[subapp b]\nentry = b.war\npath = /a/\n" ~ tail,
       warnings);
   assert(validateLaunchSpec(dupPath).length > 0);
 
   auto dupRoot = parseLaunchSpec(
-      "[subapp a]\nentry = a.war\npath = /\n[subapp b]\nentry = b.war\npath = /\n", warnings);
+      head ~ "[subapp a]\nentry = a.war\npath = /\n"
+      ~ "[subapp b]\nentry = b.war\npath = /\n" ~ tail, warnings);
   assert(validateLaunchSpec(dupRoot).length > 0);
 
   auto dupId = parseLaunchSpec(
-      "[subapp a]\nentry = a.war\npath = /a\n[subapp a]\nentry = b.war\npath = /b\n",
+      head ~ "[subapp a]\nentry = a.war\npath = /a\n"
+      ~ "[subapp a]\nentry = b.war\npath = /b\n" ~ tail,
       warnings);
   assert(validateLaunchSpec(dupId).length > 0);
 
-  auto badId = parseLaunchSpec("[subapp a b]\nentry = a.war\npath = /a\n", warnings);
+  auto badId = parseLaunchSpec(
+      head ~ "[subapp a b]\nentry = a.war\npath = /a\n" ~ tail, warnings);
   assert(validateLaunchSpec(badId).length > 0);
 }
 
@@ -361,25 +393,87 @@ unittest {
 }
 
 unittest {
-  // 多应用必须走 Dist 模式：内置别名与 *EmbedCreator 都被拒绝，ServerCreator FQCN 放行。
+  // 多应用必须显式声明 [engine] init 脚本（没有缺省引擎）。
   string[] warnings;
-  auto aliasEngine = parseLaunchSpec(
-      "[app]\nengine = tomcat\n[subapp a]\nentry = a.war\npath = /a\n", warnings);
-  assert(validateLaunchSpec(aliasEngine).length > 0);
-
-  auto embed = parseLaunchSpec(
-      "[app]\nengine = org.beangle.sas.engine.tomcat.EmbedCreator\n"
-      ~ "[subapp a]\nentry = a.war\npath = /a\n", warnings);
-  assert(validateLaunchSpec(embed).length > 0);
-
   auto dist = parseLaunchSpec(
-      "[app]\nengine = org.beangle.sas.engine.tomcat.ServerCreator\n"
+      "[engine]\ninit = /opt/dist-init\n"
       ~ "[subapp a]\nentry = a.war\npath = /a\n", warnings);
   assert(validateLaunchSpec(dist).length == 0, validateLaunchSpec(dist));
 
-  // engine 缺省（空）留给 run 层选 ServerCreator；[engine] 依赖段与 [subapp] 段兼容。
-  auto defaulted = parseLaunchSpec(
-      "[subapp a]\nentry = a.war\npath = /a\n[engine]\n"
-      ~ "org.beangle.sas:beangle-sas-engine:0.13.17\n", warnings);
-  assert(validateLaunchSpec(defaulted).length == 0, validateLaunchSpec(defaulted));
+  // 缺 [engine] 段被拒绝。
+  auto noEngine = parseLaunchSpec(
+      "[subapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(noEngine).length > 0);
+  assert(validateLaunchSpec(noEngine).indexOf("[engine]") >= 0);
+
+  // 有 [engine] 段但没有 init 也被拒绝（只看 init，不看依赖行）。
+  auto noInit = parseLaunchSpec(
+      "[engine]\norg.beangle.sas:beangle-sas-engine:0.13.17\n"
+      ~ "[subapp a]\nentry = a.war\npath = /a\n", warnings);
+  assert(validateLaunchSpec(noInit).length > 0);
+  assert(validateLaunchSpec(noInit).indexOf("init") >= 0);
+}
+
+unittest {
+  // 启动模型 LaunchType：只看是否声明了引擎（[engine] 段 / [subapp]），不是 spec 键，
+  // 也不从 entry 的 `.war` 后缀反推。
+  string[] warnings;
+
+  // 普通应用：jar/native，未声明引擎 → app。
+  auto jar = parseLaunchSpec("[app]\nentry = app.jar\n[libs]\norg.slf4j:slf4j-api:2.0.17\n",
+      warnings);
+  assert(launchType(jar) == LaunchType.app);
+  assert(jar.type() == LaunchType.app);
+  assert(launchTypeName(LaunchType.app) == "app");
+
+  auto nativeTarget = parseLaunchSpec("[app]\nentry = app.tar.gz\n", warnings);
+  assert(nativeTarget.type() == LaunchType.app);
+
+  // war 不再自动是 engine：没声明引擎就是 app（run 会提示必须声明引擎）。
+  auto war = parseLaunchSpec("[app]\nentry = app.war\n", warnings);
+  assert(launchType(war) == LaunchType.app);
+
+  // 声明 [engine] 段（含 init 脚本）即为 engine。
+  auto engineSec = parseLaunchSpec(
+      "[app]\nentry = app.war\n[engine]\ninit = /opt/init\n", warnings);
+  assert(launchType(engineSec) == LaunchType.engine);
+  assert(engineSec.type() == LaunchType.engine);
+  assert(launchTypeName(LaunchType.engine) == "engine");
+
+  // 只有依赖、没有 init 也算 engine（parse 层），但 validate 会报错——类型先于校验。
+  auto engineDepsOnly = parseLaunchSpec(
+      "[app]\nentry = app.war\n[engine]\norg.beangle.sas:beangle-sas-engine:0.13.17\n",
+      warnings);
+  assert(launchType(engineDepsOnly) == LaunchType.engine);
+
+  // [subapp] 多 webapp 本质就是引擎目标。
+  auto multi = parseLaunchSpec(
+      "[subapp a]\nentry = a.war\npath = /a\n[subapp b]\nentry = b.war\npath = /b\n",
+      warnings);
+  assert(launchType(multi) == LaunchType.engine);
+  assert(multi.type() == LaunchType.engine);
+}
+
+unittest {
+  // [app] instance：可选的显式组件目录名（<base 根>/<instance>），限安全路径段。
+  string[] warnings;
+  auto spec = parseLaunchSpec(
+      "[app]\nentry = app.war\nbase = /srv/sas\ninstance = platform.server1\n", warnings);
+  assert(spec.base == "/srv/sas");
+  assert(spec.instance == "platform.server1");
+  assert(validateLaunchSpec(spec).length == 0);
+  assert(warnings.length == 0, warnings[0]);
+
+  // 合法字符集：字母数字与 . - _
+  auto ok = parseLaunchSpec("[app]\nentry = app.war\ninstance = a-b_c.1\n", warnings);
+  assert(validateLaunchSpec(ok).length == 0);
+
+  // 空值等于没写；. / .. / 分隔符 / 空格 / 冒号都非法
+  auto empty = parseLaunchSpec("[app]\nentry = app.war\ninstance =\n", warnings);
+  assert(empty.instance.length == 0);
+  assert(validateLaunchSpec(empty).length == 0);
+  foreach (bad; [".", "..", "a/b", "a b", "a:b", "a\\b"]) {
+    auto s = parseLaunchSpec("[app]\nentry = app.war\ninstance = " ~ bad ~ "\n", warnings);
+    assert(validateLaunchSpec(s).length > 0, bad);
+  }
 }

@@ -20,14 +20,13 @@ jstart [options] <command> <target> [args...]
 | `--remote=<urls>` | 远程仓库，逗号分隔，含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"快照库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
 | `--snapshot-remote=<urls>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖与 gav 目标）：开发版上游，逗号分隔。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地快照库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
 | `--offline` | 只用本地仓库：不探测远端（SNAPSHOT 也不做 `latest`/元数据探测）、不下载，缺件直接失败；与 `--remote`/`--snapshot-remote` 同时给出时以离线为准 |
-| `--base=<dir>` | run/stop：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与 pid 文件"） |
-| `--instance=<name>` | run/stop：命名组件目录（`<根>/<name>-<组件指纹>`），同一组件跑多副本时用（等价于换一个 `--base`） |
+| `--base=<dir>` | run/stop：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与 pid 文件"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
 | `--timeout=<sec>` | stop：SIGTERM 后等待进程退出的秒数，缺省 15 |
 | `--force` | run：base 上的实例仍在运行时也照常启动（覆盖旧 pid 文件）；stop：超时后改用 SIGKILL |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
 | `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
-| `--verbose` / `-v` | 输出过程细节：解析、下载、写 pid、将执行的启动命令与引擎入口 main 的 stdout（默认只输出告警/错误与命令结果） |
+| `--verbose` / `-v` | 输出过程细节：解析、下载、写 pid、将执行的启动命令与 init 脚本的 stdout（默认只输出告警/错误与命令结果） |
 | `--quiet` / `-q` | 在默认之上再关闭告警，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
@@ -77,13 +76,13 @@ jstart [options] run <target> [args...]
 
 流程：解析目标 → 准备依赖 → 写 pid 文件（见"组件 base 与 pid 文件"）→ 定主类 →
 `execvp` 把自身替换为运行时
-（jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎入口 main 再 exec 容器，见
+（jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎 init 脚本再 exec 容器，见
 [engine.md](engine.md)/[war-engine.md](war-engine.md)；native tar.gz 目标 exec 包内
 可执行文件，见下文“native（tar.gz）目标”）：
 
 ```text
 java <runtime-options> -cp <classpath> <Main-Class> [app-args...]        # jar
-java -cp <引擎 jar> <entryMain> --base=<base> --entry=<war|dir> ...      # war（阶段 1）
+<init 脚本> --base=<base> --entry=<war|dir> ... --entry-out=<file>       # war（阶段 1）
 java <runtime-options> -cp <classpath> <容器 main> --base=<base> ...     # war（阶段 2）
 <解压出的可执行文件> [args...]                                           # native tar.gz
 ```
@@ -99,9 +98,9 @@ jstart run app.jar --main=com.example.Tool --port=8080   # 其余参数照常透
 jstart --quiet --main=com.example.Tool classpath app.jar  # 脚本口径同步
 ```
 
-> war 的主类由引擎入口 main 决定（用 `[app] engine` 选入口 main），native 用 `[app] exec`；
+> war 的入口由 `[engine] init` 脚本决定，native 用 `[app] exec`；
 > 这两种目标上给 `--main`/`[app] main` 会告警忽略。主类不参与实例身份：同一个 target
-> 换主类仍是同一个 base（要并行跑请配 `--instance`/`--base`）。
+> 换主类仍是同一个 base（要并行跑请配 `--base`，或在 spec 里写 `[app] instance`）。
 
 target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
 [launch-spec.md](launch-spec.md)）时，主类（`[app] main`）、运行时/解释器可执行
@@ -119,18 +118,18 @@ target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
 
 war 目标必须在 **launch spec** 里用 `[app] entry` 声明（`run` 不接受裸 war：本地
 `app.war`、gav、url 落盘为 `.war` 都会报错并提示写 spec；`resolve`/`fetch`/`repo`
-不受此限制）。声明后进入内置引擎流程：jstart 先运行**引擎入口 main**准备环境（解压
+不受此限制）。声明后进入引擎流程：jstart 先运行**引擎 init 脚本**准备环境（解压
 war/发行包、生成容器配置、推导 docBase），再 exec 它写出的最终命令（进程变为容器）。
 `base` 是组件的运行目录 `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`，
-`--base=`/`--instance=`/`[app] base` 可换；`--path=` 由入口 main 消费（jstart 只透传）。
-引擎依赖有内置默认目录（tomcat 三件套 / undertow 二十二件套，等价 sas.sh 两个分支），
-需要固定或改版本时用 launch spec 的 `[engine]` 段显式罗列（权威，不依赖内置行）；
-引擎用 `[app] engine` 选：含 `.` 的值当入口 main 的 FQCN，否则内置别名
-`tomcat|undertow`（war 缺省 tomcat，映射 `org.beangle.sas.engine.<name>.EmbedCreator`），
-tomcat 别名可带版本后缀 `tomcat-11.0.24` 直接换内置 tomcat 版本，`[engine]` 行内支持
-`{tomcat.version}`/`{sas.version}` 占位符引用内置版本。
+`--base=` / `[app] base`（根）与 `[app] instance`（显式目录名）可换；
+`--path=` 由 init 脚本消费（jstart 只透传）。
+jstart **不内置引擎依赖目录**（保持引擎中立），`[engine]` 段必须由 spec 显式声明：
+`init = <脚本路径>` 指定引擎入口（**文件路径，不是 java 类**，`~`/`${VAR}` 会展开）；
+引擎 + 容器 jar 用其余行逐行罗列（语法同 `[libs]`，无占位符，版本直接写）。`[app]
+engine` 已移除（写了会被告警忽略）。没有引擎声明的 war 会报错提示补声明——见
+[war-engine.md](war-engine.md)。
 `--base` 是 jstart 的 base 选项（`[args]` 里的 `--base=` 会被丢弃），其余参数
-（`--port=`/`--path=` 等）原样透传给入口 main——协议见 [engine.md](engine.md)、
+（`--port=`/`--path=` 等）原样透传给 init 脚本——协议见 [engine.md](engine.md)、
 用法见 [war-engine.md](war-engine.md)。
 
 最小的 war spec：
@@ -138,7 +137,12 @@ tomcat 别名可带版本后缀 `tomcat-11.0.24` 直接换内置 tomcat 版本�
 ```ini
 [app]
 entry = gav://org.example:webapp:0.0.1:war   # 或本地 /path/app.war
-engine = tomcat                               # 可选，war 缺省 tomcat
+
+[engine]                                      # 必填：init 脚本 + 引擎/容器 jar
+init = /opt/engine/bin/tomcat-init            # 入口脚本（文件路径，不是 java 类）
+org.beangle.sas:beangle-sas-engine:0.13.17
+org.apache.tomcat.embed:tomcat-embed-core:11.0.21
+org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
 [args]
 --port=8080
@@ -226,7 +230,8 @@ jstart [options] info <target>
 target: /path/to/app.jar
 entry: /path/to/app.jar
 app: /path/to/app.jar
-type: jar
+type: app
+entry type: jar
 main: org.beangle.app.Main
 main source: manifest
 local: /home/user/.m2/repository
@@ -240,11 +245,17 @@ dep 2: http https://repo.example.com/lib.jar -> /home/user/.m2/repository/repo.e
 ```
 
 - `kind`：`gav`（maven 构件，命中本地快照库时 `path` 为时间戳文件）/ `local` / `http`；
-- `type`：`jar`/`war`/`dir`（解压目录）/`native`（tar.gz 发行包）/`file`（其它本地文件）；
-  `native` 时额外给出 `archive`（本地包路径）与 `root`（解压根目录），`app` 为可执行文件路径；
-- 多应用 spec 时 `type: multi-webapp`，先给仓库/上游信息（`local`/`snapshots`/`remotes`/
-  `snapshot-remotes`），再逐 webapp 输出 `webapp <id>: app=<路径> path=<上下文路径>
-  deps=<n>` 及其 `dep` 明细；
+- `type`：**启动模型**，由解析结果推导而非 spec 键——`app`（直接 exec 运行时：java 跑
+  jar/目录、或 native 可执行文件）或 `engine`（先跑引擎 init 脚本准备容器，再 exec 它写
+  出的命令）。**只看是否声明了引擎**：写了 `[engine]` 段（或有 `[subapp <id>]`）就是
+  `engine`，否则是 `app`；engine 目标会额外给一行 `engine init: <脚本路径>`；见
+  [launch-spec.md](launch-spec.md)（"启动模型"）。
+- `entry type`：entry 的**构件形态**——`jar`/`war`/`dir`（解压目录）/`native`（tar.gz
+  发行包）/`file`（其它本地文件）；`native` 时额外给出 `archive`（本地包路径）与 `root`
+  （解压根目录），`app` 为可执行文件路径；
+- 多应用 spec 时 `type: engine`（并给 `webapps: <n>`），先给仓库/上游信息
+  （`local`/`snapshots`/`remotes`/`snapshot-remotes`），再逐 webapp 输出
+  `webapp <id>: app=<路径> path=<上下文路径> deps=<n>` 及其 `dep` 明细；
 - `main source`：主类来自哪里 —— `cli`（`--main=`）/`spec`（`[app] main`）/`manifest`
   （jar 内 `Main-Class`）/`none`；排查"为什么跑了另一个类"时看这一行；
 - launch spec target 时 `entry`/`main` 取自 spec，其余字段一致；
@@ -428,7 +439,7 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
   > 解压目录不随进程退出删除（exec 后进程即应用，运行期还要用 lib/ 等），需要回收请自行清理；
   > 目录内的 `.jstart.stamp` 标记留在原地，删掉解压目录后会按需重解。即使整个
   > `/var/tmp/jstart` 被清理，下次运行也会重新解压，无需干预。
-- **base ≠ 参数**：base 只认组件（target）与 `--base`/`--instance`/`[app] base`，**不认应用
+- **base ≠ 参数**：base 只认组件（target）与 `--base`/`[app] base`/`[app] instance`，**不认应用
   参数**；一个 base 只跑一个实例，多副本用多 base。见下节"组件 base 与 pid 文件（run/stop）"；
 - **不覆盖用户目录**：目标目录存在但**没有** jstart 的 `.jstart.stamp` 标记（不是我们解压
   出来的，例如用户手工解压的目录）时拒绝覆盖并报错，数据保持原样；请先自行清理，或直接用
@@ -441,8 +452,8 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
   （`-D`/`-X` 也归应用，不做 JVM 参数拆分）；`[runtime]` 段与 `[app] runtime` 对 native 无意义，
   给出时告警忽略；
 - **子命令**：`resolve` 输出可执行文件绝对路径（供脚本 exec）；`run` 解析后 exec 它（进程即
-  应用，无父子等待）；`info` 输出 `type: native` 与 `archive`/`root`；`classpath` 对 native
-  无意义（exit 2，提示改用 `resolve`）；
+  应用，无父子等待）；`info` 输出 `type: app`、`entry type: native` 与 `archive`/`root`；
+  `classpath` 对 native 无意义（exit 2，提示改用 `resolve`）；
 - **依赖**：native 包内没有依赖清单，需要额外依赖时用 spec `[libs]` 段显式罗列（此时即全部依赖）。
 
 ## 组件 base 与 pid 文件（run/stop）—— 一个 base 一个实例
@@ -451,48 +462,59 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
 （exec 之后本进程就是应用，pid 不变，所以文件里就是应用的 pid），`stop` 读同一个文件停应用。
 
 base 一词有两层，记住这两行就够：**base 根（root）**默认 `/var/tmp/jstart`，`--base=<dir>`
-整体替换它（不是拼在默认根下）；**组件目录（base）**= `<根>/<组件键>`，jstart 自动创建并
-按用户隔离。
+整体替换它（不是拼在默认根下）；**组件目录（base）**= `<根>/<组件键>`（spec 写了
+`[app] instance = <name>` 时就是 `<根>/<name>`，不再拼指纹），jstart 自动创建并按用户隔离。
 
 **实例身份 = 组件（target）+ base，与应用参数无关**：
 
 | 位置 | 粒度 | 说明 |
 |------|------|------|
 | `<base 根>` | 可共用 | 缺省 `/var/tmp/jstart`（01777 sticky，同 `/tmp`，多个用户/组件可共存），`--base=<dir>` 整体替换它 |
-| `<root>/<组件键>` | 一个组件一份 | 组件目录，jstart 创建为 0700 并校验属主（同一 target 永远同一个目录） |
+| `<root>/<组件键>` | 一个组件一份 | 组件目录，jstart 创建为 0700 并校验属主（同一 target 永远同一个目录；`[app] instance` 时目录名就是 `<name>`） |
 | `<base>/app.pid` | 一个 base 一份 | `run` 写、`stop` 读；检测到真实进程仍在运行即拒绝重复启动 |
 | `<base>/app/` | 一个 base 一份 | native（tar.gz）的解压树（`.jstart.stamp` 在内），标记匹配时复用 |
 | `<base>/webapps/<ctx>/` | 一个 base 一份 | 引擎解压出的 docBase（引擎拿到的 `--base` 就是组件目录） |
-| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给入口 main |
-| `<base>/engine-entry.argv` | 一个 base 一份 | 引擎入口 main 写出的最终启动命令（NUL 分隔 argv） |
+| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 脚本 |
+| `<base>/engine-deps.classpath` | 一个 base 一份 | 引擎依赖 classpath，经 `--engine-classpath-file` 交给 init 脚本 |
+| `<base>/engine-entry.argv` | 一个 base 一份 | init 脚本写出的最终启动命令（NUL 分隔 argv） |
 
 - **组件键**：target 短名 + 短指纹（本地路径先绝对化；不含任何应用参数），因此同一个 target
-  无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；
+  无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；spec 写了 `[app] instance` 时
+  跳过这层推导，目录名就是那个名字（合法字符 `[A-Za-z0-9._-]`，且不能是 `.`/`..`），
+  同一根下的重名由使用者自己保证；
 - **组件目录始终 0700、属主本人**：根可以是共享目录（默认根由 jstart 建成 01777 sticky），
   但单个实例的运行状态只对本用户可读写；目录被他人占用或换成符号链接时直接报错，不做兜底；
 - **一个 base 只能跑一个实例**：同一个 target 再 `run`（哪怕参数完全不同）会报
   `Already running`（exit 1）；`--force` 可覆盖；
-- **要跑多个副本就给每个副本一个 base**：`--base=<dir>` 指定路径，或 `--instance=<name>`
-  用命名组件目录（`<根>/<name>-<组件指纹>`），也可在 launch spec 里写
-  `[app] base = <dir>`。副本之间各自解压，互不干扰；
-- **`stop` 不需要应用参数**：`jstart stop <target>`（或 `--base=`/`--instance=` 指定同一个 base）
-  即可；多给的参数会被忽略并提示。base 对不上时报 `nothing to stop`（exit 3）。
+- **要跑多个副本就给每个副本一个 base**：`--base=<dir>` 换根，或在 launch spec 里写
+  `[app] base = <根>` + `[app] instance = <名字>` 固定组件目录名。副本之间各自解压，互不干扰；
+- **`stop` 不需要应用参数**：`jstart stop <target>`（target 是 spec 时它会读出同一个
+  `[app] base`/`[app] instance`；也可用 `--base=` 指定同一个根）即可；多给的参数会被忽略并提示。
+  base 对不上时报 `nothing to stop`（exit 3）。**spec 是 `[app] instance` 的唯一来源**：spec
+  读不到时只能按 target 推导组件目录，带 instance 的实例会停不掉（会给出提示）；
 
 ```bash
-# 同一份工件跑两个副本：--instance 命名组件目录（默认根下），参数只影响应用本身
-jstart run /opt/app/portal.tar.gz --instance=portal-a --port=8081 &
-jstart run /opt/app/portal.tar.gz --instance=portal-b --port=8082 &
+# 同一份工件跑两个副本：各写一份 spec，用 [app] instance 固定目录名
+cat > portal-a.jstart <<'EOF'
+[app]
+entry = /opt/app/portal.tar.gz
+base = /srv/jstart
+instance = portal-a
+EOF
+# portal-b.jstart 同理，只把 instance 改成 portal-b
+jstart run portal-a.jstart --port=8081 &
+jstart run portal-b.jstart --port=8082 &
 
 # 或整个换根：/srv/jstart/<组件键>、/srv/jstart2/<组件键>
 jstart run /opt/app/portal.tar.gz --base=/srv/jstart --port=8083 &
 jstart run /opt/app/portal.tar.gz --base=/srv/jstart2 --port=8084 &
 
-# 停止：只认组件 + base，参数无需重复（写错/多写都不影响）
-jstart stop /opt/app/portal.tar.gz --instance=portal-a
+# 停止：spec 里已写着 base/instance，只给 spec 即可；换根的则同给 --base
+jstart stop portal-a.jstart
 jstart stop /opt/app/portal.tar.gz --base=/srv/jstart2
 
 # 同一个 base 重复启动会被拒绝（参数不同也一样）
-jstart run /opt/app/portal.tar.gz --instance=portal-a --port=9999  # Already running
+jstart run portal-a.jstart --port=9999  # Already running
 ```
 
 `stop` 行为：
@@ -523,7 +545,7 @@ jstart run /opt/app/portal.tar.gz --instance=portal-a --port=9999  # Already run
 |------|------|
 | `/path/to/app.jar` | 瘦 jar，内含依赖描述（无描述时按自包含 jar 处理） |
 | `/path/to/app.war` | war：`resolve`/`repo` 直接接受，读取 `WEB-INF/classes/...` 依赖描述；`run` 不接受裸 war，须在 launch spec 里用 `[app] entry` 声明（见 [war-engine.md](war-engine.md)） |
-| `/path/dir` | 解压后的 webapp 目录：作为 `run` 目标时须在 spec 里声明 `[app] engine`（引擎直接当 docBase 用，不解压）；否则按普通 java 目标（需 `--main`/`[app] main`/Manifest）；`resolve`/`repo` 直接接受 |
+| `/path/dir` | 解压后的 webapp 目录：作为 `run` 目标时须在 spec 里声明 `[engine] init`（引擎直接当 docBase 用，不解压）；否则按普通 java 目标（需 `--main`/`[app] main`/Manifest）；`resolve`/`repo` 直接接受 |
 | `/path/app.tar.gz` | native 发行包（GraalVM）：解压到 `<base>/app`（base = `<根>/<组件键>`，根默认 `/var/tmp/jstart`，`--base` 可改）后 exec 包内可执行文件，参数附加在其后（见"native（tar.gz）目标"） |
 | `/path/deps.txt` | **不支持**：普通文本文件不再作为依赖清单 target，请把依赖写进 jar/war 内置描述或 launch spec 的 `[libs]` |
 | `/path/app.jstart` | launch spec：ini 式声明 main/entry/runtime/args/可选 [libs]/[engine]，`run` 的声明式目标（见 [launch-spec.md](launch-spec.md)） |

@@ -4,14 +4,16 @@
  *
  * An instance is identified by **component + base**, never by the pass-through
  * arguments: one component runs at most one instance per base. A second copy
- * needs its own base -- `--base=<dir>` (a different root), `--instance=<name>`
- * (a named component directory) or launch spec `[app] base`.
+ * needs its own base -- `--base=<dir>` / `[app] base` (a different root) or
+ * launch spec `[app] instance` (a named component directory below the root).
  *
  * A base is the **component directory below a base root**: the root defaults
  * to /var/tmp/jstart and `--base=<dir>` replaces it (it is not appended to
  * /var/tmp/jstart), so `--base=/srv/jstart` keeps app.war's state in
- * /srv/jstart/app.war-<指纹>/. The component key always ends with a short
- * digest of the target, so several components can share one root:
+ * /srv/jstart/app.war-<指纹>/. Without `[app] instance` the component key
+ * always ends with a short digest of the target, so several components can
+ * share one root; `[app] instance = <name>` names the directory verbatim
+ * instead (uniqueness under the root is then the user's responsibility):
  *
  *   <root>/<组件键>/app.pid          pid of the running instance (run/stop)
  *   <root>/<组件键>/app/             native tar.gz extraction (jstart.native)
@@ -150,7 +152,7 @@ private string privateDir(string dir) {
  * targets never collide. The pass-through arguments are deliberately **not**
  * part of the key -- run/stop must agree without knowing them.
  */
-string componentKey(string target, string name = "") {
+string componentKey(string target) {
   import std.digest : toHexString;
   import std.digest.sha : SHA1;
 
@@ -160,10 +162,10 @@ string componentKey(string target, string name = "") {
     text = absolutePath(text);
   }
   SHA1 sha;
-  sha.put(cast(const(ubyte)[]) (text ~ "\n" ~ name.strip));
+  sha.put(cast(const(ubyte)[]) text);
   auto hex = toHexString(sha.finish());
 
-  auto stem = name.strip.length ? name.strip : baseName(text);
+  auto stem = baseName(text);
   if (stem.length == 0) {
     stem = text;
   }
@@ -183,33 +185,67 @@ string componentKey(string target, string name = "") {
 }
 
 /**
+ * Whether `name` is a single safe path segment usable as an explicit
+ * `[app] instance`: non-empty, only [A-Za-z0-9._-], and neither `.` nor
+ * `..`. Anything else (separators, spaces, NUL, traversal) is rejected so
+ * that `run`, `stop` and any later tool resolve the same directory.
+ */
+bool isSafeInstanceName(string name) {
+  auto s = name.strip;
+  if (s.length == 0 || s == "." || s == "..") {
+    return false;
+  }
+  foreach (c; s) {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+        || c == '.' || c == '-' || c == '_') {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
  * The component directory below a base root: <root>/<组件键>, created 0700 and
  * verified to be owned by this user, so the instance state stays private even
  * when the root is shared (e.g. the default /var/tmp/jstart or a directory
  * several components use). "" when the root is empty or cannot be prepared.
  */
-string componentBase(string root, string target, string name = "") {
+string componentBase(string root, string target) {
   if (root.strip.length == 0) {
     return "";
   }
-  return privateDir(buildPath(root, componentKey(target, name)));
+  return privateDir(buildPath(root, componentKey(target)));
 }
 
 /**
  * Base of a component under the default root; "" when it cannot be prepared.
  */
-string defaultBase(string target, string name = "") {
-  return componentBase(baseRootDir(), target, name);
+string defaultBase(string target) {
+  return componentBase(baseRootDir(), target);
 }
 
 /**
  * Base directory of a run/stop. `explicit` (--base / [app] base) names the
- * **root** and thereby replaces the default /var/tmp/jstart; `name`
- * (--instance) names the component directory instead of the target's file
- * name. The result is always <root>/<组件键>. "" when it cannot be prepared.
+ * **root** and thereby replaces the default /var/tmp/jstart. An explicit
+ * `instance` ([app] instance) names the component directory verbatim
+ * (<root>/<instance>) instead of the target-derived <组件键>; it must be a
+ * safe path segment (see isSafeInstanceName). "" when the root or instance
+ * cannot be prepared.
  */
-string resolveBase(string target, string explicit = "", string name = "") {
-  return componentBase(baseRootDir(explicit), target, name);
+string resolveBase(string target, string explicit = "", string instance = "") {
+  auto root = baseRootDir(explicit);
+  if (root.length == 0) {
+    return "";
+  }
+  auto name = instance.strip;
+  if (name.length == 0) {
+    return componentBase(root, target);
+  }
+  if (!isSafeInstanceName(name)) {
+    return "";
+  }
+  return privateDir(buildPath(root, name));
 }
 
 /// Pid file of a base; "" when the base is unknown.

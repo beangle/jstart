@@ -22,18 +22,17 @@ import jstart.base : PidInfo, currentPid, nativeDirName, pidFilePath, processAli
   processStartTime, readPidFile, removePidFile, resolveBase, stopApplication, stopNotRunning,
   writePidFile;
 import jstart.distrepo : fetchDist;
-import jstart.engine : EngineSel, appendEngineDeps, defaultDistEngineDeps, defaultEngineDeps,
-  distTomcatEntryMain, entryArgvFile, entryClasspathFile, expandEngineDeps, parseEngineSel,
-  parseEntryArgv, subappsPlanFile;
+import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
+  entryClasspathFile, parseEntryArgv, subappsPlanFile;
 import jstart.http : runProcessCapture;
-import jstart.launcher : execCommand, javaFor, printCommand, printJavaCommand, runJarApp,
-  runNativeApp;
+import jstart.launcher : execCommand, printCommand, printJavaCommand, runJarApp, runNativeApp;
 import jstart.mainclass : MainClass, MainSource, isPlausibleMainClass, pickMainClass,
   sourceName;
 import jstart.native : extractTarGz, findExecutable, isNativeTarget, targetGav;
 import jstart.repo : LocalRepo, RemoteRepo, buildRemotes, buildSnapshotRemotes;
 import jstart.resolver : Resolver;
-import jstart.spec : LaunchSpec, flattenLibs, isSpecFile, parseLaunchSpec, validateLaunchSpec;
+import jstart.spec : LaunchSpec, LaunchType, flattenLibs, isSpecFile, launchType,
+  launchTypeName, parseLaunchSpec, validateLaunchSpec;
 
 /// Version of the jstart binary.
 enum jstartVersion = "0.0.1";
@@ -53,8 +52,6 @@ struct BootArgs {
   string from;
   /// --base: base 根目录（默认 /var/tmp/jstart；组件目录为 <base>/<组件键>）
   string base;
-  /// --instance: 命名组件目录（<根>/<name>-<组件指纹>），同一组件跑多副本时用
-  string instance;
   /// --main: 覆盖 java 主类（优先于 [app] main 与 MANIFEST.MF 的 Main-Class）
   string mainClass;
   /// --main 是否出现过（空值要报错，不能当成"没给"）
@@ -115,8 +112,6 @@ BootArgs parseArgs(string[] args) {
       r.from = a["--from=".length .. $];
     } else if (a.startsWith("--base=")) {
       r.base = a["--base=".length .. $];
-    } else if (a.startsWith("--instance=")) {
-      r.instance = a["--instance=".length .. $];
     } else if (a.startsWith("--main=")) {
       r.mainClass = a["--main=".length .. $].strip;
       r.hasMain = true;
@@ -155,9 +150,9 @@ void usage() {
   writeln("  jstart [options] run <target> [args...]");
   writeln("      Prepare dependencies then exec the runtime: the process");
   writeln("      becomes the runtime itself (java for jar targets; a war target");
-  writeln("      must be declared by a launch spec's [app] entry and runs the");
-  writeln("      built-in engine, see docs/war-engine.md; tar.gz targets are");
-  writeln("      extracted and their executable is run).");
+  writeln("      must be declared by a launch spec's [app] entry and declares its");
+  writeln("      engine entry script via [engine] init, see docs/war-engine.md;");
+  writeln("      tar.gz targets are extracted and their executable is run).");
   writeln("      Unrecognized args (like --port=8080) are passed to the");
   writeln("      application; -D/-X* args go to the runtime. <target> may");
   writeln("      also be a launch spec (.jstart) declaring main/entry/runtime/args");
@@ -210,7 +205,8 @@ void usage() {
   writeln("  exec 解压出的可执行文件，[args]/命令行参数按序附加在其后；resolve 输出该");
   writeln("  可执行文件路径，可执行文件位置用 launch spec [app] exec= 指定。");
   writeln("  base：组件的运行基目录（pid 文件、native 解压、引擎 docBase 与 argv 都在其中）。一个组件");
-  writeln("  的一个 base 只能跑一个实例——跑多个副本请给每个副本不同的 --base/--instance；");
+  writeln("  的一个 base 只能跑一个实例——跑多个副本请给每个副本不同的 --base，或在 spec 里用");
+  writeln("  [app] instance = <name> 显式命名组件目录（<base 根>/<name>）；");
   writeln("  参数不参与实例身份，因此 run/stop 不需要给同样的参数。");
   writeln("");
   writeln("options:");
@@ -234,10 +230,7 @@ void usage() {
   writeln("                   <base>/<组件键>/: app.pid, app/ (native");
   writeln("                   extraction) and webapps/ (war explosion). One");
   writeln("                   component + base runs one instance; copies");
-  writeln("                   need their own base");
-  writeln("  --instance=<name>  run/stop: name the component directory");
-  writeln("                   (<根>/<name>-<组件指纹>) instead of using the");
-  writeln("                   target's file name; needs no --base=<dir>");
+  writeln("                   need their own base or an [app] instance name");
   writeln("  --main=<class>   run/classpath/info: java main class, overriding");
   writeln("                   [app] main and the jar's Main-Class manifest");
   writeln("                   entry; only for jar/dir targets, ignored for");
@@ -336,8 +329,16 @@ int main(string[] args) {
   // stop：只按 base 里的 pid 文件停应用——不取包、不准备依赖、也不需要应用参数
   // （实例身份 = 组件 + base），因此包被清理或网络不可用时照样能停。
   if (opts.command == "stop") {
+    // spec 是实例身份（[app] instance）的唯一来源：读不到就只能回退到按 target
+    // 推导的组件目录。显式提示，避免带 instance 的实例被静默跳过。
+    if (isSpecFile(opts.target) && !specMode && !opts.quiet) {
+      stderr.writeln("Note: cannot read launch spec " ~ opts.target
+          ~ "; [app] instance (if any) is unknown, falling back to the"
+          ~ " target-derived component directory. Restore the spec to stop"
+          ~ " an instance named by [app] instance.");
+    }
     auto base = resolveBase(opts.target, baseOption(opts, specMode ? spec : LaunchSpec.init),
-        opts.instance);
+        specMode ? spec.instance : "");
     if (base.length == 0) {
       stderr.writeln("Cannot prepare the component base for " ~ opts.target
           ~ "; pass a writable --base=<dir>.");
@@ -348,7 +349,7 @@ int main(string[] args) {
     auto code = stopApplication(pidPath, opts.stopTimeout, opts.force, !opts.quiet);
     if (code == stopNotRunning && !existed && !opts.quiet) {
       stderr.writeln("Hint: an instance is identified by component + base; if it was "
-          ~ "started with --base=<dir> or --instance=<name>, pass the same one here.");
+          ~ "started with --base=<dir> / [app] instance, pass the same spec here.");
     }
     if (opts.rest.length && !opts.quiet) {
       stderr.writeln("Note: application arguments are ignored by stop "
@@ -358,7 +359,8 @@ int main(string[] args) {
   }
 
   // 多应用 spec（[subapp <id>]）：一个 dist 引擎在同一 JVM 里跑多个 webapp，各占一个
-  // context path。stop 已按 base 处理，这里处理 run/resolve/info/classpath。
+  // context path（该 spec 的 LaunchType 必为 engine，见 jstart.spec.launchType）。
+  // stop 已按 base 处理，这里处理 run/resolve/info/classpath。
   if (specMode && spec.subapps.length > 0) {
     return runMultiWebapp(opts, resolver, spec);
   }
@@ -375,7 +377,7 @@ int main(string[] args) {
   string base;
   if (opts.command == "run" || nativeMode) {
     base = resolveBase(opts.target, baseOption(opts, specMode ? spec : LaunchSpec.init),
-        opts.instance);
+        specMode ? spec.instance : "");
     if (base.length == 0) {
       stderr.writeln("Cannot prepare the component base for " ~ opts.target
           ~ "; pass a writable --base=<dir>.");
@@ -401,7 +403,7 @@ int main(string[] args) {
     }
     auto execHint = specMode ? spec.exec : "";
     auto artifactId = nativeArtifactId(target);
-    // 解压到 <base>/app：base 按组件（--base/--instance 可换），不用包旁目录兜底。
+    // 解压到 <base>/app：base 由 --base / [app] base+instance 决定，不用包旁目录兜底。
     auto extractDir = buildPath(base, nativeDirName);
     string[] candidates;
     auto extracted = extractTarGz(nativeArchive, showProgress(opts), false, extractDir);
@@ -427,11 +429,6 @@ int main(string[] args) {
     if (appPath.length == 0) {
       return 1;
     }
-  }
-  if (specMode && !nativeMode && !appPath.endsWith(".war") && !isDir(appPath)
-      && (spec.engine.length > 0 || spec.hasEngineDeps) && !opts.quiet) {
-    stderr.writeln("Warning: [app] engine / [engine] applies to war targets "
-        ~ "(a war file or an exploded webapp directory), ignored.");
   }
   // [libs] 叠加在 entry 内置依赖清单之上（追加/覆盖）：先 libs 后内置，同名 g:a 以
   // libs 为准（与 sas `libs` 的 merge 一致）。native 包内无清单时 libs 即全部依赖。
@@ -472,25 +469,34 @@ int main(string[] args) {
   }
 
   // command == "run"
-  // 引擎目标：war 文件，或"目录 + 显式 [app] engine/[engine] 声明"的已解压 webapp。
-  // 后者让 jstart 按 spec 启动一个解压好的 web 项目目录（引擎直接用它作 docBase）。
-  auto engineDeclared = specMode && (spec.engine.length > 0 || spec.hasEngineDeps);
-  if (appPath.endsWith(".war") || (engineDeclared && isDir(appPath))) {
-    // war 只能通过 launch spec 运行：引擎 / 参数 / base 都需要显式声明
-    // （见 docs/engine.md）。resolve/fetch/repo 对 war 的支持不受此限制。
-    if (appPath.endsWith(".war") && !specMode) {
-      stderr.writeln("war targets must run through a launch spec: write a .jstart file\n"
-          ~ "  [app]\n  entry = " ~ opts.target ~ "\n  engine = tomcat\n"
-          ~ "then run `jstart run app.jstart` (see docs/engine.md). "
-          ~ "resolve/fetch still accept a war directly.");
-      return 1;
-    }
+  // 引擎目标 = 解析结果类型 engine，即 spec 显式声明了引擎（[engine] 段，或多应用
+  // [subapp <id>]，见 jstart.spec.launchType）。jstart 不内置引擎、也不从 `.war`
+  // 后缀反推：war 想跑就必须显式声明引擎。
+  auto appType = specMode ? launchType(spec) : LaunchType.app;
+  if (appType == LaunchType.engine) {
     if (!opts.quiet && (opts.hasMain || (specMode && spec.main.length > 0))) {
-      warnIgnoredMain(opts, true, spec, "war");
-      stderr.writeln("Note: a war runs an engine entry main; "
-          ~ "pick it with [app] engine (see docs/engine.md).");
+      warnIgnoredMain(opts, true, spec, "engine");
+      stderr.writeln("Note: an engine target is started by its [engine] init script; "
+          ~ "the container main class is the script's business (see docs/engine.md).");
     }
     return runEngine(opts, resolver, appPath, deps, spec, base);
+  }
+  // 没有 engine 声明的 war：不是合法目标——jstart 无内置引擎，也不能把 war 当
+  // 普通 java 应用跑（没有 Main-Class）。
+  if (appPath.endsWith(".war")) {
+    if (!specMode) {
+      stderr.writeln("war targets must run through a launch spec: write a .jstart file\n"
+          ~ "  [app]\n  entry = " ~ opts.target ~ "\n\n"
+          ~ "  [engine]\n  init = /path/to/engine-init\n"
+          ~ "  org.beangle.sas:beangle-sas-engine:<ver>\n"
+          ~ "then run `jstart run app.jstart` (see docs/engine.md). "
+          ~ "resolve/fetch still accept a war directly.");
+    } else {
+      stderr.writeln("war target " ~ appPath
+          ~ " needs an [engine] section with `init = <script>` (the engine entry"
+          ~ " script): jstart ships no built-in engine (see docs/engine.md).");
+    }
+    return 1;
   }
   if (mainClass.empty) {
     stderr.writeln("Cannot find Main-Class in MANIFEST.MF of " ~ appPath);
@@ -531,60 +537,38 @@ int main(string[] args) {
 }
 
 /**
- * run 的引擎分支：先运行**引擎入口 main** 准备引擎环境（解压 war/发行包、写
- * 容器配置），再 exec 它写出的最终启动命令（进程仍变为 java，无父子等待）。
+ * run 的引擎分支：先运行 spec 的**引擎 init 脚本**准备引擎环境（解压 war/发行包、
+ * 写容器配置），再 exec 它写出的最终启动命令（进程变为容器，无父子等待）。
  *
  * 与旧实现（jstart 自行爆炸 war 后直接 exec Bootstrap）不同：docBase 布局与 war
  * 爆炸都收敛到引擎侧，jstart 不再镜像布局公式，也不再有"跨仓库契约"。协议见
  * docs/engine.md。
  *
- * - [app] engine：内置别名 tomcat|undertow（war 缺省 tomcat，可带 tomcat 版本
- *   后缀），或含 "." 的入口 main FQCN；
- * - [engine] 段：引擎 jar 清单（同 [libs] 语法，行内可用
- *   {tomcat.version}/{sas.version} 占位符）；段存在即为准。缺省用内置目录
- *   （tomcat 支持 engine = tomcat-<版本> 重钉两个 tomcat-embed jar）；FQCN 入口
- *   main 没有内置目录，必须显式声明 [engine]；
- * - 入口 main 以 `java -cp <引擎 jar> <entryMain> --base= --entry= --app-classpath-file=
- *   --entry-out= [--app-jvm-arg=...] <透传参数>` 运行，把最终 argv（NUL 分隔）
- *   写入 --entry-out 文件；非 0 退出即失败；
- * - base 就是组件的 base（--base/--instance/[app] base）；--path/--port 等参数
- *   一律原样交给入口 main 转发（jstart 不再读取 --path）；
- * - --print：照常准备（跑入口 main），但只打印最终命令不 exec。
+ * - [engine] init（必填）：引擎入口脚本的**文件路径**（`~`/`${VAR}` 会展开），是
+ *   脚本/可执行文件，不是 java 类；
+ * - [engine] 其余行（可选）：引擎 jar 清单（同 [libs] 语法）；jstart 不内置任何
+ *   引擎目录（保持引擎中立），容器 jar 由用户显式罗列；
+ * - jstart 分别写入 <base>/engine-deps.classpath 与 <base>/engine-app.classpath，
+ *   再以 `<init> --base= --entry= --engine-classpath-file= --app-classpath-file=
+ *   --local-repo= --entry-out= [--app-jvm-arg=...] <透传参数>` 运行脚本；脚本把最终
+ *   argv（NUL 分隔）写入 --entry-out 文件；非 0 退出即失败；
+ * - base 就是组件的 base（--base / [app] base / [app] instance）；--path/--port 等参数
+ *   一律原样交给脚本转发（jstart 不再读取 --path）；
+ * - --print：照常准备（跑脚本），但只打印最终命令不 exec。
  */
 private int runEngine(BootArgs opts, Resolver resolver, string entry,
     Archive[] appDeps, LaunchSpec spec, string base) {
-  EngineSel sel;
-  try {
-    sel = parseEngineSel(spec.engine.length > 0 ? spec.engine : "tomcat");
-  } catch (Exception e) {
-    stderr.writeln(e.msg);
+  // [engine] init 是脚本文件路径（不是 java 类）：运行时必须存在且是文件
+  // （--print 只打印准备命令，不要求脚本已就位）。
+  auto initScript = expandLocalPath(spec.engineInit);
+  if (spec.engineInit.length == 0
+      || (!opts.print && (!exists(initScript) || !isFile(initScript)))) {
+    stderr.writeln("Engine init script not found: " ~ spec.engineInit
+        ~ " ([engine] init must be an existing script file, not a java class).");
     return 1;
   }
-
-  // 引擎依赖：[engine] 段罗列为准（占位符先展开）；别名缺省用内置目录，
-  // FQCN 入口 main 没有内置目录。
-  Archive[] engineDeps;
-  if (spec.hasEngineDeps) {
-    auto lines = spec.engineDeps.dup;
-    foreach (i, line; lines) {
-      lines[i] = expandEngineDeps(line, sel.ver);
-    }
-    engineDeps = resolver.parseDependencyText(lines.join("\n"));
-  } else if (sel.aliasName.length > 0) {
-    try {
-      engineDeps = defaultEngineDeps(sel.aliasName, sel.ver);
-    } catch (Exception e) {
-      stderr.writeln(e.msg);
-      return 1;
-    }
-  } else if (sel.entryMain == distTomcatEntryMain) {
-    // 全量 tomcat（ServerCreator）也有内置目录：beangle-sas-engine + tomcat 发行包 zip。
-    engineDeps = defaultDistEngineDeps(sel.ver);
-  } else {
-    stderr.writeln("Engine entry main " ~ sel.entryMain
-        ~ " has no built-in dependency catalog: declare its jars in the [engine] section.");
-    return 1;
-  }
+  // 引擎依赖（[engine] 的其余行，可选）：每行同 [libs] 语法，原样解析。
+  Archive[] engineDeps = resolver.parseDependencyText(spec.engineDeps.join("\n"));
   auto merged = appendEngineDeps(appDeps, engineDeps);
   auto missing = resolver.ensureDependencies(merged, opts.jobs);
   if (missing.length > 0) {
@@ -593,7 +577,7 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
   }
 
   // 运行时参数与透传参数拆分（与 jar 分支一致）：[runtime] 与 -D/-X 归 java（作为
-  // --app-jvm-arg 交给入口 main 写进最终命令），其余（含 --path/--port）原样透传。
+  // --app-jvm-arg 交给 init 脚本写进最终命令），其余（含 --path/--port）原样透传。
   string[] runtimeOptions = spec.runtimeOptions.dup;
   string[] passthrough = spec.args.dup;
   foreach (a; opts.rest) {
@@ -612,21 +596,23 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
     }
   }
 
-  auto java = javaFor(spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "");
-  // 引擎 jar 与应用依赖分开：应用依赖写进 --app-classpath-file 交给入口 main，由它
-  // 连同解压后的 docBase/WEB-INF 一起拼进最终 classpath（WEB-INF 的位置只有引擎知道）。
+  // 引擎 jar 与应用依赖分开写文件：init 脚本连同解压后的 docBase/WEB-INF 一起拼进
+  // 最终 classpath（WEB-INF 的位置只有引擎知道）。
   auto engineCp = resolver.depsClasspath(engineDeps);
   auto appCp = resolver.buildClasspath("", appDeps);
   auto entryOut = buildPath(base, entryArgvFile);
-  // 应用依赖 classpath 可能很长，写入文件由入口 main 读取，避免命令行超长
+  // 两个 classpath 都可能很长，写入文件由 init 脚本读取，避免命令行超长
+  auto engineCpFile = buildPath(base, engineDepsClasspathFile);
   auto appCpFile = buildPath(base, entryClasspathFile);
+  write(engineCpFile, engineCp);
   write(appCpFile, appCp);
 
-  auto engineCmd = [java, "-cp", engineCp, sel.entryMain,
-      "--base=" ~ base, "--entry=" ~ entry, "--app-classpath-file=" ~ appCpFile,
-      // 本地仓库地址透传给引擎入口 main（ServerCreator 转成 -Dsas.repo），
-      // 使容器内的 DependencyClassLoader 也认 --local（快照与正式版同库）
-      "--Dsas.repo=" ~ resolver.local.base,
+  auto engineCmd = [initScript,
+      "--base=" ~ base, "--entry=" ~ entry,
+      "--engine-classpath-file=" ~ engineCpFile, "--app-classpath-file=" ~ appCpFile,
+      // 本地仓库地址透传给 init 脚本，使容器内的 DependencyClassLoader 也认 --local
+      // （快照与正式版同库）。
+      "--local-repo=" ~ resolver.local.base,
       "--entry-out=" ~ entryOut];
   foreach (o; runtimeOptions) {
     engineCmd ~= "--app-jvm-arg=" ~ o;
@@ -656,20 +642,20 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
 
   auto pr = runProcessCapture(engineCmd, opts.verbose);
   if (pr.status != 0) {
-    stderr.writeln("Engine entry main failed (exit " ~ pr.status.to!string ~ "): "
-        ~ sel.entryMain);
+    stderr.writeln("Engine init script failed (exit " ~ pr.status.to!string ~ "): "
+        ~ initScript);
     return pr.status;
   }
   if (opts.verbose && pr.stdoutText.strip.length > 0) {
     stderr.writeln(pr.stdoutText.strip);
   }
   if (!exists(entryOut)) {
-    stderr.writeln("Engine entry main did not write " ~ entryOut);
+    stderr.writeln("Engine init script did not write " ~ entryOut);
     return 1;
   }
   auto argv = parseEntryArgv(readText(entryOut));
   if (argv.length == 0) {
-    stderr.writeln("Engine entry main wrote an empty launch command to " ~ entryOut);
+    stderr.writeln("Engine init script wrote an empty launch command to " ~ entryOut);
     return 1;
   }
   return execCommand(argv, showProgress(opts));
@@ -679,22 +665,22 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
  * 多应用 spec（`[subapp <id>]`）：一个 **dist 引擎**在同一 JVM 里跑多个 webapp，每个
  * 一个独立 context path。设计约定见 docs/engine.md：
  *
- *  - 多应用只走 Dist 模式，内嵌引擎（tomcat/undertow 别名、*EmbedCreator）只跑一个 webapp，
- *    在 spec 校验阶段即被拒绝；
+ *  - 多应用必须声明 [engine] init 脚本（spec 校验阶段拦下缺声明）；脚本负责在同一
+ *    JVM 里为每个 webapp 建一个 context；
  *  - jstart 逐个取回 webapp（war 文件或已解压目录）并**补齐各自依赖到本地仓库**——运行时
  *    由容器内每个 Context 自己的 DependencyClassLoader 按 war 清单解析（sas.repo 透传），
  *    jstart 不把多应用的依赖合并进同一个 JVM classpath（那样会串味）；
  *  - 每个 webapp 的入口、context path 与扩展依赖（libs）写进
  *    `<base>/engine-subapps.jstart`（launch spec 片段，一段一个 `[subapp <id>]`），
- *    入口 main 按 `--base` 从该约定路径读取，不经命令行传递；单应用仍走
+ *    init 脚本按 `--base` 从该约定路径读取，不经命令行传递；单应用仍走
  *    `--entry=`/`--path=`/`--app-classpath-file=`；
  *  - 一个 base = 一个实例：一份 pid、一套 `webapps/`，多应用共享启停生命周期。
  */
 private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   import std.format : format;
 
-  // base 与单应用一致（--base/--instance/[app] base）；多应用共享一个 base。
-  auto base = resolveBase(opts.target, baseOption(opts, spec), opts.instance);
+  // base 与单应用一致（--base / [app] base / [app] instance）；多应用共享一个 base。
+  auto base = resolveBase(opts.target, baseOption(opts, spec), spec.instance);
   if (base.length == 0) {
     stderr.writeln("Cannot prepare the component base for " ~ opts.target
         ~ "; pass a writable --base=<dir>.");
@@ -779,29 +765,16 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     warnIgnoredMain(opts, true, spec, "multi-webapp");
   }
 
-  // 引擎：多应用只走 Dist。缺省 ServerCreator；给 FQCN 时按 FQCN，引擎依赖 [engine] 段为准，
-  // 否则用 ServerCreator 的内置目录（beangle-sas-engine + tomcat 发行包 zip）。
-  EngineSel sel;
-  try {
-    sel = parseEngineSel(spec.engine.length > 0 ? spec.engine : distTomcatEntryMain);
-  } catch (Exception e) {
-    stderr.writeln(e.msg);
+  // 引擎：多应用 spec 必须显式声明 [engine] init 脚本（jstart 无内置引擎；
+  // validateLaunchSpec 已在校验阶段拦下缺声明）。
+  auto initScript = expandLocalPath(spec.engineInit);
+  if (spec.engineInit.length == 0
+      || (!opts.print && (!exists(initScript) || !isFile(initScript)))) {
+    stderr.writeln("Engine init script not found: " ~ spec.engineInit
+        ~ " ([engine] init must be an existing script file, not a java class).");
     return 1;
   }
-  Archive[] engineDeps;
-  if (spec.hasEngineDeps) {
-    auto lines = spec.engineDeps.dup;
-    foreach (i, line; lines) {
-      lines[i] = expandEngineDeps(line, sel.ver);
-    }
-    engineDeps = resolver.parseDependencyText(lines.join("\n"));
-  } else if (sel.entryMain == distTomcatEntryMain) {
-    engineDeps = defaultDistEngineDeps(sel.ver);
-  } else {
-    stderr.writeln("Engine entry main " ~ sel.entryMain
-        ~ " has no built-in dependency catalog: declare its jars in the [engine] section.");
-    return 1;
-  }
+  Archive[] engineDeps = resolver.parseDependencyText(spec.engineDeps.join("\n"));
   auto missingEngine = resolver.ensureDependencies(engineDeps, opts.jobs);
   if (missingEngine.length > 0) {
     stderr.writeln("Missing: " ~ missingEngine.join(","));
@@ -827,9 +800,9 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     }
   }
 
-  // 交付计划文件走 launch spec 片段：一段一个 [subapp <id>]，含 entry/path/libs；入口
-  // main（ServerCreator）按 --base 从约定路径 <base>/engine-subapps.jstart 读取
-  // （不经命令行传递），逐个建 Context 并把 libs 交给该 Context 的 Loader。
+  // 交付计划文件走 launch spec 片段：一段一个 [subapp <id>]，含 entry/path/libs；引擎
+  // init 脚本按 --base 从约定路径 <base>/engine-subapps.jstart 读取（不经命令行传递），
+  // 逐个建 Context 并把 libs 交给该 Context 的 Loader。
   auto planPath = buildPath(base, subappsPlanFile);
   string plan = "# Generated by jstart: resolved subapps for the dist engine. Do not edit.\n";
   foreach (i, w; spec.subapps) {
@@ -840,14 +813,16 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   }
   write(planPath, plan);
 
-  auto java = javaFor(spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "");
   auto engineCp = resolver.depsClasspath(engineDeps);
   auto entryOut = buildPath(base, entryArgvFile);
-  auto engineCmd = [java, "-cp", engineCp, sel.entryMain,
+  auto engineCpFile = buildPath(base, engineDepsClasspathFile);
+  write(engineCpFile, engineCp);
+  auto engineCmd = [initScript,
       "--base=" ~ base,
-      // 本地仓库地址透传（ServerCreator 转成 -Dsas.repo），容器内每个 Context 的
-      // DependencyClassLoader 都从同一个仓库解析各自 war 的依赖清单。
-      "--Dsas.repo=" ~ resolver.local.base,
+      "--engine-classpath-file=" ~ engineCpFile,
+      // 本地仓库地址透传：容器内每个 Context 的 DependencyClassLoader 都从同一个仓库
+      // 解析各自 war 的依赖清单。
+      "--local-repo=" ~ resolver.local.base,
       "--entry-out=" ~ entryOut];
   foreach (o; runtimeOptions) {
     engineCmd ~= "--app-jvm-arg=" ~ o;
@@ -869,20 +844,20 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
 
   auto pr = runProcessCapture(engineCmd, opts.verbose);
   if (pr.status != 0) {
-    stderr.writeln("Engine entry main failed (exit " ~ pr.status.to!string ~ "): "
-        ~ sel.entryMain);
+    stderr.writeln("Engine init script failed (exit " ~ pr.status.to!string ~ "): "
+        ~ initScript);
     return pr.status;
   }
   if (opts.verbose && pr.stdoutText.strip.length > 0) {
     stderr.writeln(pr.stdoutText.strip);
   }
   if (!exists(entryOut)) {
-    stderr.writeln("Engine entry main did not write " ~ entryOut);
+    stderr.writeln("Engine init script did not write " ~ entryOut);
     return 1;
   }
   auto argv = parseEntryArgv(readText(entryOut));
   if (argv.length == 0) {
-    stderr.writeln("Engine entry main wrote an empty launch command to " ~ entryOut);
+    stderr.writeln("Engine init script wrote an empty launch command to " ~ entryOut);
     return 1;
   }
   return execCommand(argv, showProgress(opts));
@@ -897,7 +872,10 @@ private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec sp
   import jstart.archive : Artifact, LocalFile, RemoteFile;
 
   writeln("target: " ~ opts.target);
-  writeln("type: multi-webapp");
+  writeln("type: " ~ launchTypeName(launchType(spec)));
+  if (spec.engineInit.length > 0) {
+    writeln("engine init: " ~ spec.engineInit);
+  }
   writeln("webapps: " ~ spec.subapps.length.to!string);
   writeln("local: " ~ resolver.local.base);
   writeln("snapshots: " ~ resolver.local.snapshotBase);
@@ -938,9 +916,9 @@ private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec sp
 }
 
 /**
- * 主类只对 java（jar/gav-jar/解压目录）目标有意义：war 跑引擎入口 main
- * （用 [app] engine 选入口 main），native（tar.gz）跑 [app] exec。这两种目标上给出
- * --main 或 [app] main 时告警忽略，不静默吞掉。
+ * 主类只对 java（jar/gav-jar/解压目录）目标有意义：war 由 [engine] init 脚本启动，
+ * native（tar.gz）跑 [app] exec。这两种目标上给出 --main 或 [app] main 时告警忽略，
+ * 不静默吞掉。
  */
 private void warnIgnoredMain(BootArgs opts, bool specMode, LaunchSpec spec, string kind) {
   if (opts.quiet) {
@@ -970,23 +948,31 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
 
   import jstart.archive : Artifact, LocalFile, RemoteFile;
 
-  string type;
+  string entryType;
   if (nativeArchive.length) {
-    type = "native";
+    entryType = "native";
   } else if (isDir(appPath)) {
-    type = "dir";
+    entryType = "dir";
   } else if (appPath.endsWith(".war")) {
-    type = "war";
+    entryType = "war";
   } else if (appPath.endsWith(".jar")) {
-    type = "jar";
+    entryType = "jar";
   } else {
-    type = "file";
+    entryType = "file";
   }
+  // 启动模型：由解析结果推导（不是 spec 键）。native 一律 app。
+  auto type = nativeArchive.length
+      ? LaunchType.app
+      : launchType(specMode ? spec : LaunchSpec.init);
 
   writeln("target: " ~ opts.target);
   writeln("entry: " ~ (specMode ? spec.entry : opts.target));
   writeln("app: " ~ appPath);
-  writeln("type: " ~ type);
+  writeln("type: " ~ launchTypeName(type));
+  if (type == LaunchType.engine && spec.engineInit.length > 0) {
+    writeln("engine init: " ~ spec.engineInit);
+  }
+  writeln("entry type: " ~ entryType);
   writeln("main: " ~ (mainClass.name.length ? mainClass.name : "none"));
   writeln("main source: " ~ sourceName(mainClass.source));
   if (nativeArchive.length) {
@@ -1043,7 +1029,7 @@ private string baseOption(BootArgs opts, LaunchSpec spec) {
 }
 
 /**
- * 运行前准备 pid 文件：固定为 <base>/app.pid（base 由 --base/--instance/[app] base
+ * 运行前准备 pid 文件：固定为 <base>/app.pid（base 由 --base / [app] base / [app] instance
  * 决定，见 jstart.base）。实例身份 = 组件 + base，参数不参与。
  *
  * 若文件指向一个真实存在（且 start 时间匹配，排除 pid 复用）的进程，说明这个 base
@@ -1070,8 +1056,9 @@ private string preparePidFile(BootArgs opts, string base, string app, out bool f
         stderr.writeln("Already running: pid " ~ to!string(info.pid)
             ~ (info.app.length ? " (" ~ info.app ~ ")" : "") ~ ".");
         stderr.writeln("Pid file: " ~ path ~ "; stop it with `jstart stop " ~ opts.target
-            ~ "`, start another copy with its own `--base=<dir>`/--instance=<name>`"
-            ~ ", or override with --force.");
+            ~ "`, start another copy with its own `--base=<dir>` (or spec `[app] base` +"
+            ~ " `[app] instance`),"
+            ~ " or override with --force.");
         fatal = true;
         return "";
       }

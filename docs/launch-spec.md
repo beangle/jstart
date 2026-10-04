@@ -35,6 +35,8 @@ main = org.beangle.app.Main            # 可选（Java）：主类全名；缺�
 entry = gav://org.beangle:app:0.0.1    # 必填：gav | gav:// | http(s):// | 本地文件/目录
 runtime = /opt/jdk21/bin/java          # 可选：运行时/解释器可执行文件；支持 ~ 与 ${VAR}
 working_dir = ${APP_HOME}              # 可选：启动前 chdir；支持 ~ 与 ${VAR} 展开
+base = /srv/jstart                     # 可选：base 根目录（替换缺省 /var/tmp/jstart）
+instance = portal-a                    # 可选：显式组件目录名（<base 根>/<instance>，不拼指纹）
 
 [runtime]
 -Xmx512m                               # 每行一个运行时参数，原样拼接（不做 shell 切分）
@@ -79,17 +81,18 @@ working_dir = ${APP_HOME}
 | 段 | 键/内容 | 说明 |
 |----|---------|------|
 | `[app]` | `base` | 可选。base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是 `<base>/<组件键>`（pid 文件、native 解压、war 解压都在其下），`run`/`stop` 用同一个 base 找实例（见 [commands.md](commands.md)） |
-| `[app]` | `main` | 可选（Java）。主类全名，命令行 `--main=<class>` 优先于本键。缺省时回退：entry 为 jar 时读其 Manifest `Main-Class`；仍无则 run 报错（war/native 目标不需要主类，见下）。**与 `[app] engine`/`[engine]` 互斥**，同时出现直接报错 |
+| `[app]` | `instance` | 可选。显式组件目录名：给了就是 `<base 根>/<instance>`（不再拼 target 指纹），限单个安全路径段（`[A-Za-z0-9._-]`，不能是 `.`/`..`）。没有命令行选项；`run`/`stop` 都从 spec 读，所以实例的 spec 要保留（见 [commands.md](commands.md)） |
+| `[app]` | `main` | 可选（Java）。主类全名，命令行 `--main=<class>` 优先于本键。缺省时回退：entry 为 jar 时读其 Manifest `Main-Class`；仍无则 run 报错（war/native 目标不需要主类，见下）。**与 `[engine]` 段互斥**，同时出现直接报错 |
 | | `entry` | 必填。取值同现有 target：`g:a:v`/`gav://`、native 的 `g:a:tar.gz:<classifier>:v`、`http(s)://`、本地 jar/war/tar.gz/解压目录/文件路径 |
 | | `working_dir` | 可选。exec 前切换工作目录，沿用 `~`/`${VAR}` 展开 |
 | | `runtime` | 可选。运行时/解释器可执行文件（`java`/`python3`/`node`/...）或 java 安装目录（自动补 `bin/java`）；支持 `~`/`${VAR}` 展开；缺省按 entry 推断（jar → `$JAVA_HOME`/PATH 的 java） |
 | | `exec` | 可选（native tar.gz）。包内可执行文件，**相对解压根目录**（如 `demo-1.0/bin/demo`）；缺省自动探测 `<name>/bin/<exe>` 或唯一可执行文件；jar/war entry 忽略此键 |
-| | `engine` | 可选（仅 war/目录）。入口 main：含 `.` 的值当 FQCN，否则内置别名 `tomcat`/`undertow`（war 缺省 `tomcat`，映射 `org.beangle.sas.engine.<name>.EmbedCreator`）；tomcat 别名可带版本后缀 `tomcat-11.0.24`（无后缀用内置默认版本）；FQCN 一般无内置目录、须写 `[engine]`（例外：ServerCreator 有内置目录）；jar/native 目标写了则告警忽略（见 [engine.md](engine.md)）。**与 `[app] main` 互斥** |
+| | | （`[app] engine` 已移除：引擎入口改用 `[engine] init`；写了会被告警忽略） |
 | `[runtime]` | 行列表 | 每个非注释行是一个运行时参数（Java 的 `-D`/`-X`/`--add-opens`、Python 的 `-O` 等），按书写顺序拼接；native（tar.gz）目标无 JVM，该段告警忽略 |
 | `[args]` | 行列表 | 每个非注释行是一个应用参数，**整行**作为一个 argv：不切分、不展开变量，值含空格可直接书写；native 目标同样附加在可执行文件之后 |
 | `[libs]` | 行列表 | 可选。**扩展依赖**：每行与依赖描述文件同语法（gav/本地文件/远程 url），一行也可逗号分隔多个 gav。**追加/覆盖**在 entry 内置清单之上（同名 `g:a` 以本段为准）；native 无清单时即为全部依赖。旧名 `[deps]` 仍可用（告警并按 `[libs]` 处理），已废弃 |
-| `[engine]` | 行列表 | 可选（仅 war/目录）。引擎启动器依赖逐行罗列，语法同 `[libs]`（gav/本地文件/远程 url），行内可用占位符 `{tomcat.version}`/`{sas.version}` 引用内置版本；**段存在即为权威**（不依赖内置行），否则回退内置默认目录（tomcat/undertow，见 [engine.md](engine.md)） |
-| `[subapp <id>]` | `entry` / `path` / `libs` | 可选、可重复。**多应用**：一个 dist 引擎在同一 JVM 里跑多个 webapp，每个一段；`entry` 同 `[app] entry`，`path` 是该 webapp 的上下文路径（归一化后各自唯一），`libs` 是该 webapp 的扩展依赖（gav，一行可逗号分隔多个，可不写）。与 `[app] entry`/`main`/`[libs]` 互斥，引擎只能走 Dist（见下） |
+| `[engine]` | `init` + 行列表 | 声明引擎时**必填**（war/目录与多应用）。`init = <脚本路径>` 是引擎入口**脚本/可执行文件**（`~`/`${VAR}` 展开，不是 java 类）；其余行是引擎启动器依赖，语法同 `[libs]`（gav/本地文件/远程 url），**原样解析、无占位符**。jstart 不内置任何依赖目录，容器 jar 也由用户写全（见 [engine.md](engine.md)） |
+| `[subapp <id>]` | `entry` / `path` / `libs` | 可选、可重复。**多应用**：一个引擎在同一 JVM 里跑多个 webapp，每个一段；`entry` 同 `[app] entry`，`path` 是该 webapp 的上下文路径（归一化后各自唯一），`libs` 是该 webapp 的扩展依赖（gav，一行可逗号分隔多个，可不写）。与 `[app] entry`/`main`/`[libs]` 互斥，且必须配合 `[engine] init`（见下） |
 
 ### 语义约定
 
@@ -107,10 +110,10 @@ working_dir = ${APP_HOME}
 - 不写 `[libs]` 时只用 entry 内的依赖描述（jar/war/解压目录各位置规则与现有
   `resolveDependencies` 完全一致）；native（tar.gz）包内没有清单，`[libs]` 即为全部依赖；
 - `[app] main` 与 entry 内 Manifest `Main-Class` 都缺失时，`run` 报
-  `Cannot find Main-Class` 并退出 1（war 目标例外：不需要 main，直接进入内置引擎
-  运行流程，见 [war-engine.md](war-engine.md)）；
-- **`[app] main` 与 `[app] engine` / `[engine]` 互斥**：jar 由 java 直接跑主类，war 的
-  入口是引擎的 entry main，两者语义冲突；同时声明时 `run`/`resolve` 等命令直接报错退出 1
+  `Cannot find Main-Class` 并退出 1（声明了引擎的 war/目录例外：不需要 main，直接进入
+  引擎运行流程，见 [war-engine.md](war-engine.md)）；
+- **`[app] main` 与 `[engine]` 段互斥**：jar 由 java 直接跑主类，引擎目标由 init 脚本
+  启动，两者语义冲突；同时声明时 `run`/`resolve` 等命令直接报错退出 1
   （命令行 `--main` 与 engine 目标并存仍按"war 忽略 --main"告警，见下）；
 - 未知段/未知键：告警并忽略（向前兼容）；重复键取最后值，列表行按出现顺序追加；
 - `[args]`/`[runtime]` 不做 shell 语义：值与注释由文件行界定，杜绝引号转义问题。
@@ -124,63 +127,71 @@ working_dir = ${APP_HOME}
 - **其余运行时定制只在 spec 内**：运行时参数用 `[runtime]` 段、运行时/解释器可执行文件用
   `[app] runtime`；不提供 `--jvm=`/`--runtime=` 之类的命令行覆盖，避免同一参数在文件与
   命令行两处出现（试参数请直接改文件或加 `[args]` 行）。
-- **引擎定制也只在 spec 内**：`[app] engine` 选择、`[engine]` 段罗列引擎依赖，二者
-  仅对 war 目标生效，详见下文"war 目标与引擎定制"。
+- **引擎定制也只在 spec 内**：`[engine] init` 选入口脚本、`[engine]` 其余行罗列引擎
+  依赖，详见下文"war 目标与引擎定制"。
 
-### war 目标与引擎定制（[app] engine / [engine]）
+### 启动模型（LaunchType，由解析结果派生）
+
+jstart 在解析 spec 后给每个目标派生一个**启动模型**（`LaunchType`，取值 `app`/`engine`）。
+它**不是 spec 键**——不需要、也不允许在文件里写 `type = engine`——而是 jstart 从"是否声明
+了引擎"得出的结论，供内部与 `info` 输出统一判断分支：
+
+| 模型 | 含义 | 判定 |
+|------|------|------|
+| `app` | 直接 exec 运行时：java 跑 jar/解压目录，或 native（tar.gz）可执行文件 | 默认 |
+| `engine` | 先跑**引擎 init 脚本**准备容器环境，再 exec 它写出的命令 | 声明了 `[engine]` 段，或有 `[subapp <id>]` 多 webapp |
+
+- **只看声明，不靠推断**：jstart 不内置引擎目录，也不从 entry 的 `.war` 后缀反推。
+  war 想跑就必须显式写 `[engine] init`；没写引擎声明的 spec 是 `app`，
+  `run` 会对 war 报错提示补声明。
+- `info` 输出的 `type:` 就是这个模型（`app`/`engine`）；entry 自身的**构件形态**另用
+  `entry type:`（`jar`/`war`/`dir`/`native`/`file`）报告，两者不要混淆。
+
+### war 目标与引擎定制（[engine] init / [engine] 依赖）
 
 war 没有 `Main-Class`，且 `run` 只接受 launch spec 形式的 war 目标（`[app] entry` 为
 war 文件/gav；裸 war 目标会报错并提示写 spec；`resolve`/`fetch`/`repo` 仍直接接受
-war）。此时 jstart 先运行**引擎入口 main**（准备容器环境，写出最终启动命令）再 exec
-它，两端协议见 [engine.md](engine.md)、war 侧用法见 [war-engine.md](war-engine.md)。
-引擎的"选哪个、带哪些 jar"由 spec 定制：
+war）。此时 jstart 先运行 spec 声明的**引擎 init 脚本**（准备容器环境，写出最终启动
+命令）再 exec 它，两端协议见 [engine.md](engine.md)、war 侧用法见
+[war-engine.md](war-engine.md)。引擎的"用哪个入口、带哪些 jar"由 spec 定制：
 
 ```ini
 [app]
 entry = /path/app.war          # war 目标（本地文件/gav/http 均可）
-engine = tomcat                # 可选：tomcat | undertow；war 缺省 tomcat
-                               # tomcat 可带版本：tomcat-11.0.24
 
-[engine]                       # 可选：引擎启动器依赖，每行与 [libs] 同语法
+[engine]                       # init 必填；其余行是引擎启动器依赖，同 [libs] 语法
+init = /opt/engine/bin/tomcat-init   # 引擎入口脚本（文件路径，不是 java 类）
 org.beangle.sas:beangle-sas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
-                               # 行内可用占位符：{tomcat.version}/{sas.version}
 
 [runtime]                      # 引擎 JVM 参数（jar/war 通用）
 -Xmx1g
 
-[args]                         # 引擎运行参数，原样交给入口 main 转发
+[args]                         # 引擎运行参数，原样交给 init 脚本转发
 --port=8080
 --path=/
 ```
 
 定制规则：
 
-- **选择引擎**：`[app] engine` 含 `.` 的值当入口 main 的 FQCN；否则是内置别名
-  `tomcat`/`undertow`（映射 `org.beangle.sas.engine.<name>.EmbedCreator`），war 缺省
-  `tomcat`，未知别名在 `run` 时报错；FQCN 一般没有内置目录、必须写 `[engine]`（例外：
-  全量 tomcat 的 `ServerCreator` 有内置目录）。tomcat 别名
-  可带版本后缀 `tomcat-11.0.24`：不写 `[engine]` 段时内置目录的 `tomcat-embed-*`
-  自动用该版本（`beangle-sas-engine` 仍用内置默认版本）。entry 是 war/目录时都走引擎，
-  其它目标（jar/native）**不要求** engine 声明，写了会告警并忽略。
-- **罗列引擎依赖**：`[engine]` 段存在即为权威，jstart 不内置依赖行——锁版本、升级、
-  换镜像、引用本地引擎 jar 都只改本文件；没有 `[engine]` 段时回退**内置默认目录**
-  （tomcat 3 个 / undertow 22 个 jar，等价 sas.sh 两个分支的 download 行，版本随
-  jstart 固定）。行内可用占位符：`{tomcat.version}` 取 `engine = tomcat-<版本>` 的
-  版本、否则内置默认，`{sas.version}` 取内置默认——例如
-  `org.apache.tomcat.embed:tomcat-embed-core:{tomcat.version}`。只换 tomcat 版本可写
-  `engine = tomcat-<版本>`；覆盖其它（undertow、镜像、sas 引擎等）就写 `[engine]`
-  段，都不必等 jstart 发版。
+- **声明入口脚本**：`init` 是**脚本/可执行文件的路径**（`~`/`${VAR}` 会展开），不是
+  java 类；脚本自己决定调用哪个容器入口类。jstart 不做别名/FQCN 映射，也没有内置引擎。
+- **罗列引擎依赖**：`init` 之外的行是引擎 jar 清单，jstart 不内置任何依赖行——锁版本、
+  升级、换镜像、引用本地引擎 jar、切容器都只改本文件，容器 jar 也要写全（没有内置目录
+  可回退，见 [war-engine.md](war-engine.md)）。每行原样解析，**没有占位符**，版本号直接写；
+  依赖可以留空（脚本自带 classpath 时如此）。
+- **声明了 `[engine]` 就是引擎目标**：war/目录都要写；jar/native 目标写了 `[engine]`
+  也会被判为 `engine` 类型走引擎流程，通常没有意义，应去掉。
 - **与应用依赖互不影响**：`[libs]`（或 war 内置清单）负责应用本体，`[engine]` 只负责
   引擎启动器；classpath 顺序为"应用 classes/lib + 应用依赖 → 引擎依赖"，引擎 gav 与
   应用依赖按 `g:a:v` 去重。
 - **运行参数**：引擎 JVM 参数写 `[runtime]`（`-D`/`-X` 开头参数同理，jstart 作为
-  `--app-jvm-arg` 交给入口 main 写进最终命令）；`--port=8080`、`--path=/` 等引擎运行参数
-  写 `[args]`（或命令行透传），jstart 全部原样交给入口 main，不吞参数。
-- **不做定制**：引擎主类由引擎名固定，没有 CLI 覆盖（无 `--engine=`），`[engine]` 段
-  也不解析 `main=...` 之类的键值行——每行就是一条依赖（与 `[libs]` 完全同构）。
-- 引擎 jar 同样遵守"不解析传递依赖"约束：目录/`[engine]` 里必须显式写全。
+  `--app-jvm-arg` 交给脚本写进最终命令）；`--port=8080`、`--path=/` 等引擎运行参数
+  写 `[args]`（或命令行透传），jstart 全部原样交给脚本，不吞参数。
+- **不做 CLI 定制**：没有 `--engine=` 之类的命令行覆盖，`[engine]` 段也不解析
+  `main=...` 之类的键值行——`init` 之外的每行就是一条依赖（与 `[libs]` 完全同构）。
+- 引擎 jar 同样遵守"不解析传递依赖"约束：`[engine]` 里必须显式写全。
 
 ### 多 webapp（[subapp \<id\>]）
 
@@ -188,8 +199,10 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 每个 webapp 一个独立上下文路径：
 
 ```ini
-[app]
-engine = org.beangle.sas.engine.tomcat.ServerCreator   # 可省略，多应用缺省即 ServerCreator
+[engine]
+init = /opt/engine/bin/tomcat-dist-init                # 必填：引擎入口脚本（文件路径）
+org.beangle.sas:beangle-sas-engine:0.13.17
+org.apache.tomcat:tomcat:11.0.21:zip                   # 多 context 用全量 tomcat 发行包
 
 [subapp portal]
 entry = /srv/deploy/portal.war
@@ -203,9 +216,9 @@ path = /admin
 
 约定与规则：
 
-- **多应用只走 Dist 模式**：内嵌引擎（`tomcat`/`undertow` 别名、`*EmbedCreator`）只跑
-  一个 webapp，写成 `[app] engine = tomcat` 之类会在 spec 校验阶段直接报错。`[app]
-  engine` 省略时用内置的 Dist 引擎入口 main `org.beangle.sas.engine.tomcat.ServerCreator`。
+- **必须声明 `[engine] init`**：多应用在校验阶段就要求 `[engine]` 段存在且给了 `init`
+  脚本（没有缺省引擎/内置目录）；缺一即报错。一个 JVM 跑多个 webapp 是脚本的职责，
+  通常由脚本调用 sas 的 `ServerCreator` 之类多 context 入口。
 - **每个 webapp 必须有 `entry` 和 `path`**，归一化后（去尾 `/`、补首个 `/`、折叠
   `//`）的 context path 不能重复（`/` 只允许一个）；段头 id 不能重复、不能含空格/制表符。
 - **`libs` 是该 webapp 的扩展依赖**（gav 坐标，可多行、一行可逗号分隔多个）：覆盖规则与
@@ -219,12 +232,12 @@ path = /admin
   无法用一份清单表达多个应用。
 - **各 webapp 依赖相互隔离**：jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库；运行时
   由容器内每个 Context 自己的 `DependencyClassLoader` 按各自 war 清单解析（jstart 透传
-  `--Dsas.repo`），**不**把多个应用的依赖合并进同一个 JVM classpath——那样会串味。
-- **共享生命周期**：一个 spec 一个 base（`--base`/`--instance`/`[app] base`），一份 pid
+  `--local-repo`），**不**把多个应用的依赖合并进同一个 JVM classpath——那样会串味。
+- **共享生命周期**：一个 spec 一个 base（`--base`/`[app] base`/`[app] instance`），一份 pid
   文件，`stop` 一次停整组；`resolve`/`info` 按 webapp 逐个输出，`classpath` 对多应用
   无意义会明确拒绝。
 - **接口形式**：入口、context path 与 `libs` 写进 `<base>/engine-subapps.jstart`
-  （launch spec 片段，一段一个 `[subapp <id>]`），Dist 引擎按 `--base` 从该约定路径读取，
+  （launch spec 片段，一段一个 `[subapp <id>]`），init 脚本按 `--base` 从该约定路径读取，
   不经命令行传递（单应用仍走 `--entry=`/`--path=`/`--app-classpath-file=`）；协议见
   [engine.md](engine.md)。
 
@@ -272,8 +285,8 @@ java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.a
 - **不规划** `prefetch` 预下载命令：它等于 `resolve` + 循环清单，价值有限；除非以后有
   "独立指定一组依赖清单批量预热"的明确场景再单独立项。
 - **war 引擎运行已实现**：war 由 launch spec 的 `[app] entry` 声明后，`run` 运行引擎
-  入口 main 准备环境、再 exec 内嵌容器（tomcat/undertow；launch spec 用 `[app] engine`
-  选入口 main、`[engine]` 段罗列引擎依赖，两个引擎都有内置默认目录兜底），见
+  init 脚本准备环境、再 exec 容器（launch spec 用 `[engine] init` 选入口脚本、
+  `[engine]` 其余行罗列引擎 + 容器 jar——jstart 不内置依赖目录，必须显式声明），见
   [engine.md](engine.md) 与 [war-engine.md](war-engine.md)。
 - 下载侧已排入路线图（跨版本，与 spec 无关）：Range 多线程分段下载与断点续传、
   SNAPSHOT 时间戳版本解析（`~/.m2/snapshots`）；另有 zip/war/ear `.diff` 增量补丁与
@@ -283,7 +296,7 @@ java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.a
 
 1. **主类可命令行覆盖，其余定制只在 spec 内**：主类按 `--main=` > `[app] main` >
    entry 内 `MANIFEST.MF` 的 `Main-Class` 确定——临时试参数用命令行，
-   固化用 spec。运行时/引擎定制仍在 spec 内声明（`[app] runtime`、`[app] engine` 与
+   固化用 spec。运行时/引擎定制仍在 spec 内声明（`[app] runtime` 与
    `[runtime]`/`[engine]` 段），不提供 `--jvm=`/`--engine=` 之类的命令行参数；旧命名
    `[jvm]` 段与 `[app] java` 键已移除（视为未知段/未知键告警）。
 2. **`[args]` 不做简写/解析**：不支持 `key = value → --key=value` 之类的转换；`-k=v`、

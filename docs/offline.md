@@ -84,14 +84,14 @@ tar czf offline-bundle.tgz jstart app.jar offline-repo/
 
 ## war 目标与引擎依赖的离线
 
-`run <spec>`（`[app] entry` 为 war）除了应用自身依赖，还需要**引擎 jar**（tomcat/undertow
-内置默认目录或 spec `[engine]` 罗列），两者都要在联网机上先集齐：
+`run <spec>`（`[app] entry` 为 war）除了应用自身依赖，还需要**引擎 jar**（spec
+`[engine]` 段罗列，jstart 不内置依赖目录），两者都要在联网机上先集齐：
 
 ```bash
 # 联网机：解析并下载（run --print 也会下载后只打印命令，不启动）
 jstart --quiet run --print app.jstart --local=/opt/offline-repo
 
-# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动；--print 不跑入口 main）
+# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动；--print 不跑 init 脚本）
 jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/null && echo ready
 ```
 
@@ -100,9 +100,9 @@ jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/
 - `repo` 子命令**只整合应用依赖**（war 内置清单或 spec `[libs]`），不读取 `[engine]`
   段，也不会复制引擎 jar；引擎依赖请用上面的 `run --print`（或 `resolve` 后手工
   `repo` 引擎 spec 的 `[libs]`）预下载进离线仓库；
-- 引擎版本可用 `[app] engine = tomcat-11.0.24` 或 `[engine]` 行
-  `{tomcat.version}`/`{sas.version}` 占位符指定（见 [war-engine.md](war-engine.md)），
-  解析出的具体版本与其它引擎 jar 一样随 `run --print` 预下载进离线仓库；
+- 引擎与容器版本直接在 `[engine]` 行里写死（不再有版本后缀/占位符，见
+  [war-engine.md](war-engine.md)），解析出的具体版本与其它引擎 jar 一样随 `run --print`
+  预下载进离线仓库；
 - 引擎 jar 是 release 构件，落在普通本地仓库布局，随仓库一起拷贝即可，无需处理
   快照库。
 

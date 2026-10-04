@@ -110,7 +110,7 @@ int runNativeApp(string executable, string[] args, bool verbose = true) {
 
 /**
  * Replace the current process image with an already-built argv (used for
- * the command an engine entry main wrote to its --entry-out file). On
+ * the command an engine init script wrote to its --entry-out file). On
  * POSIX this never returns on success; it returns 127 when exec fails.
  */
 int execCommand(string[] cmd, bool verbose = true) {

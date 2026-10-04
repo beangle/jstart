@@ -9,6 +9,9 @@ if [ ! -x "$JSTART" ]; then
   echo "Cannot find $JSTART, run 'scripts/build_common.sh' (or dub build) first." >&2
   exit 1
 fi
+# fake engine init 脚本用 $JAVA 拼最终命令；导出后由 jstart exec 子进程继承
+JAVA="$(command -v java 2>/dev/null || true)"
+export JAVA
 
 T="$(mktemp -d /tmp/jstart-smoke.XXXXXX)"
 REPO="$T/repo"
@@ -147,6 +150,10 @@ if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   check "info main source" "$code" 0 "main source: cli"
   out="$("$JSTART" --quiet info "$T/nomain.jar")"; code=$?
   check "info main none" "$code" 0 "main source: none"
+  # 启动模型由解析结果推导：jar 是 app（entry type 才是构件形态）。
+  check "info app type" "$code" 0 "type: app"
+  printf '%s' "$out" | grep -q "^entry type: jar$" \
+    || { echo "FAIL info missing entry type: $out" >&2; failures=$((failures + 1)); }
 
   # 空值/非法值立刻报错（--main 由 jstart 消费，不转发给应用）
   out="$("$JSTART" --quiet run "$T/app.jar" --main= 2>&1)"; code=$?
@@ -165,30 +172,61 @@ echo "== war engine (spec-only; [engine] 用本地文件，不联网) =="
 mkdir -p "$T/war/WEB-INF"
 printf '<web-app/>\n' > "$T/war/WEB-INF/web.xml"
 (cd "$T/war" && zip -qr "$T/app.war" .)
-# run 不再直接吃 war：必须先写 launch spec（[app] entry + engine）
+# run 不再直接吃 war：必须先写 launch spec（[app] entry + [engine] init）
 out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.war" --port=8080 2>&1)"; code=$?
 check "bare war run rejected" "$code" 1 "must run through a launch spec"
 
-# [app] main 与 [app] engine 互斥：spec 里同时写 main 和 engine 直接报错
+# 引擎 jar 用本地空文件即可（--print 走完解析但不执行脚本）
+mkdir -p "$T/engine"
+: > "$T/engine/beangle-sas-engine-0.13.17.jar"
+: > "$T/engine/tomcat-embed-core-11.0.21.jar"
+
+# [app] main 与 [engine] 段互斥：spec 里同时写 main 和 [engine] init 直接报错
 cat > "$T/bad.jstart" <<INI
 [app]
 entry = $T/app.war
 main = org.example.Main
-engine = tomcat
+
+[engine]
+init = $T/engine/init.sh
 INI
 out="$("$JSTART" --local="$REPO" --quiet run --print "$T/bad.jstart" 2>&1)"; code=$?
 check "main+engine rejected" "$code" 1 "mutually exclusive"
 
-# --print 只打印引擎准备命令，不真的运行入口 main；引擎 jar 用本地空文件即可
-mkdir -p "$T/engine"
-: > "$T/engine/beangle-sas-engine-0.13.17.jar"
-: > "$T/engine/tomcat-embed-core-11.0.21.jar"
-cat > "$T/app.jstart" <<INI
+# [app] engine 已移除：告警提示改用 [engine] init（不再是引擎声明）
+cat > "$T/oldkey.jstart" <<INI
 [app]
 entry = $T/app.war
 engine = tomcat
+INI
+out="$("$JSTART" --local="$REPO" run --print "$T/oldkey.jstart" 2>&1)"; code=$?
+check "[app] engine removed" "$code" 1 "已移除"
+
+# war 必须显式声明引擎：jstart 无内置引擎目录，也不从 .war 后缀反推
+cat > "$T/noengine.jstart" <<INI
+[app]
+entry = $T/app.war
+INI
+out="$("$JSTART" --local="$REPO" --quiet run --print "$T/noengine.jstart" 2>&1)"; code=$?
+check "war needs engine" "$code" 1 "init = <script>"
+
+cat > "$T/nodeps.jstart" <<INI
+[app]
+entry = $T/app.war
 
 [engine]
+$T/engine/tomcat-embed-core-11.0.21.jar
+INI
+out="$("$JSTART" --local="$REPO" --quiet run --print "$T/nodeps.jstart" 2>&1)"; code=$?
+check "engine needs init" "$code" 1 "needs an init script"
+
+# --print 只打印引擎准备命令，不真的运行 init 脚本
+cat > "$T/app.jstart" <<INI
+[app]
+entry = $T/app.war
+
+[engine]
+init = $T/engine/init.sh
 $T/engine/beangle-sas-engine-0.13.17.jar
 $T/engine/tomcat-embed-core-11.0.21.jar
 
@@ -196,15 +234,16 @@ $T/engine/tomcat-embed-core-11.0.21.jar
 --path=/demo
 INI
 out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.jstart" --port=8080 --base="$T/sas" 2>&1)"; code=$?
-check "war print exit" "$code" 0 "org.beangle.sas.engine.tomcat.EmbedCreator"
-check "war engine jar" "$code" 0 "beangle-sas-engine-0.13.17.jar"
+check "war print exit" "$code" 0 "$T/engine/init.sh"
 check "war entry" "$code" 0 "--entry=$T/app.war"
-check "war classpath" "$code" 0 "--app-classpath-file="
+check "war engine classpath" "$code" 0 "--engine-classpath-file="
+check "war app classpath" "$code" 0 "--app-classpath-file="
+check "war local repo" "$code" 0 "--local-repo="
 check "war port" "$code" 0 "'--port=8080'"
 check "war context" "$code" 0 "'--path=/demo'"
-check "war ignores --main" "$code" 0 "ignored for war targets"
+check "war ignores --main" "$code" 0 "ignored for engine targets"
 # --base 是根：组件目录 <根>/<组件键> 由 jstart 建（spec 目标的组件键取 spec 文件名）
-# jstart 不再自己爆炸 war：docBase 布局与爆炸都归引擎入口 main（见 docs/engine.md）
+# jstart 不再自己爆炸 war：docBase 布局与爆炸都归引擎 init 脚本（见 docs/engine.md）
 warBase="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
 case "$warBase" in
   "$T/sas"/app.jstart-*) ;;
@@ -383,45 +422,37 @@ else
   echo "skip jar stop test (javac/java missing)"
 fi
 
-echo "== war engine end-to-end: entry main -> entry-out argv -> exec =="
+echo "== war engine end-to-end: init script -> entry-out argv -> exec =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
-  # 一个最小引擎入口 main：把最终 argv（NUL 分隔）写到 --entry-out，jstart 再 exec 它。
-  # [app] engine 用 FQCN，覆盖完整协议：准备 -> entry-out -> exec（不依赖真实 sas）。
+  # 一个最小引擎 init 脚本：读 jstart 写好的 classpath 文件，把最终 argv（NUL 分隔）
+  # 写到 --entry-out，jstart 再 exec 它。覆盖完整协议：准备 -> entry-out -> exec
+  # （不依赖真实 sas）。
   mkdir -p "$T/fakeengine/META-INF"
-  cat > "$T/src/org/jstarttest/FakeEngine.java" <<'JAVA'
-package org.jstarttest;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
-import java.io.File;
-public class FakeEngine {
-    public static void main(String[] args) throws Exception {
-        String entryOut = null, appCp = "";
-        for (String a : args) {
-            if (a.startsWith("--entry-out=")) entryOut = a.substring("--entry-out=".length());
-            else if (a.startsWith("--app-classpath-file=")) {
-                java.nio.file.Path f = java.nio.file.Paths.get(a.substring("--app-classpath-file=".length()));
-                if (java.nio.file.Files.exists(f)) appCp = new String(java.nio.file.Files.readAllBytes(f), "UTF-8").trim();
-            }
-        }
-        String java = System.getProperty("java.home") + "/bin/java";
-        String cp = System.getProperty("java.class.path");
-        if (appCp.length() > 0) cp = cp + File.pathSeparator + appCp;
-        String[] argv = {java, "-cp", cp, "org.jstarttest.Sleeper"};
-        try (OutputStream os = new FileOutputStream(entryOut)) {
-            for (String s : argv) { os.write(s.getBytes("UTF-8")); os.write(0); }
-        }
-    }
-}
-JAVA
-  javac -d "$T/fakeengine" "$T/src/org/jstarttest/FakeEngine.java" "$T/src/org/jstarttest/Sleeper.java"
+  javac -d "$T/fakeengine" "$T/src/org/jstarttest/Sleeper.java"
   (cd "$T/fakeengine" && zip -qr "$T/fake-engine.jar" .)
+  cat > "$T/fake-engine-init" <<'SH'
+#!/usr/bin/env bash
+set -e
+entryOut=""; engineCpFile=""; appCpFile=""
+for a in "$@"; do
+  case "$a" in
+    --entry-out=*) entryOut="${a#*=}" ;;
+    --engine-classpath-file=*) engineCpFile="${a#*=}" ;;
+    --app-classpath-file=*) appCpFile="${a#*=}" ;;
+  esac
+done
+cp="$(cat "$engineCpFile")"
+if [ -s "$appCpFile" ]; then cp="$cp:$(cat "$appCpFile")"; fi
+printf '%s\0' "$JAVA" -cp "$cp" org.jstarttest.Sleeper > "$entryOut"
+SH
+  chmod +x "$T/fake-engine-init"
 
   cat > "$T/engine.jstart" <<INI
 [app]
 entry = $T/app.war
-engine = org.jstarttest.FakeEngine
 
 [engine]
+init = $T/fake-engine-init
 $T/fake-engine.jar
 INI
   warport=$((20000 + RANDOM % 10000))
@@ -430,7 +461,7 @@ INI
   for i in $(seq 1 120); do grep -q "Pid file" "$T/war-run.log" 2>/dev/null && break; sleep 1; done
   pidW="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-run.log")"
   [ -n "$pidW" ] || { echo "FAIL war pid not recorded" >&2; failures=$((failures + 1)); }
-  # jstart 应 exec 入口 main 写出的 argv（Sleeper 启动并打印 sleeper-up）
+  # jstart 应 exec init 脚本写出的 argv（Sleeper 启动并打印 sleeper-up）
   for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-run.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "sleeper-up" "$T/war-run.log" \
     || { echo "FAIL engine argv not exec'd: $(cat "$T/war-run.log")" >&2; failures=$((failures + 1)); }
@@ -446,9 +477,9 @@ fi
 
 echo "== multi-webapp spec: [subapp] -> <base>/engine-subapps.jstart -> dist engine -> entry-out =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
-  # 一个假的 dist 引擎入口 main：按 --base 约定读 <base>/engine-subapps.jstart（launch spec
-  # 片段），校验 [subapp <id>] 段数、每段的 entry/path 是否完整、entry 是否真实存在、libs
-  # 是否带过来，再 exec 一个回显计划文件的短程序（不依赖真实 sas，也不经命令行传计划）。
+  # 一个假的 dist 引擎 init 脚本：按 --base 约定读 <base>/engine-subapps.jstart（launch
+  # spec 片段），校验 [subapp <id>] 段数、每段的 entry/path 是否完整、entry 是否真实存在、
+  # libs 是否带过来，再 exec 一个回显计划文件的短程序（不依赖真实 sas，也不经命令行传计划）。
   cat > "$T/src/org/jstarttest/PlanEcho.java" <<'JAVA'
 package org.jstarttest;
 import java.nio.file.Files;
@@ -461,69 +492,35 @@ public class PlanEcho {
     }
 }
 JAVA
-  cat > "$T/src/org/jstarttest/FakeDistEngine.java" <<'JAVA'
-package org.jstarttest;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.List;
-public class FakeDistEngine {
-    public static void main(String[] args) throws Exception {
-        String entryOut = null, base = null;
-        for (String a : args) {
-            if (a.startsWith("--entry-out=")) entryOut = a.substring("--entry-out=".length());
-            else if (a.startsWith("--base=")) base = a.substring("--base=".length());
-        }
-        if (entryOut == null || base == null)
-            throw new IllegalStateException("missing args: " + Arrays.toString(args));
-        String planFile = Paths.get(base, "engine-subapps.jstart").toString();
-        List<String> lines = Files.readAllLines(Paths.get(planFile));
-        int apps = 0;
-        boolean portalLibs = false;
-        String id = null, entry = null, path = null;
-        for (String raw : lines) {
-            String l = raw.trim();
-            if (l.isEmpty() || l.startsWith("#")) continue;
-            if (l.startsWith("[") && l.endsWith("]")) {
-                checkSection(id, entry, path);
-                String name = l.substring(1, l.length() - 1).trim();
-                if (!name.startsWith("subapp "))
-                    throw new IllegalStateException("not a subapp section: " + l);
-                id = name.substring("subapp ".length()).trim();
-                entry = null; path = null; apps++;
-            } else if (l.startsWith("entry")) entry = value(l);
-            else if (l.startsWith("path")) path = value(l);
-            else if (l.startsWith("libs")) {
-                if ("portal".equals(id) && l.contains("slf4j-api")) portalLibs = true;
-            } else throw new IllegalStateException("bad plan line: " + l);
-        }
-        checkSection(id, entry, path);
-        if (apps != 2) throw new IllegalStateException("expected 2 subapps, got " + apps);
-        if (!portalLibs) throw new IllegalStateException("portal libs missing from plan");
-        String java = System.getProperty("java.home") + "/bin/java";
-        String cp = System.getProperty("java.class.path");
-        String[] argv = {java, "-cp", cp, "org.jstarttest.PlanEcho", planFile};
-        try (OutputStream os = new FileOutputStream(entryOut)) {
-            for (String s : argv) { os.write(s.getBytes("UTF-8")); os.write(0); }
-        }
-    }
-    private static String value(String l) {
-        int i = l.indexOf('=');
-        return i < 0 ? "" : l.substring(i + 1).trim();
-    }
-    private static void checkSection(String id, String entry, String path) {
-        if (id == null) return;
-        if (entry == null || entry.isEmpty() || path == null || path.isEmpty())
-            throw new IllegalStateException("incomplete subapp " + id);
-        if (!new File(entry).exists()) throw new IllegalStateException("missing entry " + entry);
-    }
-}
-JAVA
-  javac -d "$T/fakedist" "$T/src/org/jstarttest/FakeDistEngine.java" \
-    "$T/src/org/jstarttest/PlanEcho.java"
+  cat > "$T/fake-dist-init" <<'SH'
+#!/usr/bin/env bash
+set -e
+base=""; entryOut=""; engineCpFile=""
+for a in "$@"; do
+  case "$a" in
+    --base=*) base="${a#*=}" ;;
+    --entry-out=*) entryOut="${a#*=}" ;;
+    --engine-classpath-file=*) engineCpFile="${a#*=}" ;;
+  esac
+done
+plan="$base/engine-subapps.jstart"
+[ -f "$plan" ] || { echo "missing plan $plan" >&2; exit 1; }
+apps="$(grep -c '^\[subapp ' "$plan")"
+[ "$apps" = 2 ] || { echo "expected 2 subapps, got $apps" >&2; exit 1; }
+grep -q '^libs = org.slf4j:slf4j-api:2.0.17' "$plan" \
+  || { echo "portal libs missing from plan" >&2; exit 1; }
+grep -q '/portal' "$plan" || { echo "portal path missing" >&2; exit 1; }
+grep -q '/admin' "$plan" || { echo "admin path missing" >&2; exit 1; }
+while IFS= read -r l; do
+  case "$l" in
+    entry*=*) f="${l#entry = }"; [ -f "$f" ] || { echo "missing entry $f" >&2; exit 1; } ;;
+  esac
+done < "$plan"
+cp="$(cat "$engineCpFile")"
+printf '%s\0' "$JAVA" -cp "$cp" org.jstarttest.PlanEcho "$plan" > "$entryOut"
+SH
+  chmod +x "$T/fake-dist-init"
+  javac -d "$T/fakedist" "$T/src/org/jstarttest/PlanEcho.java"
   (cd "$T/fakedist" && zip -qr "$T/fake-dist.jar" .)
 
   mkdir -p "$T/multi-a/WEB-INF/classes" "$T/multi-b/WEB-INF/classes"
@@ -538,8 +535,9 @@ JAVA
   (cd "$T/multi-b" && zip -qr "$T/admin.war" .)
 
   cat > "$T/multi.jstart" <<INI
-[app]
-engine = org.jstarttest.FakeDistEngine
+[engine]
+init = $T/fake-dist-init
+$T/fake-dist.jar
 
 [subapp portal]
 entry = $T/portal.war
@@ -549,9 +547,6 @@ libs = org.slf4j:slf4j-api:2.0.17
 [subapp admin]
 entry = $T/admin.war
 path = /admin
-
-[engine]
-$T/fake-dist.jar
 INI
   "$JSTART" --local="$REPO" --verbose run "$T/multi.jstart" --base="$T/multi-stop" \
     >"$T/multi-run.log" 2>&1 &
@@ -576,7 +571,7 @@ INI
   printf '%s' "$out" | grep -q "admin.war" \
     || { echo "FAIL resolve missing admin entry: $out" >&2; failures=$((failures + 1)); }
   out="$("$JSTART" --local="$REPO" info "$T/multi.jstart" 2>&1)"; code=$?
-  check "info multi-webapp" "$code" 0 "type: multi-webapp"
+  check "info multi-webapp" "$code" 0 "type: engine"
   printf '%s' "$out" | grep -q "path=/admin" \
     || { echo "FAIL info missing admin path: $out" >&2; failures=$((failures + 1)); }
   printf '%s' "$out" | grep -q "libs=1" \
@@ -589,17 +584,14 @@ INI
   fi
   out="$("$JSTART" --local="$REPO" classpath "$T/multi.jstart" 2>&1)"; code=$?
   check "classpath multi-webapp rejected" "$code" 2 "not supported"
-  # 多应用只走 Dist：内嵌别名（tomcat/undertow）在 spec 校验阶段被拒
+  # 多应用必须声明 [engine] init：缺 [engine] 段在校验阶段被拒
   cat > "$T/multi-bad.jstart" <<INI
-[app]
-engine = tomcat
-
 [subapp a]
 entry = $T/portal.war
 path = /a
 INI
   out="$("$JSTART" --local="$REPO" run "$T/multi-bad.jstart" --base="$T/multi-bad" 2>&1)"; code=$?
-  check "multi-webapp rejects embed engine" "$code" 1 "dist engine"
+  check "multi-webapp needs engine" "$code" 1 "ships no built-in engine"
   # stop 只需 base
   out="$("$JSTART" --local="$REPO" stop "$T/multi.jstart" --base="$T/multi-stop" 2>&1)"; code=$?
   check "stop multi-webapp" "$code" 0 "Stopped pid"
@@ -607,6 +599,28 @@ INI
 else
   echo "skip multi-webapp test (javac/java missing)"
 fi
+
+# ===== [app] instance：spec-only 的显式组件目录名（<base 根>/<name>，不拼指纹）
+echo "== [app] instance =="
+cat > "$T/inst.jstart" <<INI
+[app]
+entry = $SLEEPER
+base = $T/inst-root
+instance = named-one
+INI
+"$JSTART" --verbose run "$T/inst.jstart" --port=8085 >"$T/inst.log" 2>&1 &
+sleep 3
+pidN="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/inst.log")"
+[ -n "$pidN" ] || { echo "FAIL instance spec start" >&2; failures=$((failures + 1)); }
+[ -f "$T/inst-root/named-one/app.pid" ] \
+  || { echo "FAIL instance dir should be <base 根>/<name>" >&2; failures=$((failures + 1)); }
+# instance 只在 spec 里：spec 读不到时 stop 明确提示并回退（不是静默跳过）
+out="$("$JSTART" stop "$T/inst-missing.jstart" 2>&1)"; code=$?
+check "stop without readable spec hints instance" "$code" 3 "cannot read launch spec"
+sweep "$(printf '%s' "$out" | sed -n 's/^No pid file \(.*\): nothing to stop.*/\1/p')"
+out="$("$JSTART" stop "$T/inst.jstart" 2>&1)"; code=$?
+check "stop instance spec" "$code" 0 "Stopped pid"
+proc_gone "$pidN" || { echo "FAIL instance pid still alive" >&2; failures=$((failures + 1)); }
 
 echo
 if [ "$failures" -gt 0 ]; then

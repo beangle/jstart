@@ -4,11 +4,16 @@
  * A spec declares the main class (Java only), the application entry
  * (gav/http/file/dir), the runtime executable and its options, application
  * args, an optional extension libs list (`[libs]`, merged over the entry's
- * built-in dependency manifest) and, for war entries, the built-in engine
- * (see docs/war-engine.md), turning `run` into a complete
+ * built-in dependency manifest) and, for engine targets, an `[engine]`
+ * section holding an `init` script (the engine entry point) plus the engine
+ * jars (see docs/engine.md), turning `run` into a complete
  * "how to start" description. A spec may instead declare several
  * `[subapp <id>]` sections (entry + context path + optional extension libs)
- * so one dist engine runs several webapps in one JVM (see docs/engine.md).
+ * so one engine runs several webapps in one JVM.
+ * The parsed result also carries a derived launch type (`app`/`engine`):
+ * it is not a spec key but a conclusion drawn by jstart from whether the
+ * spec declares an engine, so callers can branch on "run an application"
+ * vs "run through an engine" (see `launchType`).
  * See docs/launch-spec.md for the format and design decisions.
  */
 module jstart.spec;
@@ -18,10 +23,30 @@ import std.array : split;
 import std.format : format;
 import std.string : indexOf, replace, startsWith, strip;
 
-import jstart.engine : builtinEngineNames, distTomcatEntryMain, isEmbedEntryMain;
+import jstart.base : isSafeInstanceName;
 
 /// Launch spec suffix: a spec target must be named <name>.jstart.
 immutable string[] specExtensions = [".jstart"];
+
+/**
+ * 启动模型：jstart 由**解析结果**推导的目标类型，故意不写成 spec 键。
+ *
+ * - `app`：直接 exec 运行时——java 跑 jar/解压目录，或 native（tar.gz）可执行文件；
+ * - `engine`：先跑 spec 的**引擎 init 脚本**准备容器环境（解压 war/发行包、写容器
+ *   配置），再 exec 它写出的命令。
+ *
+ * 判定只看**是否声明了引擎**（`[engine]` 段，或 `[subapp <id>]` 多 webapp）；
+ * jstart 不再从 war 后缀之类反推，也不内置任何引擎目录——没有声明引擎就是普通 `app`。
+ */
+enum LaunchType {
+  app,
+  engine,
+}
+
+/// LaunchType 的稳定文本名（`info` 输出与日志用）。
+string launchTypeName(LaunchType t) {
+  return t == LaunchType.engine ? "engine" : "app";
+}
 
 /// 单个 subapp 的声明（`[subapp <id>]` 段）：一个引擎跑多个应用时用。
 struct SubappSpec {
@@ -56,6 +81,10 @@ struct LaunchSpec {
   /// the pid file, the native extraction and the war explosion all live below
   /// it. One base runs one instance of a component.
   string base;
+  /// [app] instance: explicit component directory name below the base root,
+  /// used verbatim (<root>/<instance>). Without it the directory key is
+  /// derived from the target. Must be a safe path segment; optional.
+  string instance;
   /// Runtime options, in order (each spec line is one option; java -X/-D,
   /// python -O, ...).
   string[] runtimeOptions;
@@ -66,16 +95,38 @@ struct LaunchSpec {
   /// 文件同语法（gav/本地文件/远程 url）；一行也可逗号分隔多个 gav。native 等
   /// 无内置清单的 entry 下它就是全部依赖。
   string[] libs;
-  /// Engine selection ([app] engine), meaningful only for war entries.
-  /// Empty defaults to "tomcat" at run time; jar/other targets ignore it.
-  string engine;
-  /// Engine dependency lines ([engine] section), same syntax as deps.
+  /// Engine entry script ([engine] init = <path>): the engine's init program.
+  /// jstart runs it to prepare the container and write the final launch
+  /// command; it is a script/executable file path, never a java class.
+  string engineInit;
+  /// Engine dependency lines ([engine] section, excluding `init`), same
+  /// syntax as [libs].
   string[] engineDeps;
-  /// Whether an [engine] section was present (even when empty); when
-  /// present its lines are authoritative and no built-in catalog is used.
-  bool hasEngineDeps;
+  /// Whether an [engine] section was present. It is the only source of
+  /// engine jars and of the init script: jstart ships no built-in catalog,
+  /// so engine targets must have this set (see jstart.engine).
+  bool hasEngine;
   /// 多应用：[subapp <id>] 段逐个声明，空表示单应用 spec（[app] entry）。
   SubappSpec[] subapps;
+
+  /// 见文件级 `launchType`：由解析结果（而非 spec 键）推导的启动模型。
+  LaunchType type() const {
+    return launchType(this);
+  }
+}
+
+/**
+ * 由解析结果推导启动模型 `LaunchType`：**声明了引擎才是 engine**。
+ *
+ * engine 的判据：存在 `[engine]` 段、或有 `[subapp <id>]` 多 webapp（多应用本质
+ * 就是引擎目标）。其余一律 app。jstart 不从 entry 的 `.war` 后缀反推 engine，也不
+ * 内置引擎目录——war 想跑就必须显式声明引擎。
+ */
+LaunchType launchType(in LaunchSpec spec) {
+  if (spec.subapps.length > 0 || spec.hasEngine) {
+    return LaunchType.engine;
+  }
+  return LaunchType.app;
 }
 
 /**
@@ -130,7 +181,7 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
         warnings ~= format("line %d: [deps] 已改名为 [libs]，请更新 spec", i + 1);
         section = "libs";
       } else if (section == "engine") {
-        spec.hasEngineDeps = true; // [engine] 段存在即为准
+        spec.hasEngine = true; // [engine] 段存在即为准
       } else if (section != "app" && section != "runtime" && section != "args"
           && section != "libs") {
         warnings ~= format("line %d: unknown section [%s]", i + 1, section);
@@ -169,8 +220,12 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
           case "base":
             spec.base = value;
             break;
+          case "instance":
+            spec.instance = value;
+            break;
           case "engine":
-            spec.engine = value;
+            warnings ~= format("line %d: [app] engine 已移除：引擎入口改由 [engine] init"
+                ~ " = <脚本> 指定（脚本是文件路径，不是 java 类）", i + 1);
             break;
           default:
             warnings ~= format("line %d: unknown [app] key %s", i + 1, key);
@@ -186,7 +241,18 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
         spec.libs ~= raw;
         break;
       case "engine":
-        spec.engineDeps ~= raw;
+        auto eq = raw.indexOf("=");
+        auto key = eq < 0 ? "" : raw[0 .. eq].strip;
+        if (key == "init") {
+          auto value = raw[eq + 1 .. $].strip;
+          if (value.length == 0) {
+            warnings ~= format("line %d: [engine] init needs a script path", i + 1);
+          } else {
+            spec.engineInit = value;
+          }
+        } else {
+          spec.engineDeps ~= raw;
+        }
         break;
       case "subapp":
         auto eq = raw.indexOf("=");
@@ -265,39 +331,36 @@ private string normalizeContextPath(string p) {
  * Cross-key invariants the line parser cannot enforce on its own. Returns an
  * error message, or "" when the spec is consistent.
  *
- * `[app] main` and `[app] engine` are mutually exclusive: a jar with a main
- * class is launched directly by java, while a war's application entry is the
- * engine's entry main. An [engine] dependency section only applies together
- * with an engine, so it conflicts with [app] main too.
+ * `[app] main` and `[engine]` are mutually exclusive: a jar with a main
+ * class is launched directly by java, while an engine target is started by
+ * its `[engine] init` script. An [engine] section must always declare an
+ * `init` script. `[app] instance`, when given, must be a safe path segment.
  */
 string validateLaunchSpec(LaunchSpec spec) {
+  if (spec.instance.length > 0 && !isSafeInstanceName(spec.instance)) {
+    return format("[app] instance `%s` must be a single safe path segment"
+        ~ " ([A-Za-z0-9._-], not `.` or `..`)", spec.instance);
+  }
   if (spec.subapps.length > 0) {
     if (spec.entry.length > 0) {
       return "[app] entry conflicts with [subapp <id>] sections: use one form or the other";
     }
     if (spec.main.length > 0) {
-      return "[app] main conflicts with [subapp <id>] sections: a subapp runs an engine entry main";
+      return "[app] main conflicts with [subapp <id>] sections: a subapp is started by the"
+          ~ " engine init script, not by a java main class";
     }
     if (spec.libs.length > 0) {
       return "[libs] conflicts with [subapp <id>] sections: each subapp declares its own"
           ~ " extension libs and reads its war's META-INF/beangle/dependencies";
     }
-    if (spec.engine.length > 0) {
-      auto head = spec.engine;
-      auto dash = head.indexOf("-");
-      if (dash >= 0) {
-        head = head[0 .. dash];
-      }
-      if (builtinEngineNames.canFind(head)) {
-        return format("[app] engine = %s is the embedded (single-webapp) engine, but"
-            ~ " [subapp <id>] needs the dist engine, which runs several contexts in one JVM;"
-            ~ " drop [app] engine or give the dist entry main", spec.engine);
-      }
-      if (isEmbedEntryMain(spec.engine)) {
-        return format("[app] engine = %s is an embedded (single-webapp) entry main, but"
-            ~ " [subapp <id>] needs the dist engine, which runs several contexts in one JVM"
-            ~ " (e.g. %s)", spec.engine, distTomcatEntryMain);
-      }
+    // 多应用本质是引擎目标：必须显式声明引擎 init 脚本，没有缺省。
+    if (!spec.hasEngine) {
+      return "[subapp <id>] needs an [engine] section: add `[engine]` with"
+          ~ " `init = <script>`; jstart ships no built-in engine.";
+    }
+    if (spec.engineInit.length == 0) {
+      return "[subapp <id>] needs [engine] init = <script>: declare the engine entry"
+          ~ " script that starts the container; jstart ships no built-in engine.";
     }
     string[] paths;
     string[] ids;
@@ -322,16 +385,17 @@ string validateLaunchSpec(LaunchSpec spec) {
       paths ~= normalized;
     }
   }
+  // 单应用 engine 目标：声明了 [engine] 段就必须给 init 脚本（脚本是文件路径，不是类）。
+  if (spec.hasEngine && spec.engineInit.length == 0) {
+    return "[engine] needs an init script: add `init = <script>` (the engine entry"
+        ~ " program, a file path, not a java class).";
+  }
   if (spec.main.length == 0) {
     return "";
   }
-  if (spec.engine.length > 0) {
-    return "[app] main conflicts with [app] engine: they are mutually exclusive "
-        ~ "(a jar runs its main class directly, a war runs an engine entry main)";
-  }
-  if (spec.hasEngineDeps) {
+  if (spec.hasEngine) {
     return "[app] main conflicts with the [engine] section: they are mutually exclusive "
-        ~ "(engine dependencies only apply to war/directory targets)";
+        ~ "(a jar runs its main class directly, an engine target runs its [engine] init script)";
   }
   return "";
 }

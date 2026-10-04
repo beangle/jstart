@@ -2,26 +2,39 @@
 
 ## Unreleased
 
-- **war 引擎协议**：应用依赖 classpath 改由文件传递——jstart 写
-  `<base>/engine-app.classpath`，入口 main 用 `--app-classpath-file=` 读取，避免命令行
-  过长；入口 main 写出的最终命令过长时会折叠成 java 参数文件（`java @<file>`），由
-  java launcher 展开
-- **全量 tomcat**：`[app] engine = org.beangle.sas.engine.tomcat.ServerCreator` 可用（原
-  beangle/sas `TomcatMaker` 的能力已收敛到该入口 main）：解压并精简 tomcat 发行包、
-  生成 `conf/web.xml`/`conf/server.xml`、装 lib，`--jsp=`/`--listener=`/`--dist=` 等经
-  `[args]` 或命令行透传
+- **引擎入口改为 `[engine] init` 脚本（去掉 `[app] engine`）**：引擎入口不再是 java
+  入口类/内置别名，而是 spec 里 `[engine] init = <脚本路径>` 声明的**脚本/可执行文件**
+  （`~`/`${VAR}` 展开）。jstart 不做别名/FQCN 映射、不内置任何入口类；`[app] engine`
+  已移除（写了会被告警忽略）。jstart 跑脚本准备容器环境，脚本把最终命令（NUL 分隔
+  argv）写入 `--entry-out`，jstart 再 exec；参数含 `--base`/`--entry`/
+  `--engine-classpath-file`/`--app-classpath-file`/`--local-repo`/`--entry-out`/
+  `--app-jvm-arg` 与透传参数，协议见 docs/engine.md
+- **移除内置引擎依赖目录**：不再内置 tomcat/undertow/Dist 的 jar 清单（保持引擎中立），
+  引擎 + 容器 jar 由 `[engine]` 段除 `init` 外的行逐行罗列（原样解析、**不支持
+  `{tomcat.version}`/`{sas.version}` 占位符**，依赖可留空）；缺 `[engine]` 或缺 `init`
+  会报错并提示补全，多应用 spec 同样必须显式给 `init`。`[engine]` 行支持 gav/本地文件/
+  远程 url，与 `[libs]` 同语法
+- **启动模型 `LaunchType`（解析结果派生，不是 spec 键）**：jstart 解析 spec 后给每个目标
+  派生 `app`/`engine` 两种类型——`app` 直接 exec 运行时（java 跑 jar/目录、native 可执行
+  文件），`engine` 先跑 `[engine] init` 脚本再 exec 它写出的命令。判定**只看是否声明了
+  引擎**（`[engine]` 段，或 `[subapp <id>]` 多 webapp），不再从 war 后缀反推；没有引擎
+  声明的 war 会报错提示补声明。`info` 的 `type:` 改为输出该模型（`app`/`engine`，多应用
+  为 `engine`）并给 `engine init:` 行，entry 的构件形态另用 `entry type:`
+  （`jar`/`war`/`dir`/`native`/`file`）报告
+- **war 引擎协议**：引擎与应用依赖的 classpath 都改由文件传递——jstart 写
+  `<base>/engine-deps.classpath` 与 `<base>/engine-app.classpath`，init 脚本用
+  `--engine-classpath-file=`/`--app-classpath-file=` 读取，避免命令行过长；脚本写出的
+  最终命令过长时会折叠成 java 参数文件（`java @<file>`），由 java launcher 展开
 - **多 webapp spec**：单个 spec 用若干 `[subapp <id>]` 段（`entry`/`path`，可选 `libs`）
-  声明多个 webapp，由一个 **Dist 引擎**在同一 JVM 里各建一个 context。多应用只走 Dist
-  模式（内嵌 `tomcat`/`undertow` 别名与 `*EmbedCreator` 在校验阶段被拒），`[app] engine`
-  省略时缺省 ServerCreator；jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库（运行时由
-  每个 Context 自己的 `DependencyClassLoader` 按 war 清单解析，不合并进同一 JVM
-  classpath）。交付文件改走 **launch spec 片段** `<base>/engine-subapps.jstart`
-  （一段一个 `[subapp <id>]`，含 entry/path/libs），引擎按 `--base` 约定读取；`libs` 是
-  per-webapp 的扩展依赖（gav，追加在 war 清单之上，同名以 libs 为准，对齐 sas `Webapp
-  libs`），jstart 先取回本地仓库。`resolve`/`info` 按 webapp 逐个输出，`classpath` 明确
-  拒绝，`stop` 一次停整组
-- **spec 互斥校验**：`[app] main` 与 `[app] engine`/`[engine]` 互斥，同时声明直接报错
-  （jar 跑主类、war 跑引擎 entry main，语义冲突）
+  声明多个 webapp，由 `[engine] init` 脚本在同一 JVM 里各建一个 context。jstart 逐个取回
+  webapp 并把各自依赖补齐到本地仓库（运行时由每个 Context 自己的 `DependencyClassLoader`
+  按 war 清单解析，不合并进同一 JVM classpath）。交付文件走 **launch spec 片段**
+  `<base>/engine-subapps.jstart`（一段一个 `[subapp <id>]`，含 entry/path/libs），脚本按
+  `--base` 约定读取；`libs` 是 per-webapp 的扩展依赖（gav，追加在 war 清单之上，同名以
+  libs 为准，对齐 sas `Webapp libs`），jstart 先取回本地仓库。`resolve`/`info` 按 webapp
+  逐个输出，`classpath` 明确拒绝，`stop` 一次停整组
+- **spec 互斥校验**：`[app] main` 与 `[engine]` 段互斥，同时声明直接报错（jar 跑主类、
+  引擎目标由 init 脚本启动，语义冲突）
 - **`[deps]` 段改名 `[libs]`，语义改为追加/覆盖**：不再"存在即替换 entry 内置清单"，
   而是**追加在**内置清单之上。**覆盖规则**：按 `groupId:artifactId` 判同名（不看版本、
   打包/classifier），同名时取 `[libs]` 的那条、版本用 `[libs]` 的，内置同名项整条丢弃
@@ -31,16 +44,16 @@
 - **实例目录与 `stop`**：`stop <target>` 按 pid 文件停止 `run` 启动的实例（SIGTERM；
   `--timeout=<sec>` 缺省 15 秒，`--force` 超时后 SIGKILL；未运行 exit 3 并清理残留
   pid 文件）。实例身份 = 组件键 + base，`--base=<dir>` 换 base 根（默认
-  `/var/tmp/jstart`）、`--instance=<name>` 命名副本目录（`<根>/<name>-<组件指纹>`），
-  同一 base 只跑一个实例
+  `/var/tmp/jstart`）；launch spec 可用 `[app] base` 固定根、`[app] instance = <name>`
+  显式命名组件目录（`<根>/<name>`，不拼指纹），同一 base 只跑一个实例
 - **`--main=<class>` 覆盖主类**：run/classpath/info 指定 java 主类，优先于
   `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，
   war/native 目标告警忽略（空值或明显不是类名时用法错误 exit 2）
 - **输出节制**：默认只输出告警/错误与命令结果；`--verbose`/`-v` 追加解析、下载、写 pid、
-  引擎入口 main 的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 在默认之上再关闭
+  init 脚本的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 在默认之上再关闭
   告警（两者同给以 `--quiet` 为准，错误仍由退出码体现）
-- 引擎入口 main 的命令行附带 `--Dsas.repo=<本地仓库>`（jstart 的 `--local`，默认
-  `~/.m2/repository`），供容器内 `DependencyClassLoader` 解析 war 内置依赖
+- init 脚本的命令行附带 `--local-repo=<本地仓库>`（jstart 的 `--local`，默认
+  `~/.m2/repository`），供脚本给容器注入 `-Dsas.repo=` 等属性
 
 ## v0.0.1 (2026-09-07)
 
