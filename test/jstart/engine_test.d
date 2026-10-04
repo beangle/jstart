@@ -8,10 +8,13 @@
 module test.jstart.engine_test;
 
 import std.conv : to;
+import std.process : environment;
+import std.string : endsWith;
 
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile;
 import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
-  entryClasspathFile, parseEntryArgv, subappsPlanFile;
+  entryClasspathFile, engineInitArgv, findOnPath, isProgramPath, parseCommandLine,
+  parseEntryArgv, resolveEngineInit, subappsPlanFile;
 
 unittest {
   // --entry-out：NUL 分隔 argv；忽略结尾 NUL 与手写换行；保留中间空参数。
@@ -48,4 +51,52 @@ unittest {
   assert(entryClasspathFile == "engine-app.classpath");
   assert(engineDepsClasspathFile == "engine-deps.classpath");
   assert(subappsPlanFile == "engine-subapps.jstart");
+}
+
+unittest {
+  // [engine] init 命令分词：空白分隔、引号成组、反斜杠转义；不经过 shell。
+  assert(parseCommandLine("") == []);
+  assert(parseCommandLine("   ") == []);
+  assert(parseCommandLine("/opt/bin/init") == ["/opt/bin/init"]);
+  assert(parseCommandLine("basctl make tomcat-dist")
+      == ["basctl", "make", "tomcat-dist"]);
+  assert(parseCommandLine("/opt/my dir/init.sh") == ["/opt/my", "dir/init.sh"]);
+  assert(parseCommandLine(`"/opt/my dir/init.sh"`) == ["/opt/my dir/init.sh"]);
+  assert(parseCommandLine(`'/opt/my dir/init.sh'`) == ["/opt/my dir/init.sh"]);
+  assert(parseCommandLine(`sh -c 'echo hi'`) == ["sh", "-c", "echo hi"]);
+  assert(parseCommandLine(`a\ b`) == ["a b"]);
+  assert(parseCommandLine(`""`) == [""]);
+  assert(parseCommandLine("basctl make tomcat-dist  --port=1")
+      == ["basctl", "make", "tomcat-dist", "--port=1"]);
+}
+
+unittest {
+  // 程序 token 判定：含分隔符或 `.`/`~` 前缀按路径，否则按 PATH 查找。
+  assert(isProgramPath("/opt/bin/init"));
+  assert(isProgramPath("./init"));
+  assert(isProgramPath("~/bin/init"));
+  assert(!isProgramPath("basctl"));
+  assert(!isProgramPath("java"));
+  assert(findOnPath("sh").length > 0, "sh should be on PATH");
+  assert(findOnPath("jstart-definitely-missing-cmd").length == 0);
+}
+
+unittest {
+  // resolveEngineInit：路径缺失置 missing；裸命令名解析成 PATH 上的绝对路径。
+  bool missing;
+  auto absent = resolveEngineInit("/nonexistent/basctl-init", missing);
+  assert(absent == ["/nonexistent/basctl-init"]);
+  assert(missing);
+
+  bool shMissing;
+  auto sh = resolveEngineInit("sh", shMissing);
+  assert(!shMissing);
+  assert(sh.length == 1 && isProgramPath(sh[0]) && sh[0].endsWith("/sh"));
+}
+
+unittest {
+  // 变量展开发生在分词之后：展开出的空格仍属于同一个 argv。
+  environment["JSTART_TEST_WORD"] = "a b";
+  scope (exit) environment.remove("JSTART_TEST_WORD");
+  assert(engineInitArgv("run ${JSTART_TEST_WORD} done") == ["run", "a b", "done"]);
 }

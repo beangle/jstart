@@ -26,7 +26,7 @@ jstart [options] <command> <target> [args...]
 | `--force` | run：base 上的实例仍在运行时也照常启动（覆盖旧 pid 文件）；stop：超时后改用 SIGKILL |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
 | `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
-| `--verbose` / `-v` | 输出过程细节：解析、下载、写 pid、将执行的启动命令与 init 脚本的 stdout（默认只输出告警/错误与命令结果） |
+| `--verbose` / `-v` | 输出过程细节：解析、下载、写 pid、将执行的启动命令与 init 命令的 stdout（默认只输出告警/错误与命令结果） |
 | `--quiet` / `-q` | 在默认之上再关闭告警，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
@@ -76,13 +76,13 @@ jstart [options] run <target> [args...]
 
 流程：解析目标 → 准备依赖 → 写 pid 文件（见"组件 base 与 pid 文件"）→ 定主类 →
 `execvp` 把自身替换为运行时
-（jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎 init 脚本再 exec 容器，见
+（jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎 init 命令再 exec 容器，见
 [engine.md](engine.md)/[war-engine.md](war-engine.md)；native tar.gz 目标 exec 包内
 可执行文件，见下文“native（tar.gz）目标”）：
 
 ```text
 java <runtime-options> -cp <classpath> <Main-Class> [app-args...]        # jar
-<init 脚本> --base=<base> --entry=<war|dir> ... --entry-out=<file>       # war（阶段 1）
+<init 命令> --base=<base> --entry=<war|dir> ... --entry-out=<file>       # war（阶段 1）
 java <runtime-options> -cp <classpath> <容器 main> --base=<base> ...     # war（阶段 2）
 <解压出的可执行文件> [args...]                                           # native tar.gz
 ```
@@ -98,7 +98,7 @@ jstart run app.jar --main=com.example.Tool --port=8080   # 其余参数照常透
 jstart --quiet --main=com.example.Tool classpath app.jar  # 脚本口径同步
 ```
 
-> war 的入口由 `[engine] init` 脚本决定，native 用 `[app] exec`；
+> war 的入口由 `[engine] init` 命令决定，native 用 `[app] exec`；
 > 这两种目标上给 `--main`/`[app] main` 会告警忽略。主类不参与实例身份：同一个 target
 > 换主类仍是同一个 base（要并行跑请配 `--base`，或在 spec 里写 `[app] instance`）。
 
@@ -118,18 +118,19 @@ target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
 
 war 目标必须在 **launch spec** 里用 `[app] entry` 声明（`run` 不接受裸 war：本地
 `app.war`、gav、url 落盘为 `.war` 都会报错并提示写 spec；`resolve`/`fetch`/`repo`
-不受此限制）。声明后进入引擎流程：jstart 先运行**引擎 init 脚本**准备环境（解压
+不受此限制）。声明后进入引擎流程：jstart 先运行**引擎 init 命令**准备环境（解压
 war/发行包、生成容器配置、推导 docBase），再 exec 它写出的最终命令（进程变为容器）。
 `base` 是组件的运行目录 `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`，
 `--base=` / `[app] base`（根）与 `[app] instance`（显式目录名）可换；
-`--path=` 由 init 脚本消费（jstart 只透传）。
+`--path=` 由 init 命令消费（jstart 只透传）。
 jstart **不内置引擎依赖目录**（保持引擎中立），`[engine]` 段必须由 spec 显式声明：
-`init = <脚本路径>` 指定引擎入口（**文件路径，不是 java 类**，`~`/`${VAR}` 会展开）；
+`init = <路径|命令>` 指定引擎 init 命令（**命令行**：最简是可执行文件/脚本路径，也可
+带参数如 `basctl make tomcat-dist`；不是 java 类；`~`/`${VAR}` 会展开）；
 引擎 + 容器 jar 用其余行逐行罗列（语法同 `[libs]`，无占位符，版本直接写）。`[app]
 engine` 已移除（写了会被告警忽略）。没有引擎声明的 war 会报错提示补声明——见
 [war-engine.md](war-engine.md)。
 `--base` 是 jstart 的 base 选项（`[args]` 里的 `--base=` 会被丢弃），其余参数
-（`--port=`/`--path=` 等）原样透传给 init 脚本——协议见 [engine.md](engine.md)、
+（`--port=`/`--path=` 等）原样透传给 init 命令——协议见 [engine.md](engine.md)、
 用法见 [war-engine.md](war-engine.md)。
 
 最小的 war spec：
@@ -138,8 +139,8 @@ engine` 已移除（写了会被告警忽略）。没有引擎声明的 war 会�
 [app]
 entry = gav://org.example:webapp:0.0.1:war   # 或本地 /path/app.war
 
-[engine]                                      # 必填：init 脚本 + 引擎/容器 jar
-init = /opt/engine/bin/tomcat-init            # 入口脚本（文件路径，不是 java 类）
+[engine]                                      # 必填：init 命令 + 引擎/容器 jar
+init = /opt/engine/bin/tomcat-init            # init 命令（路径，或“程序 + 参数”；不是 java 类）
 org.beangle.sas:beangle-sas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -246,9 +247,9 @@ dep 2: http https://repo.example.com/lib.jar -> /home/user/.m2/repository/repo.e
 
 - `kind`：`gav`（maven 构件，命中本地快照库时 `path` 为时间戳文件）/ `local` / `http`；
 - `type`：**启动模型**，由解析结果推导而非 spec 键——`app`（直接 exec 运行时：java 跑
-  jar/目录、或 native 可执行文件）或 `engine`（先跑引擎 init 脚本准备容器，再 exec 它写
+  jar/目录、或 native 可执行文件）或 `engine`（先跑引擎 init 命令准备容器，再 exec 它写
   出的命令）。**只看是否声明了引擎**：写了 `[engine]` 段（或有 `[subapp <id>]`）就是
-  `engine`，否则是 `app`；engine 目标会额外给一行 `engine init: <脚本路径>`；见
+  `engine`，否则是 `app`；engine 目标会额外给一行 `engine init: <路径或命令行>`；见
   [launch-spec.md](launch-spec.md)（"启动模型"）。
 - `entry type`：entry 的**构件形态**——`jar`/`war`/`dir`（解压目录）/`native`（tar.gz
   发行包）/`file`（其它本地文件）；`native` 时额外给出 `archive`（本地包路径）与 `root`
@@ -474,9 +475,9 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
 | `<base>/app.pid` | 一个 base 一份 | `run` 写、`stop` 读；检测到真实进程仍在运行即拒绝重复启动 |
 | `<base>/app/` | 一个 base 一份 | native（tar.gz）的解压树（`.jstart.stamp` 在内），标记匹配时复用 |
 | `<base>/webapps/<ctx>/` | 一个 base 一份 | 引擎解压出的 docBase（引擎拿到的 `--base` 就是组件目录） |
-| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 脚本 |
-| `<base>/engine-deps.classpath` | 一个 base 一份 | 引擎依赖 classpath，经 `--engine-classpath-file` 交给 init 脚本 |
-| `<base>/engine-entry.argv` | 一个 base 一份 | init 脚本写出的最终启动命令（NUL 分隔 argv） |
+| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 命令 |
+| `<base>/engine-deps.classpath` | 一个 base 一份 | 引擎依赖 classpath，经 `--engine-classpath-file` 交给 init 命令 |
+| `<base>/engine-entry.argv` | 一个 base 一份 | init 命令写出的最终启动命令（NUL 分隔 argv） |
 
 - **组件键**：target 短名 + 短指纹（本地路径先绝对化；不含任何应用参数），因此同一个 target
   无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；spec 写了 `[app] instance` 时

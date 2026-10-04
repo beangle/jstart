@@ -13,21 +13,26 @@
  * built-in engine catalog, so it never favours one particular container:
  *
  *   [engine]
- *   init = /opt/engine/bin/acme-tomcat-init     # 必填：引擎入口脚本（文件路径）
- *   org.beangle.sas:beangle-sas-engine:0.13.17  # 引擎 jar（同 [libs] 语法，可选）
+ *   init = /opt/engine/bin/acme-tomcat-init         # 必填：可执行文件路径
+ *   init = basctl make tomcat-dist                # 或命令行（程序 + 参数）
+ *   org.beangle.sas:beangle-sas-engine:0.13.17      # 引擎 jar（同 [libs] 语法，可选）
  *   org.apache.tomcat.embed:tomcat-embed-core:11.0.21
  *
- * The `init` value is a script/executable file path, never a java class;
- * the entry jars come from the other `[engine]` lines. A spec is an engine
- * target exactly when it declares an [engine] section (see
- * jstart.spec.launchType).
+ * The `init` value is a command line (an executable path, optionally with
+ * arguments), never a java class; the entry jars come from the other
+ * `[engine]` lines. A spec is an engine target exactly when it declares an
+ * [engine] section (see jstart.spec.launchType).
  */
 module jstart.engine;
 
 import std.algorithm : endsWith;
 import std.array : split;
+import std.file : exists, isFile;
+import std.path : buildPath;
+import std.process : environment;
+import std.string : indexOf, startsWith;
 
-import jstart.archive : Archive, Artifact;
+import jstart.archive : Archive, Artifact, expandLocalPath;
 
 /**
  * Append engine jars after the application dependencies. An engine gav
@@ -90,6 +95,138 @@ immutable string engineDepsClasspathFile = "engine-deps.classpath";
  * it was given.
  */
 immutable string subappsPlanFile = "engine-subapps.jstart";
+
+/**
+ * `[engine] init` 的取值既可以是**可执行文件路径**，也可以是**命令行**（程序 + 参数）：
+ *
+ *   init = /opt/engine/bin/acme-tomcat-init     # 可执行文件/脚本路径
+ *   init = basctl make tomcat-dist            # 命令行
+ *   init = "/opt/my dir/init.sh" --flag         # 带引号与参数
+ *
+ * 命令行按 shell 规则分词（空白分隔，单/双引号成组，反斜杠转义），但**不经过 shell**：
+ * 没有管道/重定向/通配符，需要时自己写 `sh -c '...'`。分词后再对每个 token 做
+ * `~`/`${VAR}` 展开，因此变量展开出的空格不会把参数拆开。
+ */
+
+/// 按 shell 规则把 `[engine] init` 的值切成 argv（不展开变量，调用方再处理）。
+string[] parseCommandLine(string line) {
+  string[] argv;
+  char[] cur;
+  bool started;
+  enum State { plain, single, double_ }
+  auto state = State.plain;
+  size_t i;
+  while (i < line.length) {
+    auto c = line[i];
+    final switch (state) {
+      case State.plain:
+        if (c == ' ' || c == '\t') {
+          if (started) {
+            argv ~= cur.idup;
+            cur.length = 0;
+            started = false;
+          }
+        } else if (c == '\'') {
+          started = true;
+          state = State.single;
+        } else if (c == '"') {
+          started = true;
+          state = State.double_;
+        } else if (c == '\\' && i + 1 < line.length) {
+          started = true;
+          ++i;
+          cur ~= line[i];
+        } else {
+          started = true;
+          cur ~= c;
+        }
+        break;
+      case State.single:
+        if (c == '\'') {
+          state = State.plain;
+        } else {
+          cur ~= c;
+        }
+        break;
+      case State.double_:
+        if (c == '"') {
+          state = State.plain;
+        } else if (c == '\\' && i + 1 < line.length) {
+          ++i;
+          cur ~= line[i];
+        } else {
+          cur ~= c;
+        }
+        break;
+    }
+    ++i;
+  }
+  if (started) {
+    argv ~= cur.idup;
+  }
+  return argv;
+}
+
+/// `[engine] init` → argv：分词后对每个 token 展开 `~`/`${VAR}`。
+string[] engineInitArgv(string initValue) {
+  auto argv = parseCommandLine(initValue);
+  foreach (ref a; argv) {
+    a = expandLocalPath(a);
+  }
+  return argv;
+}
+
+/// 程序 token 是否按路径解析（含分隔符，或以 `.`/`~` 开头）；否则按 PATH 查找。
+bool isProgramPath(string program) {
+  return program.indexOf('/') >= 0 || program.indexOf('\\') >= 0
+      || program.startsWith(".") || program.startsWith("~");
+}
+
+/// 在 PATH 上查找裸命令名（Windows 追加 PATHEXT）；找不到返回 ""。
+string findOnPath(string name) {
+  version (Windows) {
+    immutable string[] exts = environment.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";");
+    immutable sep = ';';
+  } else {
+    immutable string[] exts = [""];
+    immutable sep = ':';
+  }
+  foreach (dir; environment.get("PATH", "").split(sep)) {
+    if (dir.length == 0) {
+      continue;
+    }
+    foreach (ext; exts) {
+      auto candidate = buildPath(dir, name ~ ext);
+      if (exists(candidate) && isFile(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * 解析 `[engine] init`：返回要执行的 argv（裸命令名解析成 PATH 上的绝对路径）。
+ * `missing` 表示程序没找到（路径不存在，或裸名不在 PATH 上）；`--print` 可忽略它。
+ */
+string[] resolveEngineInit(string initValue, out bool missing) {
+  auto argv = engineInitArgv(initValue);
+  missing = argv.length == 0;
+  if (missing) {
+    return argv;
+  }
+  if (isProgramPath(argv[0])) {
+    missing = !exists(argv[0]) || !isFile(argv[0]);
+  } else {
+    auto found = findOnPath(argv[0]);
+    if (found.length == 0) {
+      missing = true;
+    } else {
+      argv[0] = found;
+    }
+  }
+  return argv;
+}
 
 /**
  * Parse the NUL-separated argv an engine init script wrote to its

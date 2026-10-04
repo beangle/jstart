@@ -218,7 +218,7 @@ entry = $T/app.war
 $T/engine/tomcat-embed-core-11.0.21.jar
 INI
 out="$("$JSTART" --local="$REPO" --quiet run --print "$T/nodeps.jstart" 2>&1)"; code=$?
-check "engine needs init" "$code" 1 "needs an init script"
+check "engine needs init" "$code" 1 "needs an init command"
 
 # --print 只打印引擎准备命令，不真的运行 init 脚本
 cat > "$T/app.jstart" <<INI
@@ -422,7 +422,7 @@ else
   echo "skip jar stop test (javac/java missing)"
 fi
 
-echo "== war engine end-to-end: init script -> entry-out argv -> exec =="
+echo "== war engine end-to-end: init -> entry-out argv -> exec =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   # 一个最小引擎 init 脚本：读 jstart 写好的 classpath 文件，把最终 argv（NUL 分隔）
   # 写到 --entry-out，jstart 再 exec 它。覆盖完整协议：准备 -> entry-out -> exec
@@ -473,6 +473,36 @@ INI
   proc_gone "$pidW" || { echo "FAIL war pid still alive" >&2; failures=$((failures + 1)); }
 else
   echo "skip war engine test (javac/java missing)"
+fi
+
+echo "== [engine] init command form: program + args, no executable wrapper =="
+if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
+  # 同一份引擎逻辑，但去掉可执行位，直接以命令行声明 `init = bash <脚本>`：
+  # 证明 init 支持「程序 + 参数」，不必再准备一个可执行的 wrapper 文件。
+  cp "$T/fake-engine-init" "$T/fake-engine-cmd.sh"
+  chmod -x "$T/fake-engine-cmd.sh"
+  cat > "$T/engine-cmd.jstart" <<INI
+[app]
+entry = $T/app.war
+
+[engine]
+init = bash $T/fake-engine-cmd.sh
+$T/fake-engine.jar
+INI
+  cmdport=$((20000 + RANDOM % 10000))
+  "$JSTART" --local="$REPO" --verbose run "$T/engine-cmd.jstart" --port="$cmdport" --path=/smoke --base="$T/sas-cmd" \
+    >"$T/war-cmd.log" 2>&1 &
+  for i in $(seq 1 120); do grep -q "Pid file" "$T/war-cmd.log" 2>/dev/null && break; sleep 1; done
+  pidC="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-cmd.log")"
+  [ -n "$pidC" ] || { echo "FAIL command-form pid not recorded" >&2; failures=$((failures + 1)); }
+  for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-cmd.log" 2>/dev/null && break; sleep 0.5; done
+  grep -q "sleeper-up" "$T/war-cmd.log" \
+    || { echo "FAIL init command not exec'd: $(cat "$T/war-cmd.log")" >&2; failures=$((failures + 1)); }
+  out="$("$JSTART" --local="$REPO" stop "$T/engine-cmd.jstart" --base="$T/sas-cmd" 2>&1)"; code=$?
+  check "stop command-form init" "$code" 0 "Stopped pid"
+  proc_gone "$pidC" || { echo "FAIL command-form pid still alive" >&2; failures=$((failures + 1)); }
+else
+  echo "skip init command-form test (javac/java missing)"
 fi
 
 echo "== multi-webapp spec: [subapp] -> <base>/engine-subapps.jstart -> dist engine -> entry-out =="

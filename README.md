@@ -49,15 +49,16 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   （见 [docs/launch-spec.md](docs/launch-spec.md)）。
   主类按 `--main=<class>` > launch spec `[app] main` > jar 内 `MANIFEST.MF` 的
   `Main-Class` 确定：jar 的 Main-Class 不适用（或想跑 jar 里/依赖里的另一个类）时用
-  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎 init 脚本启动，
+  `--main=` 覆盖，解压目录这类没有 manifest 的目标也靠它（war 由引擎 init 命令启动，
   native 用 `[app] exec`，给 `--main` 会告警忽略）。
-- war 目标由 spec 声明的**引擎 init 脚本**启动（不再有内置引擎/别名）：jstart 先运行
-  `[engine] init = <脚本路径>`（准备容器环境、写出最终启动命令）再 exec 容器；组件目录
-  默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根。`init` 是脚本/可执行
-  **文件路径**（不是 java 类），jstart 不内置任何引擎目录，引擎与容器 jar 由 `[engine]`
-  其余行逐行写全（同 `[libs]` 语法）；见 [docs/war-engine.md](docs/war-engine.md)。
+- war 目标由 spec 声明的**引擎 init 命令**启动（不再有内置引擎/别名）：jstart 先运行
+  `[engine] init = <路径|命令>`（准备容器环境、写出最终启动命令）再 exec 容器；组件目录
+  默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根。`init` 是一条**命令行**
+  （最简是可执行文件/脚本**路径**，也可带参数，如 `basctl make tomcat-dist`；不是
+  java 类），jstart 不内置任何引擎目录，引擎与容器 jar 由 `[engine]` 其余行逐行写全
+  （同 `[libs]` 语法）；见 [docs/war-engine.md](docs/war-engine.md)。
 - 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，
-  `[engine] init` 脚本负责在同一 JVM 里各建一个 context（通常调用 sas 的 `ServerCreator`），
+  `[engine] init` 命令负责在同一 JVM 里各建一个 context（通常用 basctl 的多 context 入口），
   各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一份 pid
   （`stop` 一次停整组）；见 [docs/engine.md](docs/engine.md)。
 - native（tar.gz）目标：`g:a:tar.gz:<classifier>:v`、本地 `*.tar.gz` 或 `http(s)` url 时，
@@ -72,7 +73,7 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 - 输出分级：默认只输出告警/错误与命令结果（`resolve` 的路径、`classpath` 的
   `Main-Class@classpath`、`fetch` 的本地路径等）；`--verbose`/`-v` 追加解析、下载、
-  写 pid、init 脚本的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连
+  写 pid、init 命令的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连
   告警也关闭。
 
 > **项目约束**：不做传递依赖解析。依赖清单是依赖的唯一来源，应用的全部运行期依赖须由构建期
@@ -90,7 +91,7 @@ dub build -b release --compiler=ldc2        # 产物 target/jstart
 app=$(./target/jstart --quiet resolve /path/to/app.jar)
 
 # 声明式启动：launch spec（.jstart，本地路径或 http(s) url）
-# war 必须写进 [app] entry，并在 [engine] 里给 init 脚本（--port/--path 透传给引擎）
+# war 必须写进 [app] entry，并在 [engine] 里给 init 命令（--port/--path 透传给引擎）
 cat > app.jstart <<'EOF'
 [app]
 entry = /path/to/app.war

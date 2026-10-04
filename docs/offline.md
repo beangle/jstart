@@ -91,7 +91,7 @@ tar czf offline-bundle.tgz jstart app.jar offline-repo/
 # 联网机：解析并下载（run --print 也会下载后只打印命令，不启动）
 jstart --quiet run --print app.jstart --local=/opt/offline-repo
 
-# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动；--print 不跑 init 脚本）
+# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动；--print 不跑 init 命令）
 jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/null && echo ready
 ```
 

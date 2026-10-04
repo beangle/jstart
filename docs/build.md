@@ -63,11 +63,13 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 - fetch：本地文件与增量补丁路径（`--from`，本地静态服务，不联网）；
 - 实例与 stop：重复 base 拒绝启动，stop 指定/无参/重复调用的退出码与 pid 文件清理；
 - 多 webapp spec：`[subapp]` 段（含 `libs` 扩展依赖）→ `engine-subapps.jstart` →
-  init 脚本 → `entry-out`（本地 fake dist init 脚本），并验证缺 `[engine]` 与
+  init 命令 → `entry-out`（本地 fake dist init 命令），并验证缺 `[engine]` 与
   `classpath` 被拒；
-- war 引擎：`run --print` 输出 init 脚本命令、验证 `--entry`/`--engine-classpath-file`/
+- war 引擎：`run --print` 输出 init 命令、验证 `--entry`/`--engine-classpath-file`/
   `--app-classpath-file`/参数透传（引擎 jar 用本地空文件，不联网）；另用本地 fake
-  init 脚本端到端验证"脚本写 argv → exec 最终命令"（`engine-entry.argv` 落盘与参数转发）；
+  init 命令端到端验证"init 命令写 argv → exec 最终命令"（`engine-entry.argv` 落盘与参数
+  转发）；另有 **命令形式** 用例（`init = bash <file>`，不依赖可执行 wrapper），验证
+  分词/`PATH` 查找与协议参数追加；
 - 真实组件运行测试（可选，联网+大下载+java 17+）：`bash test/war-run-test.sh`
   用 `org.beangle.otk:beangle-otk-ws:war:0.0.29` 端到端启动并验证 HTTP 响应与
   docBase 清理；`--engine=undertow` 切换 undertow 引擎（默认复用

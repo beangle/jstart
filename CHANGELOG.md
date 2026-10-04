@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`[engine] init` 支持命令行形式（不再只是单个脚本路径）**：取值按 shell 风格分词
+  （空白分隔、单/双引号成组、`\` 转义，**不经过 shell**，无管道/重定向/通配符），再对
+  每个 token 做 `~`/`${VAR}` 展开；程序按路径或 `PATH`（Windows 加 `PATHEXT`）解析成
+  绝对路径，其余 token 作为程序自带参数保留，jstart 的协议参数追加在后。于是可以直接写
+  `init = basctl make tomcat-dist`，无需再为每个引擎类型写 wrapper 脚本；`init = <路径>`
+  的旧写法完全兼容
 - **引擎入口改为 `[engine] init` 脚本（去掉 `[app] engine`）**：引擎入口不再是 java
   入口类/内置别名，而是 spec 里 `[engine] init = <脚本路径>` 声明的**脚本/可执行文件**
   （`~`/`${VAR}` 展开）。jstart 不做别名/FQCN 映射、不内置任何入口类；`[app] engine`
@@ -11,7 +17,7 @@
   `--app-jvm-arg` 与透传参数，协议见 docs/engine.md
 - **移除内置引擎依赖目录**：不再内置 tomcat/undertow/Dist 的 jar 清单（保持引擎中立），
   引擎 + 容器 jar 由 `[engine]` 段除 `init` 外的行逐行罗列（原样解析、**不支持
-  `{tomcat.version}`/`{sas.version}` 占位符**，依赖可留空）；缺 `[engine]` 或缺 `init`
+  `{tomcat.version}`/`{bas.version}` 占位符**，依赖可留空）；缺 `[engine]` 或缺 `init`
   会报错并提示补全，多应用 spec 同样必须显式给 `init`。`[engine]` 行支持 gav/本地文件/
   远程 url，与 `[libs]` 同语法
 - **启动模型 `LaunchType`（解析结果派生，不是 spec 键）**：jstart 解析 spec 后给每个目标
@@ -53,7 +59,7 @@
   init 脚本的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 在默认之上再关闭
   告警（两者同给以 `--quiet` 为准，错误仍由退出码体现）
 - init 脚本的命令行附带 `--local-repo=<本地仓库>`（jstart 的 `--local`，默认
-  `~/.m2/repository`），供脚本给容器注入 `-Dsas.repo=` 等属性
+  `~/.m2/repository`），供脚本给容器注入 `-Dbas.repo=` 等属性
 
 ## v0.0.1 (2026-09-07)
 

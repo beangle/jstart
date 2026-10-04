@@ -32,7 +32,7 @@ immutable string[] specExtensions = [".jstart"];
  * 启动模型：jstart 由**解析结果**推导的目标类型，故意不写成 spec 键。
  *
  * - `app`：直接 exec 运行时——java 跑 jar/解压目录，或 native（tar.gz）可执行文件；
- * - `engine`：先跑 spec 的**引擎 init 脚本**准备容器环境（解压 war/发行包、写容器
+ * - `engine`：先跑 spec 的**引擎 init 命令**准备容器环境（解压 war/发行包、写容器
  *   配置），再 exec 它写出的命令。
  *
  * 判定只看**是否声明了引擎**（`[engine]` 段，或 `[subapp <id>]` 多 webapp）；
@@ -95,15 +95,15 @@ struct LaunchSpec {
   /// 文件同语法（gav/本地文件/远程 url）；一行也可逗号分隔多个 gav。native 等
   /// 无内置清单的 entry 下它就是全部依赖。
   string[] libs;
-  /// Engine entry script ([engine] init = <path>): the engine's init program.
+  /// Engine entry ([engine] init = <path|command>): the engine's init program.
   /// jstart runs it to prepare the container and write the final launch
-  /// command; it is a script/executable file path, never a java class.
+  /// command; it is a script path or a command line, never a java class.
   string engineInit;
   /// Engine dependency lines ([engine] section, excluding `init`), same
   /// syntax as [libs].
   string[] engineDeps;
   /// Whether an [engine] section was present. It is the only source of
-  /// engine jars and of the init script: jstart ships no built-in catalog,
+  /// engine jars and of the init command: jstart ships no built-in catalog,
   /// so engine targets must have this set (see jstart.engine).
   bool hasEngine;
   /// 多应用：[subapp <id>] 段逐个声明，空表示单应用 spec（[app] entry）。
@@ -225,7 +225,7 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
             break;
           case "engine":
             warnings ~= format("line %d: [app] engine 已移除：引擎入口改由 [engine] init"
-                ~ " = <脚本> 指定（脚本是文件路径，不是 java 类）", i + 1);
+                ~ " = <路径|命令> 指定（不是 java 类）", i + 1);
             break;
           default:
             warnings ~= format("line %d: unknown [app] key %s", i + 1, key);
@@ -347,20 +347,20 @@ string validateLaunchSpec(LaunchSpec spec) {
     }
     if (spec.main.length > 0) {
       return "[app] main conflicts with [subapp <id>] sections: a subapp is started by the"
-          ~ " engine init script, not by a java main class";
+          ~ " engine init program, not by a java main class";
     }
     if (spec.libs.length > 0) {
       return "[libs] conflicts with [subapp <id>] sections: each subapp declares its own"
           ~ " extension libs and reads its war's META-INF/beangle/dependencies";
     }
-    // 多应用本质是引擎目标：必须显式声明引擎 init 脚本，没有缺省。
+    // 多应用本质是引擎目标：必须显式声明引擎 init 命令，没有缺省。
     if (!spec.hasEngine) {
       return "[subapp <id>] needs an [engine] section: add `[engine]` with"
-          ~ " `init = <script>`; jstart ships no built-in engine.";
+          ~ " `init = <path|command>`; jstart ships no built-in engine.";
     }
     if (spec.engineInit.length == 0) {
-      return "[subapp <id>] needs [engine] init = <script>: declare the engine entry"
-          ~ " script that starts the container; jstart ships no built-in engine.";
+      return "[subapp <id>] needs [engine] init = <path|command>: declare the engine"
+          ~ " entry program that starts the container; jstart ships no built-in engine.";
     }
     string[] paths;
     string[] ids;
@@ -385,17 +385,17 @@ string validateLaunchSpec(LaunchSpec spec) {
       paths ~= normalized;
     }
   }
-  // 单应用 engine 目标：声明了 [engine] 段就必须给 init 脚本（脚本是文件路径，不是类）。
+  // 单应用 engine 目标：声明了 [engine] 段就必须给 init（路径或命令行，不是类）。
   if (spec.hasEngine && spec.engineInit.length == 0) {
-    return "[engine] needs an init script: add `init = <script>` (the engine entry"
-        ~ " program, a file path, not a java class).";
+    return "[engine] needs an init command: add `init = <path|command>` (the engine"
+        ~ " entry program, not a java class).";
   }
   if (spec.main.length == 0) {
     return "";
   }
   if (spec.hasEngine) {
     return "[app] main conflicts with the [engine] section: they are mutually exclusive "
-        ~ "(a jar runs its main class directly, an engine target runs its [engine] init script)";
+        ~ "(a jar runs its main class directly, an engine target runs its [engine] init program)";
   }
   return "";
 }

@@ -23,7 +23,7 @@ jstart 用四个子命令覆盖同一职责：
 | `classpath` | `launcher.Classpath` | 输出 `Main-Class@classpath` |
 | `repo` | `launcher.Repo` | 离线仓库整合（复制缺失构件） |
 | `run` | `resolve.sh` + `launch.sh` | 准备环境后 exec 成 java |
-| war 引擎 run | `sas.sh` | 运行引擎 init 脚本（准备容器环境、写 argv），再 exec 容器；docBase 归引擎（[engine.md](engine.md)） |
+| war 引擎 run | `bas.sh` | 运行引擎 init 命令（准备容器环境、写 argv），再 exec 容器；docBase 归引擎（[engine.md](engine.md)） |
 
 保留 `resolve`/`classpath` 是为了兼容 launch.sh 式的脚本解耦；`run` 则把两步合并进
 单个进程。
@@ -51,9 +51,9 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 <根>/<组件键>/app.pid          run 在 exec 前写、stop 读（实例是否在跑就靠它）
 <根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
 <根>/<组件键>/webapps/<ctx>/   引擎解压出的 docBase（引擎的 --base 就是组件目录）
-<根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给 init 脚本
-<根>/<组件键>/engine-deps.classpath 引擎依赖 classpath，经 --engine-classpath-file 交给 init 脚本
-<根>/<组件键>/engine-entry.argv init 脚本写出的最终启动命令（NUL 分隔 argv）
+<根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给 init 命令
+<根>/<组件键>/engine-deps.classpath 引擎依赖 classpath，经 --engine-classpath-file 交给 init 命令
+<根>/<组件键>/engine-entry.argv init 命令写出的最终启动命令（NUL 分隔 argv）
 ```
 
 - **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复 `run` 会被
@@ -77,7 +77,7 @@ source/jstart/bspatch.d         BSDIFF40 内置实现；宿主 bspatch 优先，
 source/jstart/gzip.d            增量重建 tar.gz 用的 gunzip/gzip（gzip -n -6，走宿主命令）
 source/jstart/zipfile.d         jar/war 条目读取（zip-slip 防护的解压）、Manifest Main-Class 解析
 source/jstart/mainclass.d       主类决策：--main > [app] main > jar manifest（纯函数，可单测）
-source/jstart/engine.d           war 引擎：init 脚本协议常量（argv/classpath/plan 文件名）、
+source/jstart/engine.d           war 引擎：init 命令协议常量（argv/classpath/plan 文件名）、
                                  entry-out argv 解析、引擎依赖合并（不内置依赖目录）
 source/jstart/spec.d             launch spec：.jstart 后缀识别（本地/http(s)）、ini 解析
                                  （[app]/[runtime]/[args]/[libs]/[engine]/[subapp <id>]）
@@ -123,9 +123,10 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
    命令行其余透传参数；启动命令的 java 目前是唯一运行时。war 目标不读 Main-Class，
    且只能从 launch spec 的 `[app] entry` 进入（裸 war 目标由 `run` 直接拒绝；
    `resolve`/`fetch`/`repo` 不受限）：
-   解析**必填**的 `[engine] init`（入口脚本路径，不是 java 类）与 `[engine]` 其余行
-   （引擎 + 容器 jar 清单，原样解析、无占位符；jstart 不内置依赖目录）后，运行 init
-   脚本准备环境，再 exec 它写出的最终命令，见 [engine.md](engine.md)/[war-engine.md](war-engine.md)。
+   解析**必填**的 `[engine] init`（命令行：路径，或“程序 + 参数”；不是 java 类）与
+   `[engine]` 其余行（引擎 + 容器 jar 清单，原样解析、无占位符；jstart 不内置依赖目录）
+   后，运行 init 命令准备环境，再 exec 它写出的最终命令，见
+   [engine.md](engine.md)/[war-engine.md](war-engine.md)。
 
 ## 仓库与校验策略
 
@@ -171,7 +172,7 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
   不读 POM、不展开传递依赖；全部运行期依赖须由构建期插件写全，漏写以 Missing 失败。
 - `run` jar 目标支持带 `Main-Class` 的瘦 jar；war 目标须由 launch spec 声明
   （`[app] entry`）并**显式声明引擎**（`[engine] init`）后走引擎流程：
-  jstart 运行 init 脚本准备环境、再 exec 容器，docBase 布局与解压都归引擎；jstart
+  jstart 运行 init 命令准备环境、再 exec 容器，docBase 布局与解压都归引擎；jstart
   不内置 tomcat/undertow 依赖目录（引擎中立），引擎 + 容器 jar 由 `[engine]` 段写全。
   entry 是已解压 webapp 目录时同样声明 `[engine] init` 走引擎（直接用该目录，不解压）；
   可执行 war（自带 Main-Class）不支持。

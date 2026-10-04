@@ -13,8 +13,8 @@ java。本目录存放项目文档。
 | [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`/`fetch`、选项、退出码与示例 |
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
 | [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[libs]/[engine] 语义、run --print 与范围规划 |
-| [war-engine.md](war-engine.md) | war 运行：何时启用、`[engine] init` 入口脚本、`[engine]` 依赖罗列、参数与限制 |
-| [engine.md](engine.md) | **引擎 init 脚本协议**：两阶段启动、argv 文件、`--entry` 语义、多 webapp 交付文件（`<base>/engine-subapps.jstart`，spec 片段）、classpath 文件与 docBase 归属 |
+| [war-engine.md](war-engine.md) | war 运行：何时启用、`[engine] init` init 命令、`[engine]` 依赖罗列、参数与限制 |
+| [engine.md](engine.md) | **引擎 init 命令协议**：两阶段启动、argv 文件、`--entry` 语义、多 webapp 交付文件（`<base>/engine-subapps.jstart`，spec 片段）、classpath 文件与 docBase 归属 |
 | [offline.md](offline.md) | 离线部署：仓库整合、无外网机器上的启动方式与注意事项 |
 | [build.md](build.md) | 构建、测试与打包：dub/release、单测与冒烟、deb/rpm 脚本、产物布局 |
 | [release-v0.0.1.md](release-v0.0.1.md) | v0.0.1 发布说明：范围、已知限制与路线图 |
@@ -46,15 +46,16 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   launch spec target 用 `[app] runtime`/`[runtime]` 通用命名，便于替换 JDK，也为后续其他
   运行时预留。
 - `run <spec>`（`[app] entry` 为 war/目录）：war **必须**通过 launch spec 运行（裸 war
-  目标会报错并提示写 spec）——jstart 先运行**引擎 init 脚本**准备环境（解压 war/发行包、
+  目标会报错并提示写 spec）——jstart 先运行**引擎 init 命令**准备环境（解压 war/发行包、
   生成容器配置、推导 docBase），再 exec 它写出的最终命令。引擎必须**显式声明**：`[engine]
-  init = <脚本路径>` 指定入口（**文件路径，不是 java 类**；`~`/`${VAR}` 会展开），
+  init = <路径|命令>` 指定 init 命令（最简是可执行文件/脚本**路径**，也可带参数；
+  不是 java 类；`~`/`${VAR}` 会展开），
   `[engine]` 其余行逐行罗列引擎 + 容器 jar（jstart 不内置任何依赖目录，无占位符，见
   [engine.md](engine.md)、[war-engine.md](war-engine.md)）。
   `[app] engine` 已移除（写了会被告警忽略）。
   `resolve`/`fetch`/`repo` 仍可直接接受 war 文件/gav。多 webapp 用若干 `[subapp <id>]`
-  段（`entry`+`path`，可选 `libs` 扩展依赖）声明，必须给 `[engine] init`；脚本在同一
-  JVM 里为每个 webapp 各建一个 context（通常调用 `ServerCreator` + 发行包 jar），
+  段（`entry`+`path`，可选 `libs` 扩展依赖）声明，必须给 `[engine] init`；init 命令在同一
+  JVM 里为每个 webapp 各建一个 context（通常用 basctl 的多 context 入口 + 发行包 jar），
   各 webapp 依赖由各自 Context 隔离解析，见 [engine.md](engine.md)。
 - `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件
   走独立的 `~/.m2/snapshots`，不与 repository 混合；SNAPSHOT 每次向上游解析最新构建：
@@ -116,7 +117,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略
 - `--timeout=<sec>`（stop，默认 15）/ `--force`（run 忽略已运行实例；stop 超时后 SIGKILL）
 - `--verbose`/`-v` 输出解析、下载、写 pid、
-  init 脚本的 stdout 与将执行的启动命令等过程细节（默认只输出告警/错误与命令结果），
+  init 命令的 stdout 与将执行的启动命令等过程细节（默认只输出告警/错误与命令结果），
   `--quiet` 在默认之上再关闭告警（`--verbose` 与 `--quiet` 同给时以 `--quiet` 为准）
 - `--print` 仅 run：打印将执行的命令行（逐参数引号）而不 exec；`--jobs=N` 并行下载
   并发数（默认 10，1 = 串行）
