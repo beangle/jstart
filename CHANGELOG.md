@@ -6,7 +6,7 @@
   （空白分隔、单/双引号成组、`\` 转义，**不经过 shell**，无管道/重定向/通配符），再对
   每个 token 做 `~`/`${VAR}` 展开；程序按路径或 `PATH`（Windows 加 `PATHEXT`）解析成
   绝对路径，其余 token 作为程序自带参数保留，jstart 的协议参数追加在后。于是可以直接写
-  `init = basctl make tomcat-dist`，无需再为每个引擎类型写 wrapper 脚本；`init = <路径>`
+  `init = basctl make tomcat-server`，无需再为每个引擎类型写 wrapper 脚本；`init = <路径>`
   的旧写法完全兼容
 - **引擎入口改为 `[engine] init` 脚本（去掉 `[app] engine`）**：引擎入口不再是 java
   入口类/内置别名，而是 spec 里 `[engine] init = <脚本路径>` 声明的**脚本/可执行文件**

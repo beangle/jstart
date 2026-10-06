@@ -201,7 +201,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
 ```ini
 [engine]
-init = /opt/engine/bin/tomcat-dist-init                # 必填：引擎 init 命令（路径，或“程序 + 参数”）
+init = /opt/engine/bin/tomcat-server-init                # 必填：引擎 init 命令（路径，或“程序 + 参数”）
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat:tomcat:11.0.21:zip                   # 多 context 用全量 tomcat 发行包
 
@@ -219,7 +219,7 @@ path = /admin
 
 - **必须声明 `[engine] init`**：多应用在校验阶段就要求 `[engine]` 段存在且给了 `init`
   命令（没有缺省引擎/内置目录）；缺一即报错。一个 JVM 跑多个 webapp 是 init 命令的职责，
-  通常由 basctl 的 `container tomcat-dist` 之类多 context 入口承担。
+  通常由 basctl 的 `make tomcat-server` 之类多 context 入口承担。
 - **每个 webapp 必须有 `entry` 和 `path`**，归一化后（去尾 `/`、补首个 `/`、折叠
   `//`）的 context path 不能重复（`/` 只允许一个）；段头 id 不能重复、不能含空格/制表符。
 - **`libs` 是该 webapp 的扩展依赖**（gav 坐标，可多行、一行可逗号分隔多个）：覆盖规则与

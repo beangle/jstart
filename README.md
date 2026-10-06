@@ -54,7 +54,7 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
 - war 目标由 spec 声明的**引擎 init 命令**启动（不再有内置引擎/别名）：jstart 先运行
   `[engine] init = <路径|命令>`（准备容器环境、写出最终启动命令）再 exec 容器；组件目录
   默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根。`init` 是一条**命令行**
-  （最简是可执行文件/脚本**路径**，也可带参数，如 `basctl make tomcat-dist`；不是
+  （最简是可执行文件/脚本**路径**，也可带参数，如 `basctl make tomcat-server`；不是
   java 类），jstart 不内置任何引擎目录，引擎与容器 jar 由 `[engine]` 其余行逐行写全
   （同 `[libs]` 语法）；见 [docs/war-engine.md](docs/war-engine.md)。
 - 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，

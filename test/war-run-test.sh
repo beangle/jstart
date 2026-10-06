@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# Real war engine test: run org.beangle.otk:beangle-otk-ws:war:0.0.29 with the
-# built-in tomcat engine end-to-end.
+# Real war engine test: run org.beangle.otk:beangle-otk-ws:war:0.0.29 with a real
+# basctl creator end-to-end.
 #
-# Verifies: gav war 解析下载依赖（sha1 校验）、[engine] init 脚本准备 docBase（委托
-# EmbedCreator）、exec 容器、Tomcat 启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
+# Verifies: gav war 解析下载依赖（sha1 校验）、[engine] init 准备 docBase（委托 basctl
+# 的 make 入口）、exec 容器、Tomcat 启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
 #
 # Requires: network (first run downloads ~100MB into the local repo), java 17+
-# (tomcat 11), curl, a built jstart (target/jstart), and a bas engine jar with
-# the entry class (org.beangle.bas.engine.<name>.EmbedCreator, 0.14.0+).
+# (tomcat 11), curl, a built jstart (target/jstart), and a built basctl
+# (target/basctl, or $BASCTL / basctl on PATH).
 #
 # Usage:
 #   bash test/war-run-test.sh [--local=<repo>] [--port=<port>] [--path=/]
-#                             [--engine=tomcat|undertow] [--keep]
+#                             [--engine=tomcat|undertow] [--basctl=<path>] [--keep]
 #
 # The local repo defaults to ~/.m2/repository so reruns are served from cache.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JSTART="$ROOT/target/jstart"
+BASCTL="${BASCTL:-}"
 REPO="${HOME}/.m2/repository"
 GAV="org.beangle.otk:beangle-otk-ws:war:0.0.29"
 CPATH="/"
@@ -31,6 +32,7 @@ for a in "$@"; do
     --port=*) PORT="${a#*=}" ;;
     --path=*) CPATH="${a#*=}" ;;
     --engine=*) ENGINE="${a#*=}" ;;
+    --basctl=*) BASCTL="${a#*=}" ;;
     --keep) KEEP=1 ;;
     *) echo "unknown option $a" >&2; exit 2 ;;
   esac
@@ -78,6 +80,19 @@ if [ ! -x "$JSTART" ]; then
   exit 1
 fi
 
+if [ -z "$BASCTL" ]; then
+  if command -v basctl >/dev/null 2>&1; then
+    BASCTL="$(command -v basctl)"
+  elif [ -x "$ROOT/../basctl/target/basctl" ]; then
+    BASCTL="$ROOT/../basctl/target/basctl"
+  fi
+fi
+if [ -z "$BASCTL" ] || [ ! -x "$BASCTL" ]; then
+  echo "Cannot find basctl, run 'dub build -b release' in the basctl repo," >&2
+  echo "or pass --basctl=<path> / set BASCTL." >&2
+  exit 1
+fi
+
 T="$(mktemp -d /tmp/jstart-war-test.XXXXXX)"
 BASE="$T/bas"
 LOG="$T/run.log"
@@ -111,40 +126,15 @@ out="$("$JSTART" --local="$REPO" --quiet resolve "$GAV")"; code=$?
 check "resolve exit=0" "[ $code -eq 0 ]"
 check "resolve outputs .war" "printf '%s' \"$out\" | grep -q 'beangle-otk-ws-0.0.29.war'"
 
-echo "== run with built-in $ENGINE engine (via [engine] init script) =="
-echo "port=$PORT path=$CPATH repo=$REPO engine=$ENGINE"
-
-# 引擎入口脚本：jstart 把解析好的 classpath 写成文件交给脚本，脚本再委托 bas 的
-# EmbedCreator（真实容器入口）产出最终命令。init 是文件路径，不是 java 类。
-JAVA="$(command -v java)"
-cat > "$T/engine-init" <<SH
-#!/usr/bin/env bash
-set -e
-base=""; entry=""; engineCpFile=""; appCpFile=""; entryOut=""; localRepo=""
-rest=()
-for a in "\$@"; do
-  case "\$a" in
-    --base=*) base="\${a#*=}" ;;
-    --entry=*) entry="\${a#*=}" ;;
-    --engine-classpath-file=*) engineCpFile="\${a#*=}" ;;
-    --app-classpath-file=*) appCpFile="\${a#*=}" ;;
-    --local-repo=*) localRepo="\${a#*=}" ;;
-    --entry-out=*) entryOut="\${a#*=}" ;;
-    *) rest+=("\$a") ;;
-  esac
-done
-exec "$JAVA" -cp "\$(cat "\$engineCpFile")" org.beangle.bas.engine.$ENGINE.EmbedCreator \\
-  --base="\$base" --entry="\$entry" --app-classpath-file="\$appCpFile" \\
-  --Dbas.repo="\$localRepo" --entry-out="\$entryOut" "\${rest[@]}"
-SH
-chmod +x "$T/engine-init"
+echo "== run with basctl $ENGINE creator (via [engine] init) =="
+echo "port=$PORT path=$CPATH repo=$REPO engine=$ENGINE basctl=$BASCTL"
 
 cat > "$T/app.jstart" <<INI
 [app]
 entry = $GAV
 
 [engine]
-init = $T/engine-init
+init = "$BASCTL" make $ENGINE
 $ENGINE_DEPS
 
 [args]

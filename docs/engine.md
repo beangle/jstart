@@ -7,7 +7,7 @@ war 没有 `Main-Class`，不能像 jar 那样 exec 应用主类；它必须交�
 
 `init` 的取值是一条**命令行**（程序 + 可选参数），最常见的形态是单个可执行文件或
 脚本路径（如 `init = /opt/engine/bin/tomcat-init`），也可直接带参数（如
-`init = basctl make tomcat-dist`）。**不是 java 类**；用什么语言、怎么调用容器、
+`init = basctl make tomcat-server`）。**不是 java 类**；用什么语言、怎么调用容器、
 如何解压 war，都由它自己决定。jstart 不内置任何引擎。
 
 命令行的解析规则（**不经过 shell**，只做分词与路径展开）：
@@ -103,13 +103,13 @@ launch spec 用 `[engine]` 段的 `init` 键指定 init 命令（路径，或“
 
 ```ini
 [engine]
-init = /opt/engine/bin/tomcat-init     # 必填：可执行文件/路径或命令行，或一行命令（如 basctl make tomcat-dist）
+init = /opt/engine/bin/tomcat-init     # 必填：可执行文件/路径或命令行，或一行命令（如 basctl make tomcat-server）
 org.beangle.bas:beangle-bas-engine:0.13.17   # 其余行：引擎依赖（同 [libs] 语法）
 ```
 
 - `init` 是**命令行**，不是 java 类；jstart 不做别名/FQCN 映射，也没有内置引擎。
   最简形态是单个可执行文件/路径或命令行；需要带参数时直接写在同一行（如
-  `init = basctl make tomcat-dist`），协议参数会被 jstart 追加在其后。
+  `init = basctl make tomcat-server`），协议参数会被 jstart 追加在其后。
 - `[app] engine` 已移除：写了会被告警忽略（迁移提示指向 `[engine] init`）。
 - `[engine]` 段存在即视为引擎目标（`LaunchType.engine`）；段里必须给 `init`。
 
@@ -160,7 +160,7 @@ webapp 各自独立），最后只写出一份最终 argv。
 
 > 引擎侧需支持按 `<base>/engine-subapps.jstart` 部署多 `<Context>`：本仓库负责生成计划
 > 文件；消费端由 [basctl](https://github.com/beangle/basctl) 的多 context 部署
-> （`basctl make tomcat-dist`）落地，通常由 init 命令调用。
+> （`basctl make tomcat-server`）落地，通常由 init 命令调用。
 
 ## 引擎依赖：`[engine]` 段
 
@@ -190,9 +190,9 @@ spec，无需 wrapper 脚本：
 entry = org.beangle.otk:beangle-otk-ws:war:0.0.29
 
 [engine]
-init = basctl make tomcat-dist        # 或 tomcat-embed / undertow-embed
+init = basctl make tomcat-server        # 或 tomcat / undertow
 org.beangle.bas:beangle-bas-engine:0.13.17
-org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-dist 的发行包（其余类型写各自的引擎 jar）
+org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-server 的发行包（其余类型写各自的引擎 jar）
 
 [args]
 --port=8080
@@ -206,7 +206,7 @@ org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-dist 的发行包（其余类�
 
 | 参数 | 含义 |
 |------|------|
-| `--dist=<zip>` | `tomcat-dist` 的发行包；缺省取引擎 classpath 上第一个 `.zip` |
+| `--dist=<zip>` | `tomcat-server` 的发行包；缺省取引擎 classpath 上第一个 `.zip` |
 | `--jsp=true\|false` | 是否启用 JSP（缺省 `false`）：决定 `conf/web.xml` 与 jasper/ecj 的保留 |
 | `--listener=<class[:k=v;k2=v2]>` | Server 级 `<Listener>`，可重复；缺省用 Jre/ThreadLocal 泄漏防护 |
 
@@ -216,9 +216,9 @@ org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-dist 的发行包（其余类�
 
 - `--path=`：上下文路径。**jstart 不读取**，原样交给 init 命令；引擎用它决定
   `docBase`（见下）。缺省 `/`。
-- `--port=`：端口，原样透传（内嵌引擎缺省 8080 起探测空闲端口；`tomcat-dist` 同样探测）。
-- `--Dkey=value`：引擎属性（内嵌引擎由 `CmdOptions` 消费；`tomcat-dist` 转成 `-Dkey=value`）。
-- `--listener=`/`--jsp=`：`tomcat-dist` 的 Server 级 Listener 与 JSP 开关（见上）。
+- `--port=`：端口，原样透传（内嵌引擎缺省 8080 起探测空闲端口；`tomcat-server` 同样探测）。
+- `--Dkey=value`：引擎属性（内嵌引擎由 `CmdOptions` 消费；`tomcat-server` 转成 `-Dkey=value`）。
+- `--listener=`/`--jsp=`：`tomcat-server` 的 Server 级 Listener 与 JSP 开关（见上）。
 - `-D`/`-X` 开头的**命令行参数**归 JVM，作为 `--app-jvm-arg` 交给 init 命令；
   `[runtime]` 段同理。
 - `[args]` 段与命令行其余参数按顺序透传给 init 命令。
@@ -234,7 +234,7 @@ basctl 的引擎入口按 `--base` + `--path` 推导（与 beangle/bas `Server.C
 
 - 每次运行前**重建**解压目录；容器关闭（shutdown hook）时会自行删除 docBase，
   被 `kill -9` 留下的残骸由下一次运行清理。
-- 引擎自带目录（如 `tomcat-dist` 的 `<base>/engines/`）也放在 `--base` 下，一个 base
+- 引擎自带目录（如 `tomcat-server` 的 `<base>/engines/`）也放在 `--base` 下，一个 base
   一个实例。
 
 ## 最小示例

@@ -6,7 +6,7 @@ war 没有 `Main-Class`，不能像 jar 那样 exec 应用主类；它必须交�
 进程是容器，无父子等待。
 
 `init` 是**命令行**，最简是单个可执行文件/脚本路径（`~` 与 `${VAR}` 会展开，且是**先
-分词再展开**），也可直接带参数（如 `init = basctl make tomcat-dist`）；**不是 java 类**。
+分词再展开**），也可直接带参数（如 `init = basctl make tomcat-server`）；**不是 java 类**。
 jstart 不做 shell 解释，也不解析引擎别名或内置引擎类映射。
 
 ```text
@@ -40,7 +40,7 @@ spec 必须显式声明 `init` 命令与引擎 jar。声明了 `[engine]` 段的
 entry = /path/app.war        # 也可是 g:a:v:war 或 gav://...:war
 
 [engine]                     # 必填：init 命令（入口）+ 引擎/容器 jar
-init = basctl make tomcat-embed
+init = basctl make tomcat
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -103,7 +103,7 @@ launch spec 用一个 `[engine]` 段描述"如何用引擎跑这个 war"：
 entry = gav://org.example:webapp:0.0.1:war
 
 [engine]
-init = basctl make tomcat-embed     # 必填：引擎 init 命令（路径，或“程序 + 参数”）
+init = basctl make tomcat     # 必填：引擎 init 命令（路径，或“程序 + 参数”）
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -133,7 +133,7 @@ jstart 不在代码里内置 tomcat/undertow 的 jar 清单，也不内置入口
 
 ```ini
 [engine]
-init = basctl make tomcat-embed
+init = basctl make tomcat
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.24
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
@@ -141,7 +141,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 
 ### 定制场景示例
 
-1. **切换到 undertow**：init 换成 basctl 的 `engine undertow-embed`，并把引擎依赖换成
+1. **切换到 undertow**：init 换成 basctl 的 `make undertow`，并把引擎依赖换成
    undertow 的伴随 jar（行数不足可能缺容器类，需自行写全）：
 
 ```ini
@@ -149,7 +149,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 entry = /path/app.war
 
 [engine]
-init = basctl make undertow-embed
+init = basctl make undertow
 org.beangle.bas:beangle-bas-engine:0.13.17
 io.undertow:undertow-core:2.4.4.Final
 io.undertow.ee:undertow-servlet:2.0.2.Final
@@ -173,7 +173,7 @@ io.smallrye.common:smallrye-common-annotation:2.14.0
 
 ```ini
 [engine]
-init = basctl make tomcat-embed
+init = basctl make tomcat
 /opt/mirror/tomcat-embed-core-11.0.21.jar       # 本地引擎 jar（支持 ~ 与 ${VAR}）
 https://repo.example.com/bas/beangle-bas-engine.jar
 ```
@@ -220,7 +220,8 @@ CLASSPATH_EXTRA → WEB-INF/classes → WEB-INF/lib/*.jar（排序） → 应用
 
 ## 验证
 
-用真实 beangle 组件做端到端运行验证（tomcat 与 undertow 均已通过）：
+用真实 beangle 组件做端到端运行验证（tomcat 与 undertow 均已通过；需要 basctl 的
+`target/basctl`，或 PATH / `$BASCTL` 上的 basctl，也可用 `--basctl=<path>` 指定）：
 
 ```bash
 bash test/war-run-test.sh                            # tomcat
@@ -238,7 +239,7 @@ bash test/war-run-test.sh --local=/opt/repo --port=18080 --path=/ --engine=tomca
 entry = org.beangle.otk:beangle-otk-ws:war:0.0.29
 
 [engine]
-init = basctl make tomcat-embed
+init = basctl make tomcat
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21

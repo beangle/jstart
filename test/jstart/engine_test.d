@@ -58,16 +58,16 @@ unittest {
   assert(parseCommandLine("") == []);
   assert(parseCommandLine("   ") == []);
   assert(parseCommandLine("/opt/bin/init") == ["/opt/bin/init"]);
-  assert(parseCommandLine("basctl make tomcat-dist")
-      == ["basctl", "make", "tomcat-dist"]);
+  assert(parseCommandLine("basctl make tomcat-server")
+      == ["basctl", "make", "tomcat-server"]);
   assert(parseCommandLine("/opt/my dir/init.sh") == ["/opt/my", "dir/init.sh"]);
   assert(parseCommandLine(`"/opt/my dir/init.sh"`) == ["/opt/my dir/init.sh"]);
   assert(parseCommandLine(`'/opt/my dir/init.sh'`) == ["/opt/my dir/init.sh"]);
   assert(parseCommandLine(`sh -c 'echo hi'`) == ["sh", "-c", "echo hi"]);
   assert(parseCommandLine(`a\ b`) == ["a b"]);
   assert(parseCommandLine(`""`) == [""]);
-  assert(parseCommandLine("basctl make tomcat-dist  --port=1")
-      == ["basctl", "make", "tomcat-dist", "--port=1"]);
+  assert(parseCommandLine("basctl make tomcat-server  --port=1")
+      == ["basctl", "make", "tomcat-server", "--port=1"]);
 }
 
 unittest {
