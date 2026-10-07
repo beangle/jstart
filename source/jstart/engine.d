@@ -14,7 +14,7 @@
  *
  *   [engine]
  *   init = /opt/engine/bin/acme-tomcat-init         # 必填：可执行文件路径
- *   init = basctl make tomcat-server                # 或命令行（程序 + 参数）
+ *   init = engine-creator tomcat-server             # 或命令行（程序 + 参数）
  *   org.beangle.bas:beangle-bas-engine:0.13.17      # 引擎 jar（同 [libs] 语法，可选）
  *   org.apache.tomcat.embed:tomcat-embed-core:11.0.21
  *
@@ -100,7 +100,7 @@ immutable string subappsPlanFile = "engine-subapps.jstart";
  * `[engine] init` 的取值既可以是**可执行文件路径**，也可以是**命令行**（程序 + 参数）：
  *
  *   init = /opt/engine/bin/acme-tomcat-init     # 可执行文件/脚本路径
- *   init = basctl make tomcat-server            # 命令行
+ *   init = engine-creator tomcat-server         # 命令行
  *   init = "/opt/my dir/init.sh" --flag         # 带引号与参数
  *
  * 命令行按 shell 规则分词（空白分隔，单/双引号成组，反斜杠转义），但**不经过 shell**：

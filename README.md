@@ -30,8 +30,8 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
 - 组件运行目录（**base**）为 `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
   整体替换这个根，launch spec 可用 `[app] base` 固定根、`[app] instance` 固定组件目录名。
   native 解压、war 解压与引擎产物都在其下。**jstart 不记录、也不停止运行中的实例**
-  （exec 后进程即应用）：实例身份、pid 与停止交给调用方——basctl 记在
-  `servers/<name>/server.info` 并按它停止。要跑多个副本就给每个副本一个 base。
+  （exec 后进程即应用）：实例身份、pid 与停止交给调用方（上层启动器/服务管理工具）
+  自己记录。要跑多个副本就给每个副本一个 base。
 - `fetch` 子命令负责把目标取到本地：gav（支持 classifier）从发行仓库取 native tar.gz/jar/war，
   本地有基线且远端有 bsdiff 增量时只下补丁，否则整包下载；`http(s)` url 直接下载并按主机路径
   缓存；本地文件原样返回路径。没有补丁不是错误。tar.gz 的补丁按“本地基线 `gunzip` →
@@ -52,11 +52,11 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
 - war 目标由 spec 声明的**引擎 init 命令**启动（不再有内置引擎/别名）：jstart 先运行
   `[engine] init = <路径|命令>`（准备容器环境、写出最终启动命令）再 exec 容器；组件目录
   默认是按组件隔离的 `/var/tmp/jstart/<组件键>`，`--base=` 可换根。`init` 是一条**命令行**
-  （最简是可执行文件/脚本**路径**，也可带参数，如 `basctl make tomcat-server`；不是
+  （最简是可执行文件/脚本**路径**，也可带参数，如 `engine-creator tomcat-server`；不是
   java 类），jstart 不内置任何引擎目录，引擎与容器 jar 由 `[engine]` 其余行逐行写全
   （同 `[libs]` 语法）；见 [docs/war-engine.md](docs/war-engine.md)。
 - 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，
-  `[engine] init` 命令负责在同一 JVM 里各建一个 context（通常用 basctl 的多 context 入口），
+  `[engine] init` 命令负责在同一 JVM 里各建一个 context（外部引擎工具的多 context 入口），
   各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一套
   `webapps/`；见 [docs/engine.md](docs/engine.md)。
 - native（tar.gz）目标：`g:a:tar.gz:<classifier>:v`、本地 `*.tar.gz` 或 `http(s)` url 时，
@@ -114,7 +114,7 @@ meta=$(./target/jstart --quiet classpath "$app")
 # 后台运行（一个组件一个 base；多副本各给一个 base）
 # 固定目录名 app-a 要写成 spec： [app] entry=... / base=/srv/jstart / instance=app-a
 ./target/jstart run /path/to/app-a.jstart --port=8081 &
-# 停止交给 basctl（按 servers/<name>/server.info 里的 pid）；jstart 只负责启动
+# 停止交给调用方（jstart 只负责启动；pid 由上层工具自行记录）
 
 # 离线整合：把依赖从 --source 仓库复制到 --local 仓库
 ./target/jstart repo "$app" --local=/opt/offline-repo

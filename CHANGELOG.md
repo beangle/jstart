@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+- **测试自带最小 creator**：war 端到端测试改用仓库内的 `test/engine-init-stub.sh` 作为
+  `[engine] init` 命令（演示协议本身），不再假定某个外部引擎工具；要验证真实工具用
+  `--init='<命令>'`。文档中的 init 示例统一改为中性的 `engine-creator`
 - **`[engine] init` 支持命令行形式（不再只是单个脚本路径）**：取值按 shell 风格分词
   （空白分隔、单/双引号成组、`\` 转义，**不经过 shell**，无管道/重定向/通配符），再对
   每个 token 做 `~`/`${VAR}` 展开；程序按路径或 `PATH`（Windows 加 `PATHEXT`）解析成
   绝对路径，其余 token 作为程序自带参数保留，jstart 的协议参数追加在后。于是可以直接写
-  `init = basctl make tomcat-server`，无需再为每个引擎类型写 wrapper 脚本；`init = <路径>`
+  `init = engine-creator tomcat-server`，无需再为每个引擎类型写 wrapper 脚本；`init = <路径>`
   的旧写法完全兼容
 - **引擎入口改为 `[engine] init` 脚本（去掉 `[app] engine`）**：引擎入口不再是 java
   入口类/内置别名，而是 spec 里 `[engine] init = <脚本路径>` 声明的**脚本/可执行文件**
@@ -51,12 +54,11 @@
   `[app] base` 固定根、`[app] instance = <name>` 显式命名组件目录（`<根>/<name>`，不拼指纹）
 - **去掉 pid 文件与 `stop`**：jstart 只负责"解析 + 准备 + exec"，不再写
   `<base>/app.pid`，`stop` 子命令与 `--timeout` / `--force` 一并移除；`run` 原有的
-  "同一实例在运行就拒绝启动"随之消失。实例身份与停止交给调用方（basctl 用
-  `servers/<name>/server.info` 记 pid 并停止）
+  "同一实例在运行就拒绝启动"随之消失。实例身份与停止交给调用方（pid 由上层工具自记）
 - **`--main=<class>` 覆盖主类**：run/classpath/info 指定 java 主类，优先于
   `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，
   war/native 目标告警忽略（空值或明显不是类名时用法错误 exit 2）
-- **输出节制**：默认只输出告警/错误与命令结果；`--verbose`/`-v` 追加解析、下载、写 pid、
+- **输出节制**：默认只输出告警/错误与命令结果；`--verbose`/`-v` 追加解析、下载、
   init 脚本的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 在默认之上再关闭
   告警（两者同给以 `--quiet` 为准，错误仍由退出码体现）
 - init 脚本的命令行附带 `--local-repo=<本地仓库>`（jstart 的 `--local`，默认

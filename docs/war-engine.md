@@ -6,7 +6,7 @@ war 没有 `Main-Class`，不能像 jar 那样 exec 应用主类；它必须交�
 进程是容器，无父子等待。
 
 `init` 是**命令行**，最简是单个可执行文件/脚本路径（`~` 与 `${VAR}` 会展开，且是**先
-分词再展开**），也可直接带参数（如 `init = basctl make tomcat-server`）；**不是 java 类**。
+分词再展开**），也可直接带参数（如 `init = engine-creator tomcat-server`）；**不是 java 类**。
 jstart 不做 shell 解释，也不解析引擎别名或内置引擎类映射。
 
 ```text
@@ -40,7 +40,7 @@ spec 必须显式声明 `init` 命令与引擎 jar。声明了 `[engine]` 段的
 entry = /path/app.war        # 也可是 g:a:v:war 或 gav://...:war
 
 [engine]                     # 必填：init 命令（入口）+ 引擎/容器 jar
-init = basctl make tomcat
+init = engine-creator tomcat
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -59,7 +59,7 @@ jstart run app.jstart
 
 ## docBase 布局（归引擎）
 
-引擎按 `--base` + `--path` 推导 docBase（beangle/bas `Server.Config`，由 basctl 的引擎入口消费），
+引擎按 `--base` + `--path` 推导 docBase（例如 beangle/bas 的 `Server.Config` 语义），
 并在准备阶段把 war 解压到那里；jstart 只传参数，**不感知解压公式**。公式与重建/清理
 时机见 [engine.md](engine.md)：
 
@@ -102,7 +102,7 @@ launch spec 用一个 `[engine]` 段描述"如何用引擎跑这个 war"：
 entry = gav://org.example:webapp:0.0.1:war
 
 [engine]
-init = basctl make tomcat     # 必填：引擎 init 命令（路径，或“程序 + 参数”）
+init = engine-creator tomcat  # 必填：引擎 init 命令（路径，或“程序 + 参数”）
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -132,7 +132,7 @@ jstart 不在代码里内置 tomcat/undertow 的 jar 清单，也不内置入口
 
 ```ini
 [engine]
-init = basctl make tomcat
+init = engine-creator tomcat
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.24
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
@@ -140,7 +140,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 
 ### 定制场景示例
 
-1. **切换到 undertow**：init 换成 basctl 的 `make undertow`，并把引擎依赖换成
+1. **切换到 undertow**：init 换成 `engine-creator undertow`，并把引擎依赖换成
    undertow 的伴随 jar（行数不足可能缺容器类，需自行写全）：
 
 ```ini
@@ -148,7 +148,7 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.24
 entry = /path/app.war
 
 [engine]
-init = basctl make undertow
+init = engine-creator undertow
 org.beangle.bas:beangle-bas-engine:0.13.17
 io.undertow:undertow-core:2.4.4.Final
 io.undertow.ee:undertow-servlet:2.0.2.Final
@@ -172,7 +172,7 @@ io.smallrye.common:smallrye-common-annotation:2.14.0
 
 ```ini
 [engine]
-init = basctl make tomcat
+init = engine-creator tomcat
 /opt/mirror/tomcat-embed-core-11.0.21.jar       # 本地引擎 jar（支持 ~ 与 ${VAR}）
 https://repo.example.com/bas/beangle-bas-engine.jar
 ```
@@ -219,17 +219,19 @@ CLASSPATH_EXTRA → WEB-INF/classes → WEB-INF/lib/*.jar（排序） → 应用
 
 ## 验证
 
-用真实 beangle 组件做端到端运行验证（tomcat 与 undertow 均已通过；需要 basctl 的
-`target/basctl`，或 PATH / `$BASCTL` 上的 basctl，也可用 `--basctl=<path>` 指定）：
+用真实 beangle 组件做端到端运行验证（tomcat 与 undertow 均已通过）：默认 init 命令是
+本仓库自带的 `test/engine-init-stub.sh`（一个最小的 creator，演示 [engine.md](engine.md)
+的协议），要验证外部引擎工具时用 `--init='<命令>'` 覆盖：
 
 ```bash
 bash test/war-run-test.sh                            # tomcat
 bash test/war-run-test.sh --engine=undertow          # undertow
 bash test/war-run-test.sh --local=/opt/repo --port=18080 --path=/ --engine=tomcat
+bash test/war-run-test.sh --init='/opt/engine/bin/tomcat-init'
 ```
 
 脚本启动 `org.beangle.otk:beangle-otk-ws:war:0.0.29`：解析并下载（首次约 100MB），
-`init` 命令（basctl 的引擎入口）准备 docBase（`<base>/webapps/ROOT`）并 exec 容器，
+`init` 命令准备 docBase（`<base>/webapps/ROOT`）并 exec 容器，
 等待 HTTP 响应后检查 `Tomcat started`/`Undertow started` 与应用启动日志，最后优雅关闭
 并确认引擎清理 docBase。也可以手工跑：
 
@@ -238,7 +240,7 @@ bash test/war-run-test.sh --local=/opt/repo --port=18080 --path=/ --engine=tomca
 entry = org.beangle.otk:beangle-otk-ws:war:0.0.29
 
 [engine]
-init = basctl make tomcat
+init = engine-creator tomcat
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat.embed:tomcat-embed-core:11.0.21
 org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
@@ -251,8 +253,8 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 jstart run otk.jstart --port=8080
 ```
 
-> init 命令 `basctl make <type>` 消费 jstart 的协议参数并写出容器启动命令。用真实组件
-> 跑本测试前，本地仓库需有该版本的 bas 引擎 jar（或让 jstart 按 `[engine]` 行联网下载）。
+> init 命令消费 jstart 的协议参数并写出容器启动命令。用真实组件跑本测试前，本地仓库需
+> 有该版本的 bas 引擎 jar（或让 jstart 按 `[engine]` 行联网下载）。
 
 ## 限制
 

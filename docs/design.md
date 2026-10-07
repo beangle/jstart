@@ -56,7 +56,7 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 ```
 
 - **jstart 只写运行目录，不管运行中的实例**：exec 之后进程即应用，pid 的记录与停止
-  交给调用方（basctl 记在 `servers/<name>/server.info`）。要跑多个副本就给每个副本
+  交给调用方（pid 由上层工具自行记录）。要跑多个副本就给每个副本
   一个 base（`--base=<dir>` 换根，或 spec 的 `[app] base`/`[app] instance`），避免共用
   解压/引擎产物目录；
 - 解压等可变产物按 base 各存一份（多副本 = 多份解压）；

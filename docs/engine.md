@@ -7,7 +7,7 @@ war 没有 `Main-Class`，不能像 jar 那样 exec 应用主类；它必须交�
 
 `init` 的取值是一条**命令行**（程序 + 可选参数），最常见的形态是单个可执行文件或
 脚本路径（如 `init = /opt/engine/bin/tomcat-init`），也可直接带参数（如
-`init = basctl make tomcat-server`）。**不是 java 类**；用什么语言、怎么调用容器、
+`init = engine-creator tomcat-server`）。**不是 java 类**；用什么语言、怎么调用容器、
 如何解压 war，都由它自己决定。jstart 不内置任何引擎。
 
 命令行的解析规则（**不经过 shell**，只做分词与路径展开）：
@@ -103,13 +103,13 @@ launch spec 用 `[engine]` 段的 `init` 键指定 init 命令（路径，或“
 
 ```ini
 [engine]
-init = /opt/engine/bin/tomcat-init     # 必填：可执行文件/路径或命令行，或一行命令（如 basctl make tomcat-server）
+init = /opt/engine/bin/tomcat-init     # 必填：可执行文件/路径或命令行（如 engine-creator tomcat-server）
 org.beangle.bas:beangle-bas-engine:0.13.17   # 其余行：引擎依赖（同 [libs] 语法）
 ```
 
 - `init` 是**命令行**，不是 java 类；jstart 不做别名/FQCN 映射，也没有内置引擎。
   最简形态是单个可执行文件/路径或命令行；需要带参数时直接写在同一行（如
-  `init = basctl make tomcat-server`），协议参数会被 jstart 追加在其后。
+  `init = engine-creator tomcat-server`），协议参数会被 jstart 追加在其后。
 - `[app] engine` 已移除：写了会被告警忽略（迁移提示指向 `[engine] init`）。
 - `[engine]` 段存在即视为引擎目标（`LaunchType.engine`）；段里必须给 `init`。
 
@@ -158,8 +158,7 @@ webapp 各自独立），最后只写出一份最终 argv。
   行为向后兼容。
 
 > 引擎侧需支持按 `<base>/engine-subapps.jstart` 部署多 `<Context>`：本仓库负责生成计划
-> 文件；消费端由 [basctl](https://github.com/beangle/basctl) 的多 context 部署
-> （`basctl make tomcat-server`）落地，通常由 init 命令调用。
+> 文件；消费端由外部引擎工具的多 context 入口（init 命令）落地。
 
 ## 引擎依赖：`[engine]` 段
 
@@ -178,18 +177,18 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
   仍只认显式清单，**不解析传递依赖**。
 - SNAPSHOT 依赖按 `--snapshot-remote` 解析（不回退 `--remote`）；本地快照库已有则可用。
 
-### beangle/bas 的容器：`basctl make`
+### 外部引擎工具（creator）
 
-jstart 不内置 bas 的入口类映射。bas 容器（tomcat/undertow 的嵌入与发行版部署）的
-creator 由 [`basctl`](https://github.com/beangle/basctl) 提供，直接以**命令行**形式写进
-spec，无需 wrapper 脚本：
+jstart 不内置任何容器的入口类映射：容器怎么解压 war、怎么推导 docBase、怎么生成自己的
+配置，全部由外部引擎工具的 creator 负责，以**命令行**形式写进 spec，无需 wrapper 脚本。
+下面以 `engine-creator` 这个假想的工具为例（真实工具名与支持的容器类型由它自己决定）：
 
 ```ini
 [app]
 entry = org.beangle.otk:beangle-otk-ws:war:0.0.29
 
 [engine]
-init = basctl make tomcat-server        # 或 tomcat / undertow
+init = engine-creator tomcat-server     # 或 tomcat / undertow
 org.beangle.bas:beangle-bas-engine:0.13.17
 org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-server 的发行包（其余类型写各自的引擎 jar）
 
@@ -198,18 +197,11 @@ org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-server 的发行包（其余类
 --path=/
 ```
 
-- 程序名含 `/`（如 `/opt/basctl/bin/basctl`）按路径解析，否则查 `PATH`；
+- 程序名含 `/`（如 `/opt/engine/bin/engine-creator`）按路径解析，否则查 `PATH`；
   参数里若含空格或 `${VAR}` 未展开，用引号/反斜杠写清楚（见上文分词规则）。
-- `basctl make` 解压 war/发行包、推导 docBase、生成容器配置，最后输出容器启动命令；
-  它识别的参数都通过 `[args]`/命令行透传：
-
-| 参数 | 含义 |
-|------|------|
-| `--dist=<zip>` | `tomcat-server` 的发行包；缺省取引擎 classpath 上第一个 `.zip` |
-| `--jsp=true\|false` | 是否启用 JSP（缺省 `false`）：决定 `conf/web.xml` 与 jasper/ecj 的保留 |
-| `--listener=<class[:k=v;k2=v2]>` | Server 级 `<Listener>`，可重复；缺省用 Jre/ThreadLocal 泄漏防护 |
-
-详见 basctl 的 `docs/engine-creator.md`。bas 侧只保留容器运行时类，不再内置 creator。
+- creator 解压 war/发行包、推导 docBase、生成容器配置，最后写出容器启动命令；它自己
+  识别的参数（如 `--dist=`、`--jsp=`、`--listener=` 之类）都通过 `[args]`/命令行透传，
+  jstart 不做解释。
 
 ## 参数语义
 
@@ -224,7 +216,7 @@ org.apache.tomcat:tomcat:11.0.26:zip    # tomcat-server 的发行包（其余类
 
 ## docBase 布局（归属引擎）
 
-basctl 的引擎入口按 `--base` + `--path` 推导（与 beangle/bas `Server.Config` 语义一致）：
+引擎按 `--base` + `--path` 推导（beangle/bas 的 `Server.Config` 就是这样）：
 
 | `--path` | docBase |
 |----------|---------|
@@ -285,4 +277,4 @@ base 都需要显式声明，正是 launch spec 的职责。`resolve`/`fetch`/`r
   脚本支持受限（用 .bat/.exe 或在 WSL/Cygwin 下运行）。
 - 解压走引擎自己的 zip 实现（zip-slip 防护）；超大 war 视引擎实现而定。
 - "可执行 war"（自带 Main-Class 的 Spring Boot 式 fat war）不支持，war 一律按引擎运行。
-- 容器行为（参数消费、docBase 删除时机）随 beangle/bas 版本演进，以 bas 源码语义为准。
+- 容器行为（参数消费、docBase 删除时机）随引擎实现演进，以各引擎自己的语义为准。

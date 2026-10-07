@@ -58,16 +58,16 @@ unittest {
   assert(parseCommandLine("") == []);
   assert(parseCommandLine("   ") == []);
   assert(parseCommandLine("/opt/bin/init") == ["/opt/bin/init"]);
-  assert(parseCommandLine("basctl make tomcat-server")
-      == ["basctl", "make", "tomcat-server"]);
+  assert(parseCommandLine("engine-creator tomcat-server")
+      == ["engine-creator", "tomcat-server"]);
   assert(parseCommandLine("/opt/my dir/init.sh") == ["/opt/my", "dir/init.sh"]);
   assert(parseCommandLine(`"/opt/my dir/init.sh"`) == ["/opt/my dir/init.sh"]);
   assert(parseCommandLine(`'/opt/my dir/init.sh'`) == ["/opt/my dir/init.sh"]);
   assert(parseCommandLine(`sh -c 'echo hi'`) == ["sh", "-c", "echo hi"]);
   assert(parseCommandLine(`a\ b`) == ["a b"]);
   assert(parseCommandLine(`""`) == [""]);
-  assert(parseCommandLine("basctl make tomcat-server  --port=1")
-      == ["basctl", "make", "tomcat-server", "--port=1"]);
+  assert(parseCommandLine("engine-creator tomcat-server  --port=1")
+      == ["engine-creator", "tomcat-server", "--port=1"]);
 }
 
 unittest {
@@ -75,7 +75,7 @@ unittest {
   assert(isProgramPath("/opt/bin/init"));
   assert(isProgramPath("./init"));
   assert(isProgramPath("~/bin/init"));
-  assert(!isProgramPath("basctl"));
+  assert(!isProgramPath("engine-creator"));
   assert(!isProgramPath("java"));
   assert(findOnPath("sh").length > 0, "sh should be on PATH");
   assert(findOnPath("jstart-definitely-missing-cmd").length == 0);
@@ -84,8 +84,8 @@ unittest {
 unittest {
   // resolveEngineInit：路径缺失置 missing；裸命令名解析成 PATH 上的绝对路径。
   bool missing;
-  auto absent = resolveEngineInit("/nonexistent/basctl-init", missing);
-  assert(absent == ["/nonexistent/basctl-init"]);
+  auto absent = resolveEngineInit("/nonexistent/engine-init", missing);
+  assert(absent == ["/nonexistent/engine-init"]);
   assert(missing);
 
   bool shMissing;

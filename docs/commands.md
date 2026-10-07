@@ -121,7 +121,7 @@ war/发行包、生成容器配置、推导 docBase），再 exec 它写出的�
 `--path=` 由 init 命令消费（jstart 只透传）。
 jstart **不内置引擎依赖目录**（保持引擎中立），`[engine]` 段必须由 spec 显式声明：
 `init = <路径|命令>` 指定引擎 init 命令（**命令行**：最简是可执行文件/脚本路径，也可
-带参数如 `basctl make tomcat-server`；不是 java 类；`~`/`${VAR}` 会展开）；
+带参数如 `engine-creator tomcat-server`；不是 java 类；`~`/`${VAR}` 会展开）；
 引擎 + 容器 jar 用其余行逐行罗列（语法同 `[libs]`，无占位符，版本直接写）。`[app]
 engine` 已移除（写了会被告警忽略）。没有引擎声明的 war 会报错提示补声明——见
 [war-engine.md](war-engine.md)。
@@ -457,7 +457,7 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
 
 `run` 以**组件的 base 目录**为单位组织运行期产物：native 解压、war 解压与引擎产物都写在
 组件目录下。jstart 不记录 pid、也不停止实例（exec 后进程即应用）——实例身份、pid 与停止
-交给调用方（basctl 记在 `servers/<name>/server.info` 并按它停止）。
+交给调用方（pid 由上层工具自行记录与停止）。
 
 base 一词有两层，记住这两行就够：**base 根（root）**默认 `/var/tmp/jstart`，`--base=<dir>`
 整体替换它（不是拼在默认根下）；**组件目录（base）**= `<根>/<组件键>`（spec 写了

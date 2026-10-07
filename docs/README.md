@@ -55,7 +55,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   `[app] engine` 已移除（写了会被告警忽略）。
   `resolve`/`fetch`/`repo` 仍可直接接受 war 文件/gav。多 webapp 用若干 `[subapp <id>]`
   段（`entry`+`path`，可选 `libs` 扩展依赖）声明，必须给 `[engine] init`；init 命令在同一
-  JVM 里为每个 webapp 各建一个 context（通常用 basctl 的多 context 入口 + 发行包 jar），
+  JVM 里为每个 webapp 各建一个 context（外部引擎工具的多 context 入口 + 发行包 jar），
   各 webapp 依赖由各自 Context 隔离解析，见 [engine.md](engine.md)。
 - `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件
   走独立的 `~/.m2/snapshots`，不与 repository 混合；SNAPSHOT 每次向上游解析最新构建：

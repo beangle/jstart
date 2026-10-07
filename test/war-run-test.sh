@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Real war engine test: run org.beangle.otk:beangle-otk-ws:war:0.0.29 with a real
-# basctl creator end-to-end.
+# Real war engine test: run org.beangle.otk:beangle-otk-ws:war:0.0.29 end-to-end
+# through jstart's `[engine] init` protocol.
 #
-# Verifies: gav war 解析下载依赖（sha1 校验）、[engine] init 准备 docBase（委托 basctl
-# 的 make 入口）、exec 容器、Tomcat 启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
+# Verifies: gav war 解析下载依赖（sha1 校验）、[engine] init 准备 docBase、exec 容器、
+# 容器启动、HTTP 响应、优雅关闭后 docBase 被引擎清理。
 #
-# Requires: network (first run downloads ~100MB into the local repo), java 17+
-# (tomcat 11), curl, a built jstart (target/jstart), and a built basctl
-# (target/basctl, or $BASCTL / basctl on PATH).
+# 默认用本仓库自带的 test/engine-init-stub.sh 当 init 命令（一个最小的 creator，演示
+# docs/engine.md 的协议）；需要验证外部引擎工具时用 --init='<命令>' 覆盖。
+#
+# Requires: network (first run downloads ~100MB into the local repo), java 17+,
+# curl, unzip, and a built jstart (target/jstart).
 #
 # Usage:
 #   bash test/war-run-test.sh [--local=<repo>] [--port=<port>] [--path=/]
-#                             [--engine=tomcat|undertow] [--basctl=<path>] [--keep]
+#                             [--engine=tomcat|undertow] [--init='<cmdline>'] [--keep]
 #
 # The local repo defaults to ~/.m2/repository so reruns are served from cache.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JSTART="$ROOT/target/jstart"
-BASCTL="${BASCTL:-}"
+STUB="$ROOT/test/engine-init-stub.sh"
+INIT_CMD="${INIT_CMD:-}"
 REPO="${HOME}/.m2/repository"
 GAV="org.beangle.otk:beangle-otk-ws:war:0.0.29"
 CPATH="/"
@@ -32,7 +35,7 @@ for a in "$@"; do
     --port=*) PORT="${a#*=}" ;;
     --path=*) CPATH="${a#*=}" ;;
     --engine=*) ENGINE="${a#*=}" ;;
-    --basctl=*) BASCTL="${a#*=}" ;;
+    --init=*) INIT_CMD="${a#*=}" ;;
     --keep) KEEP=1 ;;
     *) echo "unknown option $a" >&2; exit 2 ;;
   esac
@@ -79,22 +82,20 @@ if [ ! -x "$JSTART" ]; then
   echo "Cannot find $JSTART, run 'dub build -b release' first." >&2
   exit 1
 fi
-
-if [ -z "$BASCTL" ]; then
-  if command -v basctl >/dev/null 2>&1; then
-    BASCTL="$(command -v basctl)"
-  elif [ -x "$ROOT/../basctl/target/basctl" ]; then
-    BASCTL="$ROOT/../basctl/target/basctl"
+if [ -z "$INIT_CMD" ]; then
+  if [ ! -x "$STUB" ]; then
+    echo "Cannot find $STUB" >&2
+    exit 1
   fi
+  INIT_CMD="$STUB $ENGINE"
 fi
-if [ -z "$BASCTL" ] || [ ! -x "$BASCTL" ]; then
-  echo "Cannot find basctl, run 'dub build -b release' in the basctl repo," >&2
-  echo "or pass --basctl=<path> / set BASCTL." >&2
-  exit 1
-fi
+for tool in curl unzip; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "Cannot find $tool on PATH" >&2; exit 1; }
+done
 
 T="$(mktemp -d /tmp/jstart-war-test.XXXXXX)"
 BASE="$T/bas"
+CDIR="$BASE/app"          # 组件目录：spec 里用 [app] instance = app 固定
 LOG="$T/run.log"
 failures=0
 
@@ -126,15 +127,17 @@ out="$("$JSTART" --local="$REPO" --quiet resolve "$GAV")"; code=$?
 check "resolve exit=0" "[ $code -eq 0 ]"
 check "resolve outputs .war" "printf '%s' \"$out\" | grep -q 'beangle-otk-ws-0.0.29.war'"
 
-echo "== run with basctl $ENGINE creator (via [engine] init) =="
-echo "port=$PORT path=$CPATH repo=$REPO engine=$ENGINE basctl=$BASCTL"
+echo "== run with [engine] init ($ENGINE) =="
+echo "port=$PORT path=$CPATH repo=$REPO engine=$ENGINE init=$INIT_CMD"
 
 cat > "$T/app.jstart" <<INI
 [app]
 entry = $GAV
+base = $BASE
+instance = app
 
 [engine]
-init = "$BASCTL" make $ENGINE
+init = $INIT_CMD
 $ENGINE_DEPS
 
 [args]
@@ -160,15 +163,15 @@ done
 check "engine answers http (code=$code)" "[ \"$code\" != '000' ]"
 check "log: $ENGINE started" "grep -q '$STARTED_LOG' \"$LOG\""
 check "log: beangle app booted" "grep -Eq 'ROOT started|Action scan completed' \"$LOG\""
-check "exploded docBase present" "[ -d \"$BASE/webapps/ROOT\" ]"
-check "engine jars on classpath" "grep -q '$ENGINE_JAR' \"$LOG\""
+check "exploded docBase present" "[ -d \"$CDIR/webapps/ROOT\" ]"
+check "engine jars on launch command" "tr '\\0' '\\n' < \"$CDIR/engine-entry.argv\" | grep -q '$ENGINE_JAR'"
 
 echo "== graceful shutdown =="
 kill -TERM "$JPID" 2>/dev/null
 wait "$JPID" 2>/dev/null
 JPID=
 sleep 1
-check "engine cleaned docBase on shutdown" "[ ! -d \"$BASE/webapps/ROOT\" ]"
+check "engine cleaned docBase on shutdown" "[ ! -d \"$CDIR/webapps/ROOT\" ]"
 
 if [ "$failures" -gt 0 ]; then
   echo "FAILED: $failures check(s), log: $LOG" >&2

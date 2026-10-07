@@ -23,8 +23,8 @@
  *
  * `run` replaces itself with the application (exec), so the jstart process
  * *becomes* the application process. Supervising a running instance -- keeping
- * its pid and stopping it -- is left to the caller (basctl records both in
- * servers/<name>/server.info).
+ * its pid and stopping it -- is left to the caller (an upper-level launcher or
+ * service manager).
  */
 module jstart.base;
 
