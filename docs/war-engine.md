@@ -69,9 +69,8 @@ jstart run app.jstart
 | `--path=/a/b` | `<base>/webapps/a#b`（先归一化：去尾 `/`、折叠 `//`） |
 
 - `base` 就是组件的运行目录 `<base 根>/<组件键>`：根默认 `/var/tmp/jstart`，用
-  `--base=<dir>` 换根、launch spec 的 `[app] base`（根）/`[app] instance`（目录名）命名；`<base>/app.pid`
-  是实例的 pid 文件，`<base>/webapps/<ctx>` 是引擎解压出的 docBase（一个 base 一个
-  实例，多副本各自指定）；
+  `--base=<dir>` 换根、launch spec 的 `[app] base`（根）/`[app] instance`（目录名）命名；
+  `<base>/webapps/<ctx>` 是引擎解压出的 docBase（多副本各自指定一个 base）；
 - 引擎每次准备时**重建** docBase（先删后解压）；容器关闭（shutdown hook）时会自行删除
   docBase，被 `kill -9` 留下的残骸由下一次运行清理；
 - 同一 `base` 上运行相同 context path 会冲突（与 bas.sh 相同）：默认已按组件隔离，

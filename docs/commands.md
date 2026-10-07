@@ -1,6 +1,6 @@
 # 命令详解
 
-jstart 0.0.1 提供七个子命令：`run` / `resolve` / `classpath` / `info` / `repo` / `fetch` / `stop`。
+jstart 0.0.1 提供六子命令：`run` / `resolve` / `classpath` / `info` / `repo` / `fetch`。
 命令名可以省略（默认 `run`）；选项与目标的位置不敏感，`--xxx=value` 形式。
 未被 jstart 消费的参数进入 `run` 的透传列表。
 
@@ -20,13 +20,11 @@ jstart [options] <command> <target> [args...]
 | `--remote=<urls>` | 远程仓库，逗号分隔，含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"快照库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
 | `--snapshot-remote=<urls>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖与 gav 目标）：开发版上游，逗号分隔。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地快照库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
 | `--offline` | 只用本地仓库：不探测远端（SNAPSHOT 也不做 `latest`/元数据探测）、不下载，缺件直接失败；与 `--remote`/`--snapshot-remote` 同时给出时以离线为准 |
-| `--base=<dir>` | run/stop：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与 pid 文件"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
+| `--base=<dir>` | run：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与运行目录"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
-| `--timeout=<sec>` | stop：SIGTERM 后等待进程退出的秒数，缺省 15 |
-| `--force` | run：base 上的实例仍在运行时也照常启动（覆盖旧 pid 文件）；stop：超时后改用 SIGKILL |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
 | `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
-| `--verbose` / `-v` | 输出过程细节：解析、下载、写 pid、将执行的启动命令与 init 命令的 stdout（默认只输出告警/错误与命令结果） |
+| `--verbose` / `-v` | 输出过程细节：解析、下载、将执行的启动命令与 init 命令的 stdout（默认只输出告警/错误与命令结果） |
 | `--quiet` / `-q` | 在默认之上再关闭告警，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
@@ -36,9 +34,8 @@ jstart [options] <command> <target> [args...]
 | 码 | 含义 |
 |----|------|
 | 0 | 成功 |
-| 1 | 目标无法获取、依赖缺失、repo 源缺失或与 local 相同；run 检测到同一实例已在运行 |
+| 1 | 目标无法获取、依赖缺失、repo 源缺失或与 local 相同 |
 | 2 | 用法错误：缺少目标（打印 usage）、`--print` 用于非 run、`--main` 值为空或不是类名 |
-| 3 | stop：目标实例未运行（pid 文件不存在、进程已退出，或 pid 已被复用）；残留 pid 文件会被清掉 |
 | 其他 | `run` 直接继承被启动应用的退出码（exec 后即应用自身，当前为 java） |
 
 ## 本地仓库与快照库（不混合）
@@ -74,8 +71,7 @@ jstart 维护**两个互不混合的本地目录**，取决于构件类型：
 jstart [options] run <target> [args...]
 ```
 
-流程：解析目标 → 准备依赖 → 写 pid 文件（见"组件 base 与 pid 文件"）→ 定主类 →
-`execvp` 把自身替换为运行时
+流程：解析目标 → 准备依赖 → 定主类 → `execvp` 把自身替换为运行时
 （jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎 init 命令再 exec 容器，见
 [engine.md](engine.md)/[war-engine.md](war-engine.md)；native tar.gz 目标 exec 包内
 可执行文件，见下文“native（tar.gz）目标”）：
@@ -99,7 +95,7 @@ jstart --quiet --main=com.example.Tool classpath app.jar  # 脚本口径同步
 ```
 
 > war 的入口由 `[engine] init` 命令决定，native 用 `[app] exec`；
-> 这两种目标上给 `--main`/`[app] main` 会告警忽略。主类不参与实例身份：同一个 target
+> 这两种目标上给 `--main`/`[app] main` 会告警忽略。主类不参与 base 推导：同一个 target
 > 换主类仍是同一个 base（要并行跑请配 `--base`，或在 spec 里写 `[app] instance`）。
 
 target 为 launch spec（`.jstart`，支持本地路径或 http(s) url，见
@@ -441,7 +437,7 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
   > 目录内的 `.jstart.stamp` 标记留在原地，删掉解压目录后会按需重解。即使整个
   > `/var/tmp/jstart` 被清理，下次运行也会重新解压，无需干预。
 - **base ≠ 参数**：base 只认组件（target）与 `--base`/`[app] base`/`[app] instance`，**不认应用
-  参数**；一个 base 只跑一个实例，多副本用多 base。见下节"组件 base 与 pid 文件（run/stop）"；
+  参数**；多副本用多 base，避免共用解压目录。见下节"组件 base 与运行目录（run）"；
 - **不覆盖用户目录**：目标目录存在但**没有** jstart 的 `.jstart.stamp` 标记（不是我们解压
   出来的，例如用户手工解压的目录）时拒绝覆盖并报错，数据保持原样；请先自行清理，或直接用
   `[app] exec` 指到你手工解压的可执行文件；
@@ -457,22 +453,20 @@ jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14
   `classpath` 对 native 无意义（exit 2，提示改用 `resolve`）；
 - **依赖**：native 包内没有依赖清单，需要额外依赖时用 spec `[libs]` 段显式罗列（此时即全部依赖）。
 
-## 组件 base 与 pid 文件（run/stop）—— 一个 base 一个实例
+## 组件 base 与运行目录（run）
 
-`run`/`stop` 以**组件的 base 目录**为单位：`run` 在 exec **之前**把 pid 写进 `<base>/app.pid`
-（exec 之后本进程就是应用，pid 不变，所以文件里就是应用的 pid），`stop` 读同一个文件停应用。
+`run` 以**组件的 base 目录**为单位组织运行期产物：native 解压、war 解压与引擎产物都写在
+组件目录下。jstart 不记录 pid、也不停止实例（exec 后进程即应用）——实例身份、pid 与停止
+交给调用方（basctl 记在 `servers/<name>/server.info` 并按它停止）。
 
 base 一词有两层，记住这两行就够：**base 根（root）**默认 `/var/tmp/jstart`，`--base=<dir>`
 整体替换它（不是拼在默认根下）；**组件目录（base）**= `<根>/<组件键>`（spec 写了
 `[app] instance = <name>` 时就是 `<根>/<name>`，不再拼指纹），jstart 自动创建并按用户隔离。
 
-**实例身份 = 组件（target）+ base，与应用参数无关**：
-
 | 位置 | 粒度 | 说明 |
 |------|------|------|
 | `<base 根>` | 可共用 | 缺省 `/var/tmp/jstart`（01777 sticky，同 `/tmp`，多个用户/组件可共存），`--base=<dir>` 整体替换它 |
 | `<root>/<组件键>` | 一个组件一份 | 组件目录，jstart 创建为 0700 并校验属主（同一 target 永远同一个目录；`[app] instance` 时目录名就是 `<name>`） |
-| `<base>/app.pid` | 一个 base 一份 | `run` 写、`stop` 读；检测到真实进程仍在运行即拒绝重复启动 |
 | `<base>/app/` | 一个 base 一份 | native（tar.gz）的解压树（`.jstart.stamp` 在内），标记匹配时复用 |
 | `<base>/webapps/<ctx>/` | 一个 base 一份 | 引擎解压出的 docBase（引擎拿到的 `--base` 就是组件目录） |
 | `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 命令 |
@@ -484,15 +478,11 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
   跳过这层推导，目录名就是那个名字（合法字符 `[A-Za-z0-9._-]`，且不能是 `.`/`..`），
   同一根下的重名由使用者自己保证；
 - **组件目录始终 0700、属主本人**：根可以是共享目录（默认根由 jstart 建成 01777 sticky），
-  但单个实例的运行状态只对本用户可读写；目录被他人占用或换成符号链接时直接报错，不做兜底；
-- **一个 base 只能跑一个实例**：同一个 target 再 `run`（哪怕参数完全不同）会报
-  `Already running`（exit 1）；`--force` 可覆盖；
+  但单个实例的运行产物只对本用户可读写；目录被他人占用或换成符号链接时直接报错，不做兜底；
+- **参数不参与身份**：base 只认组件（target）与 `--base`/`[app] base`/`[app] instance`，
+  与 `--port` 等应用参数无关；
 - **要跑多个副本就给每个副本一个 base**：`--base=<dir>` 换根，或在 launch spec 里写
-  `[app] base = <根>` + `[app] instance = <名字>` 固定组件目录名。副本之间各自解压，互不干扰；
-- **`stop` 不需要应用参数**：`jstart stop <target>`（target 是 spec 时它会读出同一个
-  `[app] base`/`[app] instance`；也可用 `--base=` 指定同一个根）即可；多给的参数会被忽略并提示。
-  base 对不上时报 `nothing to stop`（exit 3）。**spec 是 `[app] instance` 的唯一来源**：spec
-  读不到时只能按 target 推导组件目录，带 instance 的实例会停不掉（会给出提示）；
+  `[app] base = <根>` + `[app] instance = <名字>` 固定组件目录名。副本之间各自解压，互不干扰。
 
 ```bash
 # 同一份工件跑两个副本：各写一份 spec，用 [app] instance 固定目录名
@@ -509,25 +499,7 @@ jstart run portal-b.jstart --port=8082 &
 # 或整个换根：/srv/jstart/<组件键>、/srv/jstart2/<组件键>
 jstart run /opt/app/portal.tar.gz --base=/srv/jstart --port=8083 &
 jstart run /opt/app/portal.tar.gz --base=/srv/jstart2 --port=8084 &
-
-# 停止：spec 里已写着 base/instance，只给 spec 即可；换根的则同给 --base
-jstart stop portal-a.jstart
-jstart stop /opt/app/portal.tar.gz --base=/srv/jstart2
-
-# 同一个 base 重复启动会被拒绝（参数不同也一样）
-jstart run portal-a.jstart --port=9999  # Already running
 ```
-
-`stop` 行为：
-
-- 读 pid 文件 → SIGTERM → 每 100ms 轮询，进程退出（含僵尸态）即成功，删掉 pid 文件并清掉
-  组件目录下的空目录（空的组件目录本身也会删掉，base 根不动；应用自留的非空内容与解压
-  树保留，供下次启动复用）；
-- `--timeout=<sec>`（默认 15）后仍未退出：报错 exit 1 并保留 pid 文件；加 `--force` 则改发
-  SIGKILL；
-- pid 文件不存在、pid 已不存在、或 pid 的 start 时间与记录不符（pid 被系统复用）：判为
-  "未运行" exit 3，残留文件会被清掉；
-- `stop` **不取包、不解析依赖**，因此包被清理、仓库不可达时也能停止正在运行的实例。
 
 其他说明：
 
@@ -535,10 +507,9 @@ jstart run portal-a.jstart --port=9999  # Already running
   `/var/tmp/jstart` 建成 01777 sticky）；组件目录则是 jstart 创建的 0700 私有目录，
   属主/权限/符号链接不符即报错；`--base` 里可用 `~`/`${VAR}`；
 - launch spec 可用 `[app] base = <dir>` 固定 base（见 [launch-spec.md](launch-spec.md)），
-  此时 `run`/`stop` 都不需要额外参数；
+  此时 `run` 不需要额外参数；
 - 缺省根无法准备（不存在且创建失败、不是目录）时直接报错，用 `--base=<dir>` 指定别处；
-- 应用被 `kill -9` 等强杀时 pid 文件会残留，下次 `stop`/`run` 会按"进程已不存在"处理；
-- 一个 base 一份解压，多副本 = 多 base（代价是各存一份解压产物）；jar 目标没有解压产物（jar 本体只读、可共用），但同样按 base 区分实例。
+- 一个 base 一份解压，多副本 = 多 base（代价是各存一份解压产物）；jar 目标没有解压产物（jar 本体只读、可共用），但同样按 base 组织。
 
 ## 目标（target）形态
 

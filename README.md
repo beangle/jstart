@@ -27,13 +27,11 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   正式版远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖；SNAPSHOT 上游用
   `--snapshot-remote=`（可选，**不兜到 `--remote`**）；没配快照上游时本地快照库命中即用
   （不发请求、不报错），只有本地缺失、需要拉取才报错（`--offline` 只是不联网、不拉取）。
-- `stop` 子命令按 **base** 停止 `run` 启动的实例：`run` 在 exec 前把 pid 写入
-  `<base>/app.pid`（base = `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
-  整体替换这个根，launch spec 可用 `[app] base` 固定根、`[app] instance` 固定组件目录名）。
-  **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复启动会被拒绝
-  （`--force` 可覆盖），`stop <target>` 不需要重复 run 时的参数；要跑多个副本就给每个副本
-  一个 base。
-  `stop` 先 SIGTERM，`--timeout`/`--force` 控制等待与 SIGKILL。
+- 组件运行目录（**base**）为 `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
+  整体替换这个根，launch spec 可用 `[app] base` 固定根、`[app] instance` 固定组件目录名。
+  native 解压、war 解压与引擎产物都在其下。**jstart 不记录、也不停止运行中的实例**
+  （exec 后进程即应用）：实例身份、pid 与停止交给调用方——basctl 记在
+  `servers/<name>/server.info` 并按它停止。要跑多个副本就给每个副本一个 base。
 - `fetch` 子命令负责把目标取到本地：gav（支持 classifier）从发行仓库取 native tar.gz/jar/war，
   本地有基线且远端有 bsdiff 增量时只下补丁，否则整包下载；`http(s)` url 直接下载并按主机路径
   缓存；本地文件原样返回路径。没有补丁不是错误。tar.gz 的补丁按“本地基线 `gunzip` →
@@ -59,8 +57,8 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   （同 `[libs]` 语法）；见 [docs/war-engine.md](docs/war-engine.md)。
 - 多 webapp：一个 spec 用若干 `[subapp <id>]` 段（`entry` + `path`）声明多个 war，
   `[engine] init` 命令负责在同一 JVM 里各建一个 context（通常用 basctl 的多 context 入口），
-  各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一份 pid
-  （`stop` 一次停整组）；见 [docs/engine.md](docs/engine.md)。
+  各 webapp 依赖由各自 Context 的 `DependencyClassLoader` 隔离解析，一个 base 一套
+  `webapps/`；见 [docs/engine.md](docs/engine.md)。
 - native（tar.gz）目标：`g:a:tar.gz:<classifier>:v`、本地 `*.tar.gz` 或 `http(s)` url 时，
   `resolve`/`run` 复用 `fetch` 的取包逻辑（gav 时优先增量补丁），解压到 `<base>/app` 后
   **exec 包内可执行文件**；参数按序附加在其后（native 无 JVM，`[args]`/命令行含 `-D`/`-X`
@@ -73,8 +71,7 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
 - 输出分级：默认只输出告警/错误与命令结果（`resolve` 的路径、`classpath` 的
   `Main-Class@classpath`、`fetch` 的本地路径等）；`--verbose`/`-v` 追加解析、下载、
-  写 pid、init 命令的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连
-  告警也关闭。
+  init 命令的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连告警也关闭。
 
 > **项目约束**：不做传递依赖解析。依赖清单是依赖的唯一来源，应用的全部运行期依赖须由构建期
 > beangle maven/sbt 插件显式写全；漏写不推导，`resolve`/`run` 会以 Missing 失败。
@@ -114,10 +111,10 @@ meta=$(./target/jstart --quiet classpath "$app")
 # 输出结构化信息（app/main/依赖落盘路径与体积），供审计与 CI
 ./target/jstart --quiet info "$app"
 
-# 后台运行 + 按 base 停止（一个 base 一个实例；多副本各给一个 base）
+# 后台运行（一个组件一个 base；多副本各给一个 base）
 # 固定目录名 app-a 要写成 spec： [app] entry=... / base=/srv/jstart / instance=app-a
 ./target/jstart run /path/to/app-a.jstart --port=8081 &
-./target/jstart stop /path/to/app-a.jstart
+# 停止交给 basctl（按 servers/<name>/server.info 里的 pid）；jstart 只负责启动
 
 # 离线整合：把依赖从 --source 仓库复制到 --local 仓库
 ./target/jstart repo "$app" --local=/opt/offline-repo

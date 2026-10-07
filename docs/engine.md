@@ -68,7 +68,7 @@ printf '%s\0' java -cp "$cp" com.example.ContainerMain > "$entryOut"
 
 | 参数 | 必填 | 含义 |
 |------|------|------|
-| `--base=<dir>` | 是 | 组件 base（jstart 的 `--base`/`[app] base`/`[app] instance`）；pid 文件、`webapps/`、引擎目录都在其下 |
+| `--base=<dir>` | 是 | 组件 base（jstart 的 `--base`/`[app] base`/`[app] instance`）；`webapps/`、引擎目录都在其下 |
 | `--entry=<path>` | 单应用是 | war 文件，或**已解压的 webapp 目录** |
 | `--entry-out=<file>` | 是 | 最终 argv 的写出文件（NUL 分隔） |
 | `--engine-classpath-file=<file>` | 否 | 引擎依赖 classpath 的文件（`[engine]` 段除 `init` 外的行，`<base>/engine-deps.classpath`）；文件可能为空 |
@@ -153,8 +153,7 @@ webapp 各自独立），最后只写出一份最终 argv。
   的 `META-INF/beangle/dependencies`（再叠加该 subapp 的 `libs`）解析；jstart 只负责把
   各 webapp 的依赖与 libs 取到本地仓库并透传 `--local-repo`。**不要**把多个应用的依赖
   合并进同一个 JVM classpath（会串味）。
-- **共享生命周期**：一个 base 一份 pid/一套 `webapps/`，`run`/`stop` 一次管整组
-  （`stop` 只需 base）。
+- **共享运行目录**：一个 base 一套 `webapps/`（多应用同在一个 JVM/组件目录里）。
 - **单应用路径不变**：`--entry=` 协议与 `--app-classpath-file=` 保持原样，单 Context
   行为向后兼容。
 
@@ -234,8 +233,8 @@ basctl 的引擎入口按 `--base` + `--path` 推导（与 beangle/bas `Server.C
 
 - 每次运行前**重建**解压目录；容器关闭（shutdown hook）时会自行删除 docBase，
   被 `kill -9` 留下的残骸由下一次运行清理。
-- 引擎自带目录（如 `tomcat-server` 的 `<base>/engines/`）也放在 `--base` 下，一个 base
-  一个实例。
+- 引擎自带目录（如 `tomcat-server` 的 `<base>/engines/`）也放在 `--base` 下，多副本各自
+  指定一个 base。
 
 ## 最小示例
 
@@ -257,7 +256,6 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 ```bash
 jstart run app.jstart
 jstart run --print app.jstart      # 只打印（见下）
-jstart stop app.jstart --base=/path/app.jstart-xxxx
 ```
 
 `run` 拒绝**裸 war** 目标（本地 `app.war`、`g:a:v`、`http(s)://` 都不行）：引擎、参数、

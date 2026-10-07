@@ -18,9 +18,7 @@ import std.stdio : stderr, writeln;
 import std.string : startsWith, strip;
 
 import jstart.archive : Artifact, Archive, expandLocalPath, mergeLibraries, parseArchive, parseGav;
-import jstart.base : PidInfo, currentPid, nativeDirName, pidFilePath, processAlive,
-  processStartTime, readPidFile, removePidFile, resolveBase, stopApplication, stopNotRunning,
-  writePidFile;
+import jstart.base : nativeDirName, resolveBase;
 import jstart.distrepo : fetchDist;
 import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
   entryClasspathFile, parseEntryArgv, resolveEngineInit, subappsPlanFile;
@@ -56,17 +54,13 @@ struct BootArgs {
   string mainClass;
   /// --main 是否出现过（空值要报错，不能当成"没给"）
   bool hasMain;
-  /// --timeout: stop 等待进程退出的秒数（默认 15）
-  int stopTimeout = 15;
-  /// --force: run 时忽略已在运行的实例；stop 时超时后用 SIGKILL
-  bool force;
   /// --source: 源仓库目录（repo 命令从该仓库复制依赖）
   string source;
   /// --print: 只打印将要执行的命令，不 exec。
   bool print;
   /// 并行下载并发数（--jobs），1 = 串行。
   int jobs = 10;
-  /// --verbose: 输出解析/下载/写 pid/启动命令等过程细节。
+  /// --verbose: 输出解析/下载/启动命令等过程细节。
   bool verbose;
   /// --quiet: 连告警也静默（比默认更安静）。
   bool quiet;
@@ -115,22 +109,10 @@ BootArgs parseArgs(string[] args) {
     } else if (a.startsWith("--main=")) {
       r.mainClass = a["--main=".length .. $].strip;
       r.hasMain = true;
-    } else if (a.startsWith("--timeout=")) {
-      auto n = 0;
-      try {
-        import std.conv : to;
-
-        n = to!int(a["--timeout=".length .. $].strip);
-      } catch (Exception e) {
-        n = 0;
-      }
-      r.stopTimeout = n < 1 ? 1 : n;
-    } else if (a == "--force") {
-      r.force = true;
     } else if (a == "--offline") {
       r.offline = true;
     } else if (r.target.length == 0 && (a == "resolve" || a == "classpath" || a == "info"
-        || a == "run" || a == "repo" || a == "fetch" || a == "stop")) {
+        || a == "run" || a == "repo" || a == "fetch")) {
       r.command = a;
     } else if (r.target.length == 0 && !a.startsWith("-")) {
       r.target = a;
@@ -176,13 +158,6 @@ void usage() {
   writeln("      the patch is applied differs (tar.gz: gunzip -> bspatch -> gzip).");
   writeln("      <gav> accepts a classifier, e.g.");
   writeln("      org.beangle:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT");
-  writeln("  jstart [options] stop <target> [--base=<dir>] [--timeout=<sec>] [--force]");
-  writeln("      Stop the application started by `run <target>`: read the pid");
-  writeln("      file in the component base, send SIGTERM and wait for it to");
-  writeln("      exit (--force sends SIGKILL after the timeout). No application");
-  writeln("      arguments are needed: an instance is identified by component +");
-  writeln("      base. Exits 0 when stopped, 3 when nothing was running");
-  writeln("      (missing/stale pid file).");
   writeln("");
   writeln("target:");
   writeln("  /path/to/app.jar | app.war | exploded-war-dir");
@@ -204,10 +179,9 @@ void usage() {
   writeln("  <base>/app（base = <base 根>/<组件键>，根默认 /var/tmp/jstart），");
   writeln("  exec 解压出的可执行文件，[args]/命令行参数按序附加在其后；resolve 输出该");
   writeln("  可执行文件路径，可执行文件位置用 launch spec [app] exec= 指定。");
-  writeln("  base：组件的运行基目录（pid 文件、native 解压、引擎 docBase 与 argv 都在其中）。一个组件");
-  writeln("  的一个 base 只能跑一个实例——跑多个副本请给每个副本不同的 --base，或在 spec 里用");
-  writeln("  [app] instance = <name> 显式命名组件目录（<base 根>/<name>）；");
-  writeln("  参数不参与实例身份，因此 run/stop 不需要给同样的参数。");
+  writeln("  base：组件的运行基目录（native 解压、引擎 docBase 与 argv 都在其中）。跑多个副本请给");
+  writeln("  每个副本不同的 --base，或在 spec 里用 [app] instance = <name> 显式命名组件目录");
+  writeln("  （<base 根>/<name>），避免共用一个运行目录。");
   writeln("");
   writeln("options:");
   writeln("  --local=<dir>    local repository (default ~/.m2/repository)");
@@ -225,19 +199,14 @@ void usage() {
   writeln("                   and no downloads (missing artifacts fail instead)");
   writeln("  --from=<version> fetch/native gav: delta baseline version (default: the");
   writeln("                   newest local version lower than the requested one)");
-  writeln("  --base=<dir>     run/stop: the base root, replacing the default");
+  writeln("  --base=<dir>     run: the base root, replacing the default");
   writeln("                   /var/tmp/jstart. A component's state lives in");
-  writeln("                   <base>/<组件键>/: app.pid, app/ (native");
-  writeln("                   extraction) and webapps/ (war explosion). One");
-  writeln("                   component + base runs one instance; copies");
-  writeln("                   need their own base or an [app] instance name");
+  writeln("                   <base>/<组件键>/: app/ (native extraction) and");
+  writeln("                   webapps/ (war explosion)");
   writeln("  --main=<class>   run/classpath/info: java main class, overriding");
   writeln("                   [app] main and the jar's Main-Class manifest");
   writeln("                   entry; only for jar/dir targets, ignored for");
   writeln("                   war/native");
-  writeln("  --timeout=<sec>  stop: seconds to wait after SIGTERM (default 15)");
-  writeln("  --force          run: start even if the pid file says it is running;");
-  writeln("                   stop: SIGKILL after the timeout");
   writeln("  --print          run only: print the command to execute (no exec)");
   writeln("  --jobs=N         parallel dependency downloads (default 10, 1 = serial)");
   writeln("  --verbose, -v    show progress details (resolve/download/explode/exec)");
@@ -318,7 +287,7 @@ int main(string[] args) {
     stderr.writeln("Missing entry in launch spec: " ~ opts.target);
     return 1;
   }
-  if (!specMode && opts.command != "stop") {
+  if (!specMode) {
     auto reject = plainTargetReject(opts);
     if (reject.length > 0) {
       stderr.writeln(reject);
@@ -326,41 +295,9 @@ int main(string[] args) {
     }
   }
 
-  // stop：只按 base 里的 pid 文件停应用——不取包、不准备依赖、也不需要应用参数
-  // （实例身份 = 组件 + base），因此包被清理或网络不可用时照样能停。
-  if (opts.command == "stop") {
-    // spec 是实例身份（[app] instance）的唯一来源：读不到就只能回退到按 target
-    // 推导的组件目录。显式提示，避免带 instance 的实例被静默跳过。
-    if (isSpecFile(opts.target) && !specMode && !opts.quiet) {
-      stderr.writeln("Note: cannot read launch spec " ~ opts.target
-          ~ "; [app] instance (if any) is unknown, falling back to the"
-          ~ " target-derived component directory. Restore the spec to stop"
-          ~ " an instance named by [app] instance.");
-    }
-    auto base = resolveBase(opts.target, baseOption(opts, specMode ? spec : LaunchSpec.init),
-        specMode ? spec.instance : "");
-    if (base.length == 0) {
-      stderr.writeln("Cannot prepare the component base for " ~ opts.target
-          ~ "; pass a writable --base=<dir>.");
-      return 1;
-    }
-    auto pidPath = pidFilePath(base);
-    auto existed = exists(pidPath);
-    auto code = stopApplication(pidPath, opts.stopTimeout, opts.force, !opts.quiet);
-    if (code == stopNotRunning && !existed && !opts.quiet) {
-      stderr.writeln("Hint: an instance is identified by component + base; if it was "
-          ~ "started with --base=<dir> / [app] instance, pass the same spec here.");
-    }
-    if (opts.rest.length && !opts.quiet) {
-      stderr.writeln("Note: application arguments are ignored by stop "
-          ~ "(identity = component + base).");
-    }
-    return code;
-  }
-
   // 多应用 spec（[subapp <id>]）：一个 dist 引擎在同一 JVM 里跑多个 webapp，各占一个
   // context path（该 spec 的 LaunchType 必为 engine，见 jstart.spec.launchType）。
-  // stop 已按 base 处理，这里处理 run/resolve/info/classpath。
+  // 这里处理 run/resolve/info/classpath。
   if (specMode && spec.subapps.length > 0) {
     return runMultiWebapp(opts, resolver, spec);
   }
@@ -372,7 +309,7 @@ int main(string[] args) {
   string nativeArchive;
   string nativeRoot;
   string appPath;
-  // base：组件的运行基目录（pid 文件、native 解压、引擎 docBase 与 argv 都在其中）。run 需要，
+  // base：组件的运行基目录（native 解压、引擎 docBase 与 argv 都在其中）。run 需要，
   // native 的 resolve/info 因为要解压也需要。
   string base;
   if (opts.command == "run" || nativeMode) {
@@ -384,18 +321,6 @@ int main(string[] args) {
       return 1;
     }
   }
-  // pid 文件：run 在 exec 前写入（exec 后本进程就是应用，pid 即应用 pid）。
-  string pidPath;
-  if (opts.command == "run" && !opts.print) {
-    bool fatal;
-    pidPath = preparePidFile(opts, base, target, fatal);
-    if (fatal) {
-      return 1;
-    }
-  }
-  // 启动失败（没能 exec 成应用）时清掉刚写的 pid 文件；exec 成功后本进程
-  // 就是应用，这段代码不会再执行，pid 文件留给 stop 使用。
-  scope (exit) removePidOnExit(pidPath);
   if (nativeMode) {
     nativeArchive = fetchArtifact(opts, resolver, target);
     if (nativeArchive.length == 0) {
@@ -673,7 +598,7 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
  *    `<base>/engine-subapps.jstart`（launch spec 片段，一段一个 `[subapp <id>]`），
  *    init 命令按 `--base` 从该约定路径读取，不经命令行传递；单应用仍走
  *    `--entry=`/`--path=`/`--app-classpath-file=`；
- *  - 一个 base = 一个实例：一份 pid、一套 `webapps/`，多应用共享启停生命周期。
+ *  - 一个 base 一套 `webapps/`：多应用共享同一个运行目录。
  */
 private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   import std.format : format;
@@ -685,16 +610,6 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
         ~ "; pass a writable --base=<dir>.");
     return 1;
   }
-  // 一个 base 一份 pid：多应用共享启停生命周期（stop 只需 base）。
-  string pidPath;
-  if (opts.command == "run" && !opts.print) {
-    bool fatal;
-    pidPath = preparePidFile(opts, base, opts.target, fatal);
-    if (fatal) {
-      return 1;
-    }
-  }
-  scope (exit) removePidOnExit(pidPath);
 
   // 逐个取回 webapp 并补齐依赖：容器内 DependencyClassLoader 按 bas.repo 从本地仓库解析
   // 每个 war 的清单，因此这里必须确保构件已就位（与单应用同为 jstart 的解析结果）。
@@ -1017,78 +932,15 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
   return 0;
 }
 
-/**
- * 纯文本依赖清单已不支持：本地文件 target 只接受 jar/war（解压目录/launch spec
- * 由调用方各自处理）。返回拒绝消息，空串表示放行。
- */
 /// --base 优先，其次 launch spec [app] base，都没有则用组件默认 base。
 private string baseOption(BootArgs opts, LaunchSpec spec) {
   return opts.base.length ? opts.base : spec.base;
 }
 
 /**
- * 运行前准备 pid 文件：固定为 <base>/app.pid（base 由 --base / [app] base / [app] instance
- * 决定，见 jstart.base）。实例身份 = 组件 + base，参数不参与。
- *
- * 若文件指向一个真实存在（且 start 时间匹配，排除 pid 复用）的进程，说明这个 base
- * 上已经有实例在跑：报错不启动（除非 --force）；fatal 置 true 由调用方退出。
- *
- * 文件在准备阶段就写入（并发启动会被拒绝，而不是等到依赖下载完才发现），
- * 启动失败或应用退出后由调用方删除。
+ * 纯文本依赖清单已不支持：本地文件 target 只接受 jar/war（解压目录/launch spec
+ * 由调用方各自处理）。返回拒绝消息，空串表示放行。
  */
-private string preparePidFile(BootArgs opts, string base, string app, out bool fatal) {
-  fatal = false;
-  auto path = pidFilePath(base);
-  if (path.length == 0) {
-    if (!opts.quiet) {
-      stderr.writeln("Warning: no base for pid files; pass --base=<dir> to keep one.");
-    }
-    return "";
-  }
-  PidInfo info;
-  if (readPidFile(path, info) && processAlive(info.pid)) {
-    auto start = processStartTime(info.pid);
-    auto recycled = info.start.length && start.length && info.start != start;
-    if (!recycled) {
-      if (!opts.force) {
-        stderr.writeln("Already running: pid " ~ to!string(info.pid)
-            ~ (info.app.length ? " (" ~ info.app ~ ")" : "") ~ ".");
-        stderr.writeln("Pid file: " ~ path ~ "; stop it with `jstart stop " ~ opts.target
-            ~ "`, start another copy with its own `--base=<dir>` (or spec `[app] base` +"
-            ~ " `[app] instance`),"
-            ~ " or override with --force.");
-        fatal = true;
-        return "";
-      }
-      if (!opts.quiet) {
-        stderr.writeln("Warning: pid " ~ to!string(info.pid) ~ " is still running; overwriting "
-            ~ path ~ " (--force).");
-      }
-    }
-  }
-  string err;
-  if (!writePidFile(path, opts.target, app, err)) {
-    stderr.writeln("Cannot write pid file " ~ path ~ ": " ~ err);
-    fatal = true;
-    return "";
-  }
-  if (showProgress(opts)) {
-    writeln("Pid file " ~ path ~ " (pid " ~ to!string(currentPid()) ~ ")");
-  }
-  return path;
-}
-
-/**
- * Remove the pid file after the launcher returns. A successful exec never
- * returns (the process becomes the application), so this only runs when the
- * launch failed or the application already exited.
- */
-private void removePidOnExit(string pidPath) {
-  if (pidPath.length) {
-    removePidFile(pidPath);
-  }
-}
-
 private string plainTargetReject(BootArgs opts) {
   auto t = expandLocalPath(opts.target);
   if (!exists(t) || !isFile(t) || t.endsWith(".jar") || t.endsWith(".war")

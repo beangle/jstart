@@ -29,19 +29,10 @@ JAVA
 failures=0
 # 默认根（/var/tmp/jstart）下由本脚本创建的组件目录，成功时一并清理
 DEFAULT_DIRS=()
-sweep() { # sweep <dir|pid-file>: 记下待清理的目录（组件目录本身）
+sweep() { # sweep <dir>: 记下待清理的组件目录
   local p="$1"
   [ -n "$p" ] || return 0
-  case "$p" in */app.pid) p="$(dirname "$p")" ;; esac
   DEFAULT_DIRS+=("$p")
-}
-proc_gone() { # proc_gone <pid> [seconds]: wait for a stopped process to disappear
-  local pid="$1" secs="${2:-5}" i=0
-  while [ -d "/proc/$pid" ] && [ "$i" -lt $((secs * 10)) ]; do
-    sleep 0.1
-    i=$((i + 1))
-  done
-  [ ! -d "/proc/$pid" ]
 }
 
 check() { # check <desc> <actual> <expected-exit> <expect-contains>
@@ -120,8 +111,7 @@ check "deps alias merges" "$code" 0 "deps: 1"
 
 echo "== run forwards args (needs java + compiled class) =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
-  out="$("$JSTART" --local="$REPO" --verbose run "$T/app.jar" --port=8080 demo)"; code=$?
-  sweep "$(printf '%s' "$out" | sed -n 's/^Pid file \(.*\) (pid .*/\1/p')"
+  out="$("$JSTART" --local="$REPO" --verbose run "$T/app.jar" --base="$T/jar-args" --port=8080 demo)"; code=$?
   check "run exit" "$code" 0 "hello-from-jar"
   printf '%s' "$out" | grep -q "arg:--port=8080" || { echo "FAIL run arg forwarding" >&2; failures=$((failures + 1)); }
   printf '%s' "$out" | grep -q "arg:demo" || { echo "FAIL run arg forwarding" >&2; failures=$((failures + 1)); }
@@ -137,8 +127,7 @@ if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   cp -r "$T/classes/." "$T/nomain/"
   (cd "$T/nomain" && zip -qr "$T/nomain.jar" .)
 
-  out="$("$JSTART" --verbose run "$T/nomain.jar" --main=org.jstarttest.Hello 2>&1)"; code=$?
-  sweep "$(printf '%s' "$out" | sed -n 's/^Pid file \(.*\) (pid .*/\1/p')"
+  out="$("$JSTART" --verbose run "$T/nomain.jar" --base="$T/nomain-base" --main=org.jstarttest.Hello 2>&1)"; code=$?
   check "run --main" "$code" 0 "hello-from-jar"
   out="$("$JSTART" --quiet run "$T/nomain.jar" 2>&1)"; code=$?
   check "no main is an error" "$code" 1 "Pass --main=<class>"
@@ -328,8 +317,8 @@ EOF
   [ ! -e "$T/demo-1.0-linux-amd64" ] \
     || { echo "FAIL extraction must not land beside the archive" >&2; failures=$((failures + 1)); }
 
-  # ===== pid/stop：一份工件多副本（参数区分），解压目录共用、运行目录各自一份
-  echo "== pid file / stop =="
+  # ===== 一份工件多副本：参数只影响应用，运行目录各自一份
+  echo "== per-base extraction =="
   mkdir -p "$T/sleeper/sleeper-1.0/bin"
   cat > "$T/sleeper/sleeper-1.0/bin/sleeper" <<'SH'
 #!/bin/sh
@@ -342,53 +331,22 @@ SH
   SLEEPER="$T/sleeper-1.0-linux-amd64.tar.gz"
   BA="$T/inst-a"
   BB="$T/inst-b"
-  # 一个组件多副本：各给一个 base（参数只影响应用，不参与实例身份）
-  "$JSTART" --verbose run "$SLEEPER" --base="$BA" --port=8081 >"$T/inst-a.log" 2>&1 &
-  "$JSTART" --verbose run "$SLEEPER" --base="$BB" --port=8082 --path=/b >"$T/inst-b.log" 2>&1 &
-  sleep 3
-  pidA="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/inst-a.log")"
-  pidB="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/inst-b.log")"
-  [ -n "$pidA" ] && [ -n "$pidB" ] && [ "$pidA" != "$pidB" ] \
-    || { echo "FAIL instance pids: A=$pidA B=$pidB" >&2; failures=$((failures + 1)); }
+  outA="$("$JSTART" --quiet --base="$BA" resolve "$SLEEPER")"; codeA=$?
+  outB="$("$JSTART" --quiet --base="$BB" resolve "$SLEEPER")"; codeB=$?
+  check "copy A resolve" "$codeA" 0 "$BA"
+  check "copy B resolve" "$codeB" 0 "$BB"
   # 解压目录按组件目录：<根>/<组件键>/app（每个 base 一份）
-  extractA="$(sed -n 's#^Running \(.*\)/sleeper-1.0/bin/sleeper .*#\1#p' "$T/inst-a.log")"
-  extractB="$(sed -n 's#^Running \(.*\)/sleeper-1.0/bin/sleeper .*#\1#p' "$T/inst-b.log")"
-  case "$extractA" in "$BA"/sleeper-1.0-linux-amd64.tar.gz-*/app) ;; *) extractA="" ;; esac
-  case "$extractB" in "$BB"/sleeper-1.0-linux-amd64.tar.gz-*/app) ;; *) extractB="" ;; esac
-  [ -n "$extractA" ] && [ -n "$extractB" ] \
-    || { echo "FAIL per-base extraction dir: A=$extractA B=$extractB" >&2; failures=$((failures + 1)); }
-  # pid 文件固定在 <base>/app.pid
-  pidPathA="$(sed -n 's/^Pid file \(.*\) (pid .*/\1/p' "$T/inst-a.log")"
-  pidPathB="$(sed -n 's/^Pid file \(.*\) (pid .*/\1/p' "$T/inst-b.log")"
-  case "$pidPathA" in "$BA"/sleeper-1.0-linux-amd64.tar.gz-*/app.pid) ;; *) pidPathA="" ;; esac
-  case "$pidPathB" in "$BB"/sleeper-1.0-linux-amd64.tar.gz-*/app.pid) ;; *) pidPathB="" ;; esac
-  [ -n "$pidPathA" ] && [ -n "$pidPathB" ] \
-    || { echo "FAIL pid file layout: A=$pidPathA B=$pidPathB" >&2; failures=$((failures + 1)); }
-  # 同一个 base 再启动就被拒（参数不同也一样：参数不参与身份）
-  out="$("$JSTART" run "$SLEEPER" --base="$BA" --port=9999 2>&1)"; code=$?
-  check "duplicate base refused" "$code" 1 "Already running"
-  # 没用 --base 启动的默认 base 没在跑：stop 报未运行（顺手记下这个空目录）
-  out="$("$JSTART" stop "$SLEEPER" 2>&1)"; code=$?
-  check "stop other base is a no-op" "$code" 3 "nothing to stop"
-  sweep "$(printf '%s' "$out" | sed -n 's/^No pid file \(.*\): nothing to stop.*/\1/p')"
-  # stop 只认 base：应用参数被忽略，多给也不影响
-  out="$("$JSTART" stop "$SLEEPER" --base="$BB" --port=8082 --path=/b 2>&1)"; code=$?
-  check "stop ignores args" "$code" 0 "Stopped pid"
-  out="$("$JSTART" stop "$SLEEPER" --base="$BA" 2>&1)"; code=$?
-  check "stop instance A" "$code" 0 "Stopped pid"
-  proc_gone "$pidA" || { echo "FAIL pid A still alive" >&2; failures=$((failures + 1)); }
-  proc_gone "$pidB" || { echo "FAIL pid B still alive" >&2; failures=$((failures + 1)); }
-  # 停止后 pid 文件消失，解压目录保留（下次启动直接复用）
-  [ -e "$pidPathA" ] && { echo "FAIL stale pid file $pidPathA" >&2; failures=$((failures + 1)); }
-  ls "$BA"/*/app/sleeper-1.0/bin/sleeper >/dev/null 2>&1 \
-    || { echo "FAIL extraction dir should survive stop" >&2; failures=$((failures + 1)); }
-  out="$("$JSTART" stop "$SLEEPER" --base="$BA" 2>&1)"; code=$?
-  check "second stop is a no-op" "$code" 3 "nothing to stop"
+  case "$outA" in "$BA"/sleeper-1.0-linux-amd64.tar.gz-*/app/sleeper-1.0/bin/sleeper) ;;
+    *) echo "FAIL per-base extraction A: $outA" >&2; failures=$((failures + 1)) ;;
+  esac
+  case "$outB" in "$BB"/sleeper-1.0-linux-amd64.tar.gz-*/app/sleeper-1.0/bin/sleeper) ;;
+    *) echo "FAIL per-base extraction B: $outB" >&2; failures=$((failures + 1)) ;;
+  esac
 else
   echo "skip native tar.gz test (tar missing)"
 fi
 
-echo "== pid/stop for jar (java target) =="
+echo "== jar app exec (java target) =="
 if command -v javac >/dev/null 2>&1 && command -v java >/dev/null 2>&1; then
   cat > "$T/src/org/jstarttest/Sleeper.java" <<'JAVA'
 package org.jstarttest;
@@ -405,21 +363,16 @@ JAVA
     > "$T/sleeper-classes/META-INF/MANIFEST.MF"
   (cd "$T/sleeper-classes" && zip -qr "$T/sleeper.jar" .)
 
-  "$JSTART" --local="$REPO" --verbose run "$T/sleeper.jar" --port=9700 >"$T/jar-run.log" 2>&1 &
-  for i in $(seq 1 60); do grep -q "Pid file" "$T/jar-run.log" 2>/dev/null && break; sleep 1; done
-  pidJ="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/jar-run.log")"
-  pidPathJ="$(sed -n 's/^Pid file \(.*\) (pid .*/\1/p' "$T/jar-run.log")"
-  [ -n "$pidJ" ] || { echo "FAIL jar pid not recorded: $(cat "$T/jar-run.log")" >&2; failures=$((failures + 1)); }
-  case "$pidPathJ" in
-    /var/tmp/jstart/sleeper.jar-*/app.pid) ;;
-    *) echo "FAIL jar base layout: $pidPathJ" >&2; failures=$((failures + 1)) ;;
-  esac
-  out="$("$JSTART" --local="$REPO" stop "$T/sleeper.jar" 2>&1)"; code=$?
-  check "stop jar app" "$code" 0 "Stopped pid"
-  proc_gone "$pidJ" || { echo "FAIL jar pid still alive" >&2; failures=$((failures + 1)); }
-  [ -e "$pidPathJ" ] && { echo "FAIL jar pid file left" >&2; failures=$((failures + 1)); }
+  # run 直接 exec java：等 Sleeper 打印 sleeper-up 即证明 exec 成功，再手工结束进程
+  "$JSTART" --local="$REPO" --verbose run "$T/sleeper.jar" --base="$T/jar-sleeper" --port=9700 >"$T/jar-run.log" 2>&1 &
+  pidJ=$!
+  for i in $(seq 1 60); do grep -q "sleeper-up" "$T/jar-run.log" 2>/dev/null && break; sleep 0.5; done
+  grep -q "sleeper-up" "$T/jar-run.log" \
+    || { echo "FAIL jar app did not start: $(cat "$T/jar-run.log")" >&2; failures=$((failures + 1)); }
+  kill "$pidJ" 2>/dev/null || true
+  wait "$pidJ" 2>/dev/null || true
 else
-  echo "skip jar stop test (javac/java missing)"
+  echo "skip jar app test (javac/java missing)"
 fi
 
 echo "== war engine end-to-end: init -> entry-out argv -> exec =="
@@ -456,21 +409,17 @@ init = $T/fake-engine-init
 $T/fake-engine.jar
 INI
   warport=$((20000 + RANDOM % 10000))
-  "$JSTART" --local="$REPO" --verbose run "$T/engine.jstart" --port="$warport" --path=/smoke --base="$T/bas-stop" \
+  "$JSTART" --local="$REPO" --verbose run "$T/engine.jstart" --port="$warport" --path=/smoke --base="$T/war-base" \
     >"$T/war-run.log" 2>&1 &
-  for i in $(seq 1 120); do grep -q "Pid file" "$T/war-run.log" 2>/dev/null && break; sleep 1; done
-  pidW="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-run.log")"
-  [ -n "$pidW" ] || { echo "FAIL war pid not recorded" >&2; failures=$((failures + 1)); }
+  pidW=$!
   # jstart 应 exec init 脚本写出的 argv（Sleeper 启动并打印 sleeper-up）
-  for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-run.log" 2>/dev/null && break; sleep 0.5; done
+  for i in $(seq 1 120); do grep -q "sleeper-up" "$T/war-run.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "sleeper-up" "$T/war-run.log" \
     || { echo "FAIL engine argv not exec'd: $(cat "$T/war-run.log")" >&2; failures=$((failures + 1)); }
-  ls "$T/bas-stop"/engine.jstart-*/engine-entry.argv >/dev/null 2>&1 \
+  ls "$T/war-base"/engine.jstart-*/engine-entry.argv >/dev/null 2>&1 \
     || { echo "FAIL engine-entry.argv not written" >&2; failures=$((failures + 1)); }
-  # stop 只要 base，不需要 run 时的 --port/--path
-  out="$("$JSTART" --local="$REPO" stop "$T/engine.jstart" --base="$T/bas-stop" 2>&1)"; code=$?
-  check "stop war app" "$code" 0 "Stopped pid"
-  proc_gone "$pidW" || { echo "FAIL war pid still alive" >&2; failures=$((failures + 1)); }
+  kill "$pidW" 2>/dev/null || true
+  wait "$pidW" 2>/dev/null || true
 else
   echo "skip war engine test (javac/java missing)"
 fi
@@ -490,17 +439,14 @@ init = bash $T/fake-engine-cmd.sh
 $T/fake-engine.jar
 INI
   cmdport=$((20000 + RANDOM % 10000))
-  "$JSTART" --local="$REPO" --verbose run "$T/engine-cmd.jstart" --port="$cmdport" --path=/smoke --base="$T/bas-cmd" \
+  "$JSTART" --local="$REPO" --verbose run "$T/engine-cmd.jstart" --port="$cmdport" --path=/smoke --base="$T/cmd-base" \
     >"$T/war-cmd.log" 2>&1 &
-  for i in $(seq 1 120); do grep -q "Pid file" "$T/war-cmd.log" 2>/dev/null && break; sleep 1; done
-  pidC="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/war-cmd.log")"
-  [ -n "$pidC" ] || { echo "FAIL command-form pid not recorded" >&2; failures=$((failures + 1)); }
-  for i in $(seq 1 60); do grep -q "sleeper-up" "$T/war-cmd.log" 2>/dev/null && break; sleep 0.5; done
+  pidC=$!
+  for i in $(seq 1 120); do grep -q "sleeper-up" "$T/war-cmd.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "sleeper-up" "$T/war-cmd.log" \
     || { echo "FAIL init command not exec'd: $(cat "$T/war-cmd.log")" >&2; failures=$((failures + 1)); }
-  out="$("$JSTART" --local="$REPO" stop "$T/engine-cmd.jstart" --base="$T/bas-cmd" 2>&1)"; code=$?
-  check "stop command-form init" "$code" 0 "Stopped pid"
-  proc_gone "$pidC" || { echo "FAIL command-form pid still alive" >&2; failures=$((failures + 1)); }
+  kill "$pidC" 2>/dev/null || true
+  wait "$pidC" 2>/dev/null || true
 else
   echo "skip init command-form test (javac/java missing)"
 fi
@@ -578,8 +524,9 @@ libs = org.slf4j:slf4j-api:2.0.17
 entry = $T/admin.war
 path = /admin
 INI
-  "$JSTART" --local="$REPO" --verbose run "$T/multi.jstart" --base="$T/multi-stop" \
+  "$JSTART" --local="$REPO" --verbose run "$T/multi.jstart" --base="$T/multi-base" \
     >"$T/multi-run.log" 2>&1 &
+  pidM=$!
   for i in $(seq 1 120); do grep -q "plan-up" "$T/multi-run.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "plan-up" "$T/multi-run.log" \
     || { echo "FAIL multi-webapp engine argv not exec'd: $(cat "$T/multi-run.log")" >&2; failures=$((failures + 1)); }
@@ -593,8 +540,6 @@ INI
     || { echo "FAIL portal context path missing" >&2; failures=$((failures + 1)); }
   grep -q "/admin" "$T/multi-run.log" \
     || { echo "FAIL admin context path missing" >&2; failures=$((failures + 1)); }
-  pidM="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/multi-run.log")"
-  [ -n "$pidM" ] || { echo "FAIL multi-webapp pid not recorded" >&2; failures=$((failures + 1)); }
   # resolve/info 按 webapp 逐个给出；classpath 对多应用无意义，明确拒绝
   out="$("$JSTART" --local="$REPO" resolve "$T/multi.jstart" 2>&1)"; code=$?
   check "resolve multi-webapp" "$code" 0 "portal.war"
@@ -622,10 +567,8 @@ path = /a
 INI
   out="$("$JSTART" --local="$REPO" run "$T/multi-bad.jstart" --base="$T/multi-bad" 2>&1)"; code=$?
   check "multi-webapp needs engine" "$code" 1 "ships no built-in engine"
-  # stop 只需 base
-  out="$("$JSTART" --local="$REPO" stop "$T/multi.jstart" --base="$T/multi-stop" 2>&1)"; code=$?
-  check "stop multi-webapp" "$code" 0 "Stopped pid"
-  proc_gone "$pidM" || { echo "FAIL multi-webapp pid still alive" >&2; failures=$((failures + 1)); }
+  kill "$pidM" 2>/dev/null || true
+  wait "$pidM" 2>/dev/null || true
 else
   echo "skip multi-webapp test (javac/java missing)"
 fi
@@ -638,19 +581,13 @@ entry = $SLEEPER
 base = $T/inst-root
 instance = named-one
 INI
-"$JSTART" --verbose run "$T/inst.jstart" --port=8085 >"$T/inst.log" 2>&1 &
-sleep 3
-pidN="$(sed -n 's/.*(pid \([0-9]*\)).*/\1/p' "$T/inst.log")"
-[ -n "$pidN" ] || { echo "FAIL instance spec start" >&2; failures=$((failures + 1)); }
-[ -f "$T/inst-root/named-one/app.pid" ] \
-  || { echo "FAIL instance dir should be <base 根>/<name>" >&2; failures=$((failures + 1)); }
-# instance 只在 spec 里：spec 读不到时 stop 明确提示并回退（不是静默跳过）
-out="$("$JSTART" stop "$T/inst-missing.jstart" 2>&1)"; code=$?
-check "stop without readable spec hints instance" "$code" 3 "cannot read launch spec"
-sweep "$(printf '%s' "$out" | sed -n 's/^No pid file \(.*\): nothing to stop.*/\1/p')"
-out="$("$JSTART" stop "$T/inst.jstart" 2>&1)"; code=$?
-check "stop instance spec" "$code" 0 "Stopped pid"
-proc_gone "$pidN" || { echo "FAIL instance pid still alive" >&2; failures=$((failures + 1)); }
+# resolve 也会解压：输出落在 <base 根>/<name>/app/... 即证明目录名来自 [app] instance
+out="$("$JSTART" --quiet resolve "$T/inst.jstart")"; code=$?
+check "instance resolve" "$code" 0 "$T/inst-root/named-one"
+case "$out" in
+  "$T/inst-root/named-one"/app/sleeper-1.0/bin/sleeper) ;;
+  *) echo "FAIL instance dir should be <base 根>/<name>: $out" >&2; failures=$((failures + 1)) ;;
+esac
 
 echo
 if [ "$failures" -gt 0 ]; then

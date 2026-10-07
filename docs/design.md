@@ -43,12 +43,11 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 
 ## 运行期目录：组件 base
 
-`run`/`stop` 以**组件 base** 为单位组织运行期目录。base 根默认 `/var/tmp/jstart`，
+`run` 以**组件 base** 为单位组织运行期目录。base 根默认 `/var/tmp/jstart`，
 `--base=<dir>` 整体替换它；组件目录是 `<根>/<组件键>`（组件键 = target 短名 + 指纹，
 本地路径先绝对化）：
 
 ```text
-<根>/<组件键>/app.pid          run 在 exec 前写、stop 读（实例是否在跑就靠它）
 <根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
 <根>/<组件键>/webapps/<ctx>/   引擎解压出的 docBase（引擎的 --base 就是组件目录）
 <根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给 init 命令
@@ -56,12 +55,11 @@ Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进�
 <根>/<组件键>/engine-entry.argv init 命令写出的最终启动命令（NUL 分隔 argv）
 ```
 
-- **实例身份 = 组件 + base，与应用参数无关**：一个 base 只能跑一个实例，重复 `run` 会被
-  拒绝（exit 1，`--force` 可覆盖）；要跑多个副本就给每个副本一个 base
-  （`--base=<dir>` 换根，或 spec 的 `[app] base`/`[app] instance`）；
-- `stop` 只需要组件与 base，因此**不需要重复 run 时的参数**，也不需要取包或解析依赖；
-- 解压等可变产物按 base 各存一份（多副本 = 多份解压），换来的是身份简单、run/stop
-  一致：base 对上就是同一个实例；
+- **jstart 只写运行目录，不管运行中的实例**：exec 之后进程即应用，pid 的记录与停止
+  交给调用方（basctl 记在 `servers/<name>/server.info`）。要跑多个副本就给每个副本
+  一个 base（`--base=<dir>` 换根，或 spec 的 `[app] base`/`[app] instance`），避免共用
+  解压/引擎产物目录；
+- 解压等可变产物按 base 各存一份（多副本 = 多份解压）；
 - 解压仍先写独立临时目录、再整体 `rename` 就位，旧目录改名挪走后清理，正在运行的实例
   继续用旧 inode，所以并发启动或强杀残留都不会看到半个目录。
 
@@ -85,7 +83,7 @@ source/jstart/resolver.d        目标解析、依赖准备、CLASSPATH 装配
 source/jstart/consolidate.d     repo 离线整合（复制 jar + .sha1）
 source/jstart/native.d          native tar.gz：解压到给定目录（临时目录+改名，支持并发）、
                                  包内可执行文件探测（[app] exec）
-source/jstart/base.d            组件 base：pid 文件、重复启动检测、stop（SIGTERM/SIGKILL）
+source/jstart/base.d            组件 base：目录推导、创建与私有权限校验
 source/jstart/launcher.d        exec 入口：java（jar/war）与 native 可执行文件共用 execvp
 ```
 

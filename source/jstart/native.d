@@ -121,10 +121,10 @@ struct Extraction {
  * existing directory is reused. `force` re-extracts regardless (used when a
  * cached extraction turns out to be unusable).
  *
- * Concurrent extractions into the same directory (a second `run --force`, or a
- * stale pid file) are safe: each extracts into its own temporary directory and
- * then atomically renames it into place; whoever loses the race simply reuses
- * the winner's directory.
+ * Concurrent extractions into the same directory (two `run`s sharing a base,
+ * or a stale partial tree) are safe: each extracts into its own temporary
+ * directory and then atomically renames it into place; whoever loses the race
+ * simply reuses the winner's directory.
  */
 Extraction extractTarGz(string archive, bool verbose, bool force, string dir) {
   try {

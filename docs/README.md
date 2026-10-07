@@ -62,9 +62,6 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   HEAD 别名读 micdn 的 `latest` 头，其次版本目录的 `maven-metadata.xml`，本地已有该时间戳
   文件且 `.sha1` 通过就不再下载，上游不可达时退回本地已有），成功输出应用绝对路径。tar.gz
   （native）目标复用 `fetch` 的发行仓库逻辑取包并解压，输出**包内可执行文件**的绝对路径。
-- `stop <target> [args...]`：按 pid 文件停止 `run` 启动的实例（SIGTERM，`--force` 超时后
-  SIGKILL）；`--timeout=<sec>` 控制等待秒数。未运行 exit 3，成功 exit 0。见
-  [commands.md](commands.md)。
 - `classpath <target>`：输出 `Main-Class@classpath`，供 launch.sh 风格脚本解耦使用。
 - `info <target>`：依赖就绪后输出结构化信息（app/main/每个依赖的来源、本地落盘路径
   与体积、仓库位置），供审计与 CI 集成。
@@ -108,15 +105,13 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   缺件直接失败
 - `--source=<dir>` repo 命令的源仓库（默认 `~/.m2/repository`，须与 `--local` 不同）
 - `--base=<dir>` base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是
-  `<base>/<组件键>`，`app.pid`、native 解压（`app/`）、war 解压（`webapps/`）都在其下；
-  一个 base 只跑一个实例，缺省根不可用时必须显式指定
+  `<base>/<组件键>`，native 解压（`app/`）、war 解压（`webapps/`）都在其下；
+  缺省根不可用时必须显式指定
 - `[app] instance = <name>`（launch spec，无命令行选项）显式命名组件目录
-  （`<根>/<name>`，不拼指纹）：同一组件跑多个副本时给每个副本一个 base
-  （实例身份 = 组件 + base，与应用参数无关）
+  （`<根>/<name>`，不拼指纹）：同一组件跑多个副本时给每个副本一个 base，避免共用运行目录
 - `--main=<class>` 指定 java 主类，优先于 `[app] main` 与 jar 内
   `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略
-- `--timeout=<sec>`（stop，默认 15）/ `--force`（run 忽略已运行实例；stop 超时后 SIGKILL）
-- `--verbose`/`-v` 输出解析、下载、写 pid、
+- `--verbose`/`-v` 输出解析、下载、
   init 命令的 stdout 与将执行的启动命令等过程细节（默认只输出告警/错误与命令结果），
   `--quiet` 在默认之上再关闭告警（`--verbose` 与 `--quiet` 同给时以 `--quiet` 为准）
 - `--print` 仅 run：打印将执行的命令行（逐参数引号）而不 exec；`--jobs=N` 并行下载

@@ -38,7 +38,7 @@
   `<base>/engine-subapps.jstart`（一段一个 `[subapp <id>]`，含 entry/path/libs），脚本按
   `--base` 约定读取；`libs` 是 per-webapp 的扩展依赖（gav，追加在 war 清单之上，同名以
   libs 为准，对齐 bas `Webapp libs`），jstart 先取回本地仓库。`resolve`/`info` 按 webapp
-  逐个输出，`classpath` 明确拒绝，`stop` 一次停整组
+  逐个输出，`classpath` 明确拒绝
 - **spec 互斥校验**：`[app] main` 与 `[engine]` 段互斥，同时声明直接报错（jar 跑主类、
   引擎目标由 init 脚本启动，语义冲突）
 - **`[deps]` 段改名 `[libs]`，语义改为追加/覆盖**：不再"存在即替换 entry 内置清单"，
@@ -47,11 +47,12 @@
   （不会两个版本并存，classpath 里 libs 在前）；与容器 `libs` 的合并规则一致，native 等
   无内置清单的 entry 下即为全部依赖。顶层 `[libs]` 与 `[subapp]` 段互斥；旧名 `[deps]`
   仍可用（告警提示改名，行为等同 `[libs]`）
-- **实例目录与 `stop`**：`stop <target>` 按 pid 文件停止 `run` 启动的实例（SIGTERM；
-  `--timeout=<sec>` 缺省 15 秒，`--force` 超时后 SIGKILL；未运行 exit 3 并清理残留
-  pid 文件）。实例身份 = 组件键 + base，`--base=<dir>` 换 base 根（默认
-  `/var/tmp/jstart`）；launch spec 可用 `[app] base` 固定根、`[app] instance = <name>`
-  显式命名组件目录（`<根>/<name>`，不拼指纹），同一 base 只跑一个实例
+- **实例目录**：`--base=<dir>` 换 base 根（默认 `/var/tmp/jstart`）；launch spec 可用
+  `[app] base` 固定根、`[app] instance = <name>` 显式命名组件目录（`<根>/<name>`，不拼指纹）
+- **去掉 pid 文件与 `stop`**：jstart 只负责"解析 + 准备 + exec"，不再写
+  `<base>/app.pid`，`stop` 子命令与 `--timeout` / `--force` 一并移除；`run` 原有的
+  "同一实例在运行就拒绝启动"随之消失。实例身份与停止交给调用方（basctl 用
+  `servers/<name>/server.info` 记 pid 并停止）
 - **`--main=<class>` 覆盖主类**：run/classpath/info 指定 java 主类，优先于
   `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，
   war/native 目标告警忽略（空值或明显不是类名时用法错误 exit 2）

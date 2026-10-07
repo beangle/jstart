@@ -80,8 +80,8 @@ working_dir = ${APP_HOME}
 
 | 段 | 键/内容 | 说明 |
 |----|---------|------|
-| `[app]` | `base` | 可选。base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是 `<base>/<组件键>`（pid 文件、native 解压、war 解压都在其下），`run`/`stop` 用同一个 base 找实例（见 [commands.md](commands.md)） |
-| `[app]` | `instance` | 可选。显式组件目录名：给了就是 `<base 根>/<instance>`（不再拼 target 指纹），限单个安全路径段（`[A-Za-z0-9._-]`，不能是 `.`/`..`）。没有命令行选项；`run`/`stop` 都从 spec 读，所以实例的 spec 要保留（见 [commands.md](commands.md)） |
+| `[app]` | `base` | 可选。base 根目录，替换缺省的 `/var/tmp/jstart`；组件的运行目录是 `<base>/<组件键>`（native 解压、war 解压都在其下），`run` 用它定位运行目录（见 [commands.md](commands.md)） |
+| `[app]` | `instance` | 可选。显式组件目录名：给了就是 `<base 根>/<instance>`（不再拼 target 指纹），限单个安全路径段（`[A-Za-z0-9._-]`，不能是 `.`/`..`）。没有命令行选项；`run` 从 spec 读（见 [commands.md](commands.md)） |
 | `[app]` | `main` | 可选（Java）。主类全名，命令行 `--main=<class>` 优先于本键。缺省时回退：entry 为 jar 时读其 Manifest `Main-Class`；仍无则 run 报错（war/native 目标不需要主类，见下）。**与 `[engine]` 段互斥**，同时出现直接报错 |
 | | `entry` | 必填。取值同现有 target：`g:a:v`/`gav://`、native 的 `g:a:tar.gz:<classifier>:v`、`http(s)://`、本地 jar/war/tar.gz/解压目录/文件路径 |
 | | `working_dir` | 可选。exec 前切换工作目录，沿用 `~`/`${VAR}` 展开 |
@@ -234,9 +234,9 @@ path = /admin
 - **各 webapp 依赖相互隔离**：jstart 逐个取回 webapp 并把各自依赖补齐到本地仓库；运行时
   由容器内每个 Context 自己的 `DependencyClassLoader` 按各自 war 清单解析（jstart 透传
   `--local-repo`），**不**把多个应用的依赖合并进同一个 JVM classpath——那样会串味。
-- **共享生命周期**：一个 spec 一个 base（`--base`/`[app] base`/`[app] instance`），一份 pid
-  文件，`stop` 一次停整组；`resolve`/`info` 按 webapp 逐个输出，`classpath` 对多应用
-  无意义会明确拒绝。
+- **共享运行目录**：一个 spec 一个 base（`--base`/`[app] base`/`[app] instance`），一套
+  `webapps/`（多应用同在一个 JVM/组件目录里）；`resolve`/`info` 按 webapp 逐个输出，
+  `classpath` 对多应用无意义会明确拒绝。
 - **接口形式**：入口、context path 与 `libs` 写进 `<base>/engine-subapps.jstart`
   （launch spec 片段，一段一个 `[subapp <id>]`），init 命令按 `--base` 从该约定路径读取，
   不经命令行传递（单应用仍走 `--entry=`/`--path=`/`--app-classpath-file=`）；协议见
