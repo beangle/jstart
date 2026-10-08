@@ -28,18 +28,94 @@ jstart 用四个子命令覆盖同一职责：
 保留 `resolve`/`classpath` 是为了兼容 launch.sh 式的脚本解耦；`run` 则把两步合并进
 单个进程。
 
-## 为什么用 exec
+## 进程形态：jstart 如何把自己换成 java
 
-beangle/boot 的做法是"解析进程退出，shell 再执行 java"，最终进程就是 java、没有多余
-的父子等待关系。jstart 是单二进制，无法像 shell 那样先退出再执行，因此 `run` 在解析
-完成后调用 `execvp` **用 java 替换自身进程**：
+### 最终形态
 
-- 最终进程仍是 `java`（同一 PID），父进程就是启动 jstart 的 shell；
-- 退出码、信号、stdin/stdout/stderr 行为与直接运行 java 完全一致；
-- 解析器在 exec 后不再存活，不存在"jstart 挂着等 java"的问题。
+`run` 结束后进程树里**只有一个进程**：它的 PID 就是启动 jstart 时拿到的那个 PID，
+进程本体是 `java`（jar/war）或解压出来的 native 可执行文件（tar.gz）。jstart 不留下
+任何痕迹——没有 jstart 父进程、没有 jstart 残留线程、没有它自己写的 pid 文件：
 
-Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（子进程方式），代码中
-已用 `version (Windows)` 分支注明。
+```text
+shell / systemd
+     │  启动（fork+exec jstart）
+     ▼
+PID 1234 = jstart ────── execvp() ──────→ PID 1234 = java
+  ├─ curl   下载依赖（临时子进程，用完即回收）      PPID 不变，还是启动它的那个 shell
+  ├─ tar    解压发行包（临时子进程，用完即回收）    fd / 终端 / cwd / 环境全部继承
+  └─ init   引擎准备（war，临时子进程，用完即回收）  kill 与退出码直接作用于它
+```
+
+exec 带来的性质，全部继承自 POSIX 的 `execvp`：
+
+- **PID/PPID 不变**：shell 里的 `$!`、systemd 的 `MainPID`、上层工具记下的 pid 指向的
+  始终是同一个进程，只是进程从 jstart 变成了 java；
+- **标准输入输出、cwd、环境变量、进程组、rlimits 原样保留**：jstart 读过的 stdin 就是
+  java 的 stdin，jstart 的终端就是 java 的终端，没有"信号先到 jstart 再转发"这一层；
+- **退出码与信号就是应用自己的**：`kill $!` 直接打在 java 上，java 的退出码就是
+  `jstart run` 的退出码；
+- **没有中间等待者**：不存在"jstart 挂着等 java 退出"，也不存在 jstart 被 OOM killer
+  先挑掉、把应用晾成孤儿的情况。
+
+### 如何达到
+
+jstart 是单二进制，没法像 shell 那样"自己退出再换一个程序跑"，所以走 `execvp` 就地
+替换。`run` 分三步：
+
+1. **准备阶段（jstart 还是进程本体）**：解析 launch spec → 定位目标、下载缺失依赖
+   （宿主 `curl` 子进程，jstart 逐个等待）→ native 目标解压（`tar` 子进程）→ war 目标
+   运行 `[engine] init` 命令（子进程，jstart 等它退出后读它写出的
+   `<base>/engine-entry.argv`）。这一步里出现的子进程都是短命的，用完即回收；它们
+   结束后进程树里只剩 jstart 自己。
+2. **组装最终 argv**：
+   - jar/解压目录：`java [runtime 参数] -cp <classpath> <Main-Class> [应用参数...]`
+   - war：init 命令写进 `engine-entry.argv` 的那条容器启动命令（NUL 分隔 argv，jstart
+     只负责读出，不拼装，见 [engine.md](engine.md)）
+   - native：`<解压根>/<可执行文件> [应用参数...]`
+3. **exec**（`source/jstart/launcher.d` 的 `execCmd`）：把 argv 拷成以 NULL 结尾的
+   `char*[]`，flush 掉自己的 stdout/stderr，然后调 `execvp()`。内核就地把当前进程的
+   地址空间换成新程序（加载 ELF、重置堆栈、信号处理复位为默认），**PID、打开的文件
+   描述符、环境、进程组一律不动**：
+   - **成功：`execvp` 永不返回**。从返回点往后 jstart 的代码、堆内存都不存在了，进程
+     里跑的就是 java——"jstart 变成 java"就是这一句 syscall 的字面效果；
+   - **失败：才返回**，打印 `Cannot execute <cmd>` 并以 **127** 退出（shell 的
+     "找不到命令"惯例）。
+
+`--print` 是唯一的例外路径：走到第 2 步后只把 argv 按 POSIX 单引号打印出来就退出
+（exit 0），不 exec——它打印的就是第 3 步本要 exec 的那条命令。
+
+代码路径对照：
+
+| 目标 | 最终进程 | 调用链（`source/app.d` → `launcher.d`） |
+|------|----------|----------------------------------------|
+| jar / 解压目录 | `java -cp ... <Main-Class>` | `runJarApp` → `execCmd` → `execvp` |
+| war（引擎） | init 写出的容器命令 | `runProcessCapture(init)` → `parseEntryArgv` → `execCommand` → `execvp` |
+| native tar.gz | 解压出的可执行文件 | `runNativeApp` → `execCmd` → `execvp` |
+| 任意目标 + `--print` | 不启动，只打印 | `printJavaCommand` / `printCommand`（exit 0） |
+
+### 自己验证
+
+```bash
+jstart --verbose run app.jar --port=8080 >app.log 2>&1 &
+pid=$!                          # 这一刻 PID 还是 jstart（准备阶段）
+grep 'Running java' app.log     # exec 前的最后一条输出，就是分界线
+ps -o pid,ppid,comm -p $pid     # PID/PPID 没变，comm 已经是 java
+ps -C jstart                    # 只剩表头：进程树里没有 jstart 了
+```
+
+### 为什么不用"解析完先退出、再由 shell 执行"
+
+beangle/boot（Scala 版）就是两步：`resolve.sh` 退出 → `launch.sh` 再执行 java，最终
+进程自然是 java。jstart 合并成单二进制后没有 shell 在中间串联，若改用
+"fork 子进程跑 java、父进程等待"，最终会多出一层无意义的 jstart 父进程：pid 归属、
+信号转发、退出码都要多兜一圈。`execvp` 让单二进制拿到与"shell 直接执行"完全相同的
+进程形态。
+
+### Windows 例外
+
+Windows 没有等价的 `exec`，`run` 退化为 `spawnProcess + wait`（jstart 作为父进程等待
+java 并回传退出码），代码里以 `version (Windows)` 分支隔离；POSIX 上的上述进程形态
+不适用于 Windows。
 
 ## 运行期目录：组件 base
 

@@ -9,7 +9,7 @@ java。本目录存放项目文档。
 
 | 文档 | 内容 |
 |------|------|
-| [design.md](design.md) | 设计思路：与 beangle/boot 的对应关系、exec 启动、模块架构、依赖准备流程 |
+| [design.md](design.md) | 设计思路：与 beangle/boot 的对应关系、进程形态（jstart 如何 exec 成 java）、模块架构、依赖准备流程 |
 | [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`/`fetch`、选项、退出码与示例 |
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
 | [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[libs]/[engine] 语义、run --print 与范围规划 |

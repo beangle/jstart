@@ -77,7 +77,8 @@ jstart [options] run <target> [args...]
 流程：解析目标 → 准备依赖 → 定主类 → `execvp` 把自身替换为运行时
 （jar 目标 exec 应用 `Main-Class`；war 目标先运行引擎 init 命令再 exec 容器，见
 [engine.md](engine.md)/[war-engine.md](war-engine.md)；native tar.gz 目标 exec 包内
-可执行文件，见下文“native（tar.gz）目标”）：
+可执行文件，见下文“native（tar.gz）目标”）。最终进程形态与替换过程（同 PID、
+无父子等待）见 [design.md](design.md) 的“进程形态”一节：
 
 ```text
 java <runtime-options> -cp <classpath> <Main-Class> [app-args...]        # jar

@@ -41,7 +41,8 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   优先命中 `~/.m2/repository` 的对应版本目录；
   `--remote` 指向配了 `<auth download-key>` 的 micdn 时，设置环境变量 `micdn_token` 让构件与补丁
   的下载带 `Authorization: Bearer`（HEAD 探测不受限，未设置时行为不变）。
-- `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待；`--port=8080` 等参数原样
+- `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待（jstart 如何就地被
+  替换、最终进程形态见 [docs/design.md](docs/design.md)）；`--port=8080` 等参数原样
   转发给应用，`-D`/`-X` 开头参数归运行时（即 JVM 参数）。launch spec 的 `[app] runtime`/
   `[runtime]` 用通用命名，便于替换 JDK/引擎，并为后续其他运行时预留
   （见 [docs/launch-spec.md](docs/launch-spec.md)）。
