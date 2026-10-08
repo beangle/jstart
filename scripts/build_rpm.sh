@@ -40,6 +40,7 @@ fcheck rpmbuild
 fcheck fakeroot
 fcheck strip
 fcheck dub
+fcheck git
 if [ $E -eq 1 ]; then
     ferror "Missing commands on your system:" "$LIST"
 fi
@@ -86,8 +87,13 @@ jstart_prepare_release_build
     changes=""
     if [ -f "$JSTART_HOME/CHANGELOG.md" ]; then
       # Read changelog from file
+      # 只收「## v<版本>」小节里的条目：RPM 的 %changelog 每条必须以
+      # `* 日期 维护者 - 版本` 起头，`## Unreleased` 下的 bullet 没有版本可挂，
+      # 混进去 rpmbuild 会直接报 `%changelog entries must start with *`。
+      in_release=0
       while IFS= read -r line; do
         if [[ "$line" =~ ^##\ v ]]; then
+            in_release=1
             # Extract version and date
             VERSION_INFO=$(echo "$line" | sed 's/## v//')
             VERSION_PART=$(echo "$VERSION_INFO" | cut -d ' ' -f 1)
@@ -101,7 +107,7 @@ jstart_prepare_release_build
             # Add changelog header with * prefix
             changes+="* $RPM_DATE $MAINTAINER - ${VERSION_PART}\n"
 
-        elif [[ "$line" =~ ^- ]]; then
+        elif [[ "$line" =~ ^- ]] && [ "$in_release" -eq 1 ]; then
             # Add changelog entry with proper indentation
             changes+="  ${line}\n"
         fi

@@ -28,6 +28,7 @@ fcheck dpkg-deb
 fcheck fakeroot
 fcheck strip
 fcheck dub
+fcheck git
 if [ $E -eq 1 ]; then
   ferror "Missing commands on your system:" "$LIST"
 fi
