@@ -8,15 +8,22 @@
 # 取不到就报错退出，并把 git 自己的输出一并打出来：脚本不能再自己咽掉原因——
 # 「HEAD 上没有可达 tag」和「git 压根没跑起来」（浅克隆没取 tag、safe.directory
 # 把人拦下、PATH 里没有 git）是两码事，排障成本差很远。
-jstart_package_version() {
+#
+# 仓库用子 shell 里的 cd 定位，不用 `git -C`：CentOS 7 自带的 git 1.8.3 没有 -C
+# （1.8.5 才加），会在参数解析阶段就 `Unknown option: -C` 退出。
+jstart_git() {
   local root="${JSTART_HOME:?JSTART_HOME not set}"
+  (cd "$root" && git "$@")
+}
+
+jstart_package_version() {
   local ver="" detail="" commit="" ntags=""
 
   if command -v git >/dev/null 2>&1; then
     # 最近的可达 tag；失败时留下 git 的原话当诊断信息
-    ver="$(git -C "$root" describe --tags --abbrev=0 2>/dev/null || true)"
+    ver="$(jstart_git describe --tags --abbrev=0 2>/dev/null || true)"
     if [ -z "$ver" ]; then
-      detail="$(git -C "$root" describe --tags 2>&1 || true)"
+      detail="$(jstart_git describe --tags 2>&1 || true)"
     fi
   else
     detail="git: command not found"
@@ -24,8 +31,8 @@ jstart_package_version() {
 
   ver="${ver#v}"
   if [ -z "$ver" ]; then
-    commit="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || true)"
-    ntags="$(git -C "$root" tag -l 2>/dev/null | wc -l || true)"
+    commit="$(jstart_git rev-parse --short HEAD 2>/dev/null || true)"
+    ntags="$(jstart_git tag -l 2>/dev/null | wc -l || true)"
     echo "==========================================================" >&2
     echo "Could not determine version from git tag" >&2
     echo "（请在仓库里打 tag，如：git tag v0.0.1）" >&2
