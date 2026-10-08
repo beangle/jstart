@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **SNAPSHOT 与正式版统一到单一本地仓库（maven 原生布局）**：去掉独立的快照库
+  `~/.m2/snapshots`，SNAPSHOT 时间戳构件与 `-SNAPSHOT` 字面别名都落在
+  `~/.m2/repository/g/a/<version>-SNAPSHOT/` 版本目录里，取用时先选最新时间戳、其次
+  字面别名。好处是 `sbt publishM2`/`mvn install` 产出的 SNAPSHOT 直接可用（此前必须
+  手工搬进快照库），也与其他 maven 工具看到的一致。`--local` 只表示这一个仓库；
+  `repo` 离线整合现在也覆盖 SNAPSHOT（复制源仓库中最新的时间戳文件，target 已有则跳过）
 - **测试自带最小 creator**：war 端到端测试改用仓库内的 `test/engine-init-stub.sh` 作为
   `[engine] init` 命令（演示协议本身），不再假定某个外部引擎工具；要验证真实工具用
   `--init='<命令>'`。文档中的 init 示例统一改为中性的 `engine-creator`
@@ -78,15 +84,15 @@
   `[app] java` 告警移除）；新增 `info` 子命令与 `run --print`（打印将执行的命令）
 - **下载**：多依赖并行（`--jobs`，默认 10）与单文件 Range 分段并行（≥1MB 最多 4 段，
   失败回退单请求）；SNAPSHOT 别名按上游元数据解析最新时间戳构建（micdn 的 `latest`
-  响应头，其次版本目录的 `maven-metadata.xml`），落到独立快照库（`~/.m2/snapshots`，
-  不与 repository 混合）；本地已有同一构建即用，上游不可达时回退本地最新时间戳文件，
+  响应头，其次版本目录的 `maven-metadata.xml`），落到本地仓库的版本目录；本地已有同一
+  构建即用，上游不可达时回退本地最新时间戳文件，
   上游没有这类元数据时按字面文件名处理
 - **离线**：新增 `--offline`，只用本地仓库——不探测、不下载（SNAPSHOT 也不再查
   `latest`/`maven-metadata.xml`），缺件直接失败；内置默认镜像与 Central 兜底只由
   `buildRemotes` 决定，调用方只需透传自己的仓库列表
 - **SNAPSHOT 上游与正式版分开**：`--remote` 的默认镜像与 Central 兜底只作用于正式版；
   开发版专用新的 `--snapshot-remote=`（可选；**不兜到 `--remote`**，
-  `buildSnapshotRemotes` 不追加 Central、不给默认镜像）；没配快照上游时本地快照库命中
+  `buildSnapshotRemotes` 不追加 Central、不给默认镜像）；没配快照上游时本地命中
   即用（不发请求、不报错），只有本地缺失、需要拉取才报错，不再因为"没配快照上游"而回落
   到公共镜像
 - **fetch/native 不做快照语义**：发行包侧（`fetch` 与 native tar.gz gav）不再对 `-SNAPSHOT`

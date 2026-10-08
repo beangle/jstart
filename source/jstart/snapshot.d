@@ -10,7 +10,7 @@
  *    `<timestamp>`/`<buildNumber>`）。
  *
  * 上半部分是纯解析（文件名、元数据文本、比较）；下半部分 [[fetchSnapshot]] 负责按上游
- * 列表解析并取回本地快照库，`jstart.resolver`（依赖与 gav 目标）与 `jstart.distrepo`
+ * 列表解析并取回本地仓库，`jstart.resolver`（依赖与 gav 目标）与 `jstart.distrepo`
  * （fetch 命令）共用同一实现。
  *
  * 上游没有这类元数据时（例如 micdn 的 `/native`：开发版发行包就是不带时间戳的同名文件，
@@ -207,14 +207,14 @@ SnapshotFetch fetchSnapshot(LocalRepo local, RemoteRepo[] remotes, Artifact a,
 }
 
 /**
- * 按上游列表解析 SNAPSHOT 别名到最新时间戳文件，并取回到本地快照库。
+ * 按上游列表解析 SNAPSHOT 别名到最新时间戳文件，并取回到本地仓库。
  *
  * 逐个上游询问 [[remoteSnapshotFileName]]（HEAD 别名的 `latest` 头，其次版本目录的
  * `maven-metadata.xml`），拿到文件名后：
  *  - 本地已有该时间戳文件且 `.sha1` 通过 → 直接返回，不下载；
  *  - 否则下载构件与 `.sha1`，复核后返回；该上游失败就换下一个。
  *
- * 所有上游都解析不出时退回本地快照库已有的最新时间戳文件（离线可用）。每次调用都会询问
+ * 所有上游都解析不出时退回本地仓库已有的最新时间戳文件（离线可用）。每次调用都会询问
  * 上游（每个 SNAPSHOT 一次 HEAD 或元数据 GET），这样开发版每次都能拿到最新构建；上游
  * 不可达不会导致失败。
  */
@@ -259,7 +259,7 @@ SnapshotFetch fetchSnapshot(LocalRepo local, string[] remoteBases, Artifact a,
 }
 
 /**
- * 本地快照库里该构件的可用文件：优先最新时间戳文件，其次不带时间戳的别名
+ * 本地仓库里该构件的可用文件：优先最新时间戳文件，其次不带时间戳的别名
  * （`a-1.0-SNAPSHOT.jar`，老布局或运维直接放入的文件）。都没有返回空串。
  *
  * 时间戳文件按既有语义直接接受（不查 `.sha1`）；字面别名有 `.sha1` 伴随文件时才校验，

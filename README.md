@@ -19,13 +19,13 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
 - 读取应用内置依赖清单（jar：`META-INF/beangle/dependencies`；war：`WEB-INF/classes/...`），
   逐行准备 gav/本地文件/远程文件三类依赖。
 - 缺失依赖下载到本地 Maven 仓库（默认 `~/.m2/repository`），`.sha1` 校验、损坏删除重下；
-- **快照库独立**：SNAPSHOT 时间戳构件（`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）放在
-  单独的 `~/.m2/snapshots`，**不与 `~/.m2/repository` 混合**。每个 SNAPSHOT 都先向上游解析
+- **单一本地仓库（maven 原生布局）**：SNAPSHOT 时间戳构件（`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）
+  与正式版同在 `~/.m2/repository`，放在对应版本目录 `g/a/1.0-SNAPSHOT/` 里。每个 SNAPSHOT 都先向上游解析
   「最新构建」——HEAD 别名读 micdn 的 `latest` 响应头，其次版本目录的 `maven-metadata.xml`；
   解析出的时间戳文件已在本地且 `.sha1` 通过就跳过下载，否则下载。上游不可达时退回本地已有
   的最新时间戳文件，离线仍可用。
   正式版远程默认阿里云 → 华为云 → Maven Central，可 `--remote=` 覆盖；SNAPSHOT 上游用
-  `--snapshot-remote=`（可选，**不兜到 `--remote`**）；没配快照上游时本地快照库命中即用
+  `--snapshot-remote=`（可选，**不兜到 `--remote`**）；没配快照上游时本地命中即用
   （不发请求、不报错），只有本地缺失、需要拉取才报错（`--offline` 只是不联网、不拉取）。
 - 组件运行目录（**base**）为 `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`；`--base=<dir>`
   整体替换这个根，launch spec 可用 `[app] base` 固定根、`[app] instance` 固定组件目录名。
@@ -37,8 +37,8 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   缓存；本地文件原样返回路径。没有补丁不是错误。tar.gz 的补丁按“本地基线 `gunzip` →
   bspatch → `gzip -n -6` → 校验 `.sha1`”处理，jar/war 直接 patch；打补丁优先用系统
   `bspatch`（`PATH` 上有就用，失败自动回退内置实现，`JSTART_BSPATCH` 可指定或强制内置）。
-  发行包侧不做快照元数据解析（`-SNAPSHOT` 只当字面版本名）；SNAPSHOT 版本落在/优先命中
-  `~/.m2/snapshots`，正式版落在 `~/.m2/repository`；
+  发行包侧不做快照元数据解析（`-SNAPSHOT` 只当字面版本名）；SNAPSHOT 与正式版都落在/
+  优先命中 `~/.m2/repository` 的对应版本目录；
   `--remote` 指向配了 `<auth download-key>` 的 micdn 时，设置环境变量 `micdn_token` 让构件与补丁
   的下载带 `Authorization: Bearer`（HEAD 探测不受限，未设置时行为不变）。
 - `run` 解析完毕后 exec 为 `java`：最终进程就是 java、无父子等待；`--port=8080` 等参数原样

@@ -116,7 +116,7 @@ string deltaUrl(string base, Artifact a, string oldVersion) {
  * offline（`--offline`）时远程列表为空：只用本地已有的构件，不做增量探测或下载。
  */
 FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
-    string localBase, bool verbose = true, string snapshotBase = "", bool offline = false) {
+    string localBase, bool verbose = true, bool offline = false) {
   FetchResult r;
   Artifact a;
   try {
@@ -125,10 +125,10 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
     stderr.writeln(e.msg);
     return r;
   }
-  auto local = new LocalRepo(localBase, snapshotBase);
+  auto local = new LocalRepo(localBase);
   auto bases = offline ? [] : buildDistRemotes(remoteSpec);
 
-  // 1) 本地已有：SNAPSHOT 先查独立快照库，再查本地仓库
+  // 1) 本地已有：SNAPSHOT 先查最新时间戳文件，再看字面别名
   auto existing = findLocalArtifact(local, a, verbose);
   if (existing.length) {
     if (verbose) {
@@ -194,18 +194,18 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
 }
 
 /**
- * 本地落盘路径：SNAPSHOT 版本进独立的快照库（~/.m2/snapshots），正式版进本地仓库
- * （~/.m2/repository），两者互不混合。
+ * 本地落盘路径：maven2 布局的版本目录下，文件名即构件名，
+ * 例如 <base>/g/a/1.0-SNAPSHOT/a-1.0-SNAPSHOT.jar。
  */
 string localArtifactPath(LocalRepo local, Artifact a) {
-  return (a.isSnapshot ? local.snapshotBase : local.base) ~ a.layoutPath;
+  return local.base ~ a.layoutPath;
 }
 
 /**
  * Local artifact path when it is already usable: for SNAPSHOT versions the
- * newest timestamped file in the snapshot repository, then the literal
- * <version>-SNAPSHOT file there; for releases the file in the local
- * repository. A file failing its .sha1 companion is removed (and
+ * newest timestamped file in the version directory, then the literal
+ * <version>-SNAPSHOT file beside it; for releases the same directory's
+ * plain file. A file failing its .sha1 companion is removed (and
  * re-downloaded later).
  */
 string findLocalArtifact(LocalRepo local, Artifact a, bool verbose = true) {
@@ -233,7 +233,7 @@ string findLocalArtifact(LocalRepo local, Artifact a, bool verbose = true) {
   return "";
 }
 
-/// Local file of the baseline version, in the snapshot or the local repository.
+/// Local file of the baseline version: its newest snapshot file, else the plain file.
 string findBaselineFile(LocalRepo local, Artifact a, string baselineVersion) {
   auto old = a.withVersion(baselineVersion);
   if (old.isSnapshot) {
@@ -251,42 +251,40 @@ string findBaselineFile(LocalRepo local, Artifact a, string baselineVersion) {
 
 /**
  * Newest local version lower than the requested one, used as the delta
- * baseline when --from is omitted. Released versions live in the local
- * repository, snapshots in the snapshot repository.
+ * baseline when --from is omitted. Release and SNAPSHOT versions live in
+ * the same repository, so one scan covers both.
  */
 string inferBaselineVersion(LocalRepo local, Artifact a) {
   string best;
-  foreach (root; [local.base, local.snapshotBase]) {
-    auto dir = root ~ "/" ~ a.groupId.replace(".", "/") ~ "/" ~ a.artifactId;
-    if (!exists(dir) || !isDir(dir)) {
+  auto dir = local.base ~ "/" ~ a.groupId.replace(".", "/") ~ "/" ~ a.artifactId;
+  if (!exists(dir) || !isDir(dir)) {
+    return best;
+  }
+  foreach (e; dirEntries(dir, SpanMode.shallow)) {
+    if (!e.isDir) {
       continue;
     }
-    foreach (e; dirEntries(dir, SpanMode.shallow)) {
-      if (!e.isDir) {
-        continue;
-      }
-      auto ver = baseName(e.name);
-      if (ver == a.ver || compareVersion(ver, a.ver) >= 0) {
-        continue;
-      }
-      auto old = a.withVersion(ver);
-      auto present = exists(localArtifactPath(local, old));
-      if (!present && old.isSnapshot) {
-        present = local.snapshotPathOf(old).length > 0;
-      }
-      if (!present) {
-        continue;
-      }
-      if (best.length == 0 || compareVersion(ver, best) > 0) {
-        best = ver;
-      }
+    auto ver = baseName(e.name);
+    if (ver == a.ver || compareVersion(ver, a.ver) >= 0) {
+      continue;
+    }
+    auto old = a.withVersion(ver);
+    auto present = exists(localArtifactPath(local, old));
+    if (!present && old.isSnapshot) {
+      present = local.snapshotPathOf(old).length > 0;
+    }
+    if (!present) {
+      continue;
+    }
+    if (best.length == 0 || compareVersion(ver, best) > 0) {
+      best = ver;
     }
   }
   return best;
 }
 
 /**
- * 下载整包及其 .sha1，按远程仓库顺序尝试；SNAPSHOT 落到快照库，正式版落到本地仓库。
+ * 下载整包及其 .sha1，按远程仓库顺序尝试；SNAPSHOT 与正式版都落在本地仓库的版本目录里。
  */
 private bool downloadWhole(LocalRepo local, string[] bases, Artifact a, bool verbose) {
   auto target = localArtifactPath(local, a);

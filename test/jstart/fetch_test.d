@@ -237,7 +237,7 @@ unittest {
   write(buildPath(dir, "2.0-SNAPSHOT/demo-2.0-SNAPSHOT-linux-amd64.tar.gz"), "two");
   assert(inferBaselineVersion(local, a) == "1.5");
 
-  // SNAPSHOT 时间戳命中快照库（带 classifier）
+  // SNAPSHOT 时间戳命中版本目录（带 classifier）
   auto snapDir = buildPath(tmp, "org/example/demo/2.0-SNAPSHOT");
   write(buildPath(snapDir, "demo-2.0-20260101.010101-1-linux-amd64.tar.gz"), "snap");
   assert(findLocalArtifact(local, a, false)
@@ -250,7 +250,6 @@ unittest {
   auto remote = buildPath(tmp, "remote");
   auto versionDir = buildPath(remote, "org/example/demo/2.0-SNAPSHOT");
   auto localBase = buildPath(tmp, "repository");
-  auto snapBase = buildPath(tmp, "snapshots");
   mkdirRecurse(versionDir);
   mkdirRecurse(buildPath(localBase, "org/example/demo/1.0"));
   scope (exit) rmTree(tmp);
@@ -276,18 +275,18 @@ unittest {
 
   // tar.gz + 有补丁：gunzip -> bspatch -> gzip -n -6，结果与发布的 sha1 一致
   auto r = fetchDist("org.example:demo:tar.gz:linux-amd64:2.0-SNAPSHOT", "1.0",
-      base, localBase, false, snapBase);
+      base, localBase, false);
   assert(r.ok);
   assert(r.viaDelta);
-  auto target = buildPath(snapBase, "org/example/demo/2.0-SNAPSHOT/demo-2.0-SNAPSHOT-linux-amd64.tar.gz");
+  auto target = buildPath(localBase, "org/example/demo/2.0-SNAPSHOT/demo-2.0-SNAPSHOT-linux-amd64.tar.gz");
   assert(r.path == target);
   auto published = readText(buildPath(versionDir, "demo-2.0-SNAPSHOT-linux-amd64.tar.gz.sha1")).strip;
   assert(published == sha1OfFile(target));
 
   // 无补丁：直接整包下载（同一个版本目录，换个基线版本）
-  rmTree(buildPath(snapBase, "org/example/demo/2.0-SNAPSHOT"));
+  rmTree(buildPath(localBase, "org/example/demo/2.0-SNAPSHOT"));
   auto r2 = fetchDist("org.example:demo:tar.gz:linux-amd64:2.0-SNAPSHOT", "0.9",
-      base, localBase, false, snapBase);
+      base, localBase, false);
   assert(r2.ok);
   assert(!r2.viaDelta);
   assert(!r2.reused);
@@ -301,16 +300,16 @@ unittest {
       sha1OfFile(buildPath(jarDir, "demo-3.0-SNAPSHOT-linux-amd64.jar")));
   write(buildPath(jarDir, "demo-1.0_3.0-SNAPSHOT.jar.diff"), craftPatch());
   auto r3 = fetchDist("org.example:demo:jar:linux-amd64:3.0-SNAPSHOT", "1.0",
-      base, localBase, false, snapBase);
+      base, localBase, false);
   assert(r3.ok);
   assert(r3.viaDelta);
-  auto jarTarget = buildPath(snapBase, "org/example/demo/3.0-SNAPSHOT/demo-3.0-SNAPSHOT-linux-amd64.jar");
+  auto jarTarget = buildPath(localBase, "org/example/demo/3.0-SNAPSHOT/demo-3.0-SNAPSHOT-linux-amd64.jar");
   assert(r3.path == jarTarget);
   assert(cast(string) read(jarTarget) == "abcdeXYZfg");
 
-  // 二次运行命中本地（快照库里的字面文件），不再下载
+  // 二次运行命中本地（版本目录里的字面文件），不再下载
   auto r4 = fetchDist("org.example:demo:jar:linux-amd64:3.0-SNAPSHOT", "1.0",
-      base, localBase, false, snapBase);
+      base, localBase, false);
   assert(r4.ok && r4.reused && !r4.viaDelta);
 }
 
@@ -378,10 +377,9 @@ unittest {
   auto remote = buildPath(tmp, "remote");
   auto versionDir = buildPath(remote, "org/example/demo/2.0");
   auto localBase = buildPath(tmp, "repository");
-  auto snapBase = buildPath(tmp, "snapshots");
   mkdirRecurse(versionDir);
   mkdirRecurse(buildPath(localBase, "org/example/demo/1.0"));
-  mkdirRecurse(snapBase);
+  mkdirRecurse(localBase);
   scope (exit) rmTree(tmp);
 
   // war：本地基线是 1.0 的 war，远端发布 1.0_2.0 的 war 补丁
@@ -396,7 +394,7 @@ unittest {
   scope (exit) server.stop();
   auto base = "http://127.0.0.1:" ~ to!string(server.port);
 
-  auto r = fetchDist("org.example:demo:war:2.0", "1.0", base, localBase, false, snapBase);
+  auto r = fetchDist("org.example:demo:war:2.0", "1.0", base, localBase, false);
   assert(r.ok && r.viaDelta);
   assert(r.path == buildPath(localBase, "org/example/demo/2.0/demo-2.0.war"));
   assert(cast(string) read(r.path) == "abcdeXYZfg");
@@ -405,7 +403,7 @@ unittest {
   rmTree(buildPath(localBase, "org/example/demo/2.0"));
   remove(buildPath(localBase, "org/example/demo/1.0/demo-1.0.war"));
   write(buildPath(localBase, "org/example/demo/1.0/demo-1.0.jar"), cast(ubyte[]) "abcdefghij");
-  auto r2 = fetchDist("org.example:demo:war:2.0", "1.0", base, localBase, false, snapBase);
+  auto r2 = fetchDist("org.example:demo:war:2.0", "1.0", base, localBase, false);
   assert(r2.ok && !r2.viaDelta);
   assert(cast(string) read(r2.path) == "abcdeXYZfg");
 }

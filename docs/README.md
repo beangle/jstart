@@ -57,8 +57,8 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   段（`entry`+`path`，可选 `libs` 扩展依赖）声明，必须给 `[engine] init`；init 命令在同一
   JVM 里为每个 webapp 各建一个 context（外部引擎工具的多 context 入口 + 发行包 jar），
   各 webapp 依赖由各自 Context 隔离解析，见 [engine.md](engine.md)。
-- `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件
-  走独立的 `~/.m2/snapshots`，不与 repository 混合；SNAPSHOT 每次向上游解析最新构建：
+- `resolve <target>`：下载缺失依赖到本地仓库（默认 `~/.m2/repository`；release 与 SNAPSHOT
+  同库同布局，SNAPSHOT 时间戳文件就在对应版本目录里；SNAPSHOT 每次向上游解析最新构建：
   HEAD 别名读 micdn 的 `latest` 头，其次版本目录的 `maven-metadata.xml`，本地已有该时间戳
   文件且 `.sha1` 通过就不再下载，上游不可达时退回本地已有），成功输出应用绝对路径。tar.gz
   （native）目标复用 `fetch` 的发行仓库逻辑取包并解压，输出**包内可执行文件**的绝对路径。
@@ -71,9 +71,9 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   没有则整包下载；发行包侧不做快照元数据解析，`-SNAPSHOT` 只当字面版本名（本地命中即
   复用，否则增量/整包下载）；`http(s)` url 直接下载并按主机路径
   缓存；本地文件原样返回。gav 支持
-  classifier（`group:artifact:tar.gz:linux-amd64:4.20.14-SNAPSHOT`）。SNAPSHOT 版本落在/
-  优先命中 `~/.m2/snapshots`，正式版落在 `~/.m2/repository`；tar.gz 补丁按“解压后再压回”
-  处理，jar/war 补丁直接作用于构件。
+  classifier（`group:artifact:tar.gz:linux-amd64:4.20.14-SNAPSHOT`）。SNAPSHOT 与正式版
+  都落在/优先命中 `~/.m2/repository` 的对应版本目录（SNAPSHOT 目录里先取最新时间戳文件）；
+  tar.gz 补丁按“解压后再压回”处理，jar/war 补丁直接作用于构件。
 - `run <tar.gz 目标>`：同 `fetch` 取包（gav 含增量补丁）后解压到 `<base>/app`
   （base = `<base 根>/<组件键>`，根默认 `/var/tmp/jstart`，`--base` 或 spec 的
   `[app] base`/`[app] instance` 可换）并
@@ -93,13 +93,13 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 
 主要选项：
 
-- `--local=<dir>` 本地仓库（默认 `~/.m2/repository`；SNAPSHOT 时间戳构件默认在独立的
-  `~/.m2/snapshots`，显式给定时也定位到该目录下的快照路径；SNAPSHOT 每次向上游解析最新
-  时间戳文件，本地已有同一构建时不重复下载）
+- `--local=<dir>` 本地仓库（默认 `~/.m2/repository`；release 与 SNAPSHOT 同库同布局，
+  SNAPSHOT 时间戳文件在对应版本目录里；SNAPSHOT 每次向上游解析最新时间戳文件，
+  本地已有同一构建时不重复下载）
 - `--remote=<urls>` 逗号分隔远程仓库：**正式版**用，缺省阿里云 public、华为云 maven、
   Maven Central，显式给出时也会补 Central
 - `--snapshot-remote=<urls>` 可选，**仅 SNAPSHOT** 的开发版上游（逗号分隔）：**不兜到
-  `--remote`**，也不含默认镜像与 Central 兜底；不配时本地快照库命中即用（不发请求、
+  `--remote`**，也不含默认镜像与 Central 兜底；不配时本地仓库命中即用（不发请求、
   不报错），只有本地缺失、需要拉取才报错
 - `--offline` 只用本地仓库：不探测远端（含 SNAPSHOT 的 `latest`/元数据探测）、不下载，
   缺件直接失败

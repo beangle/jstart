@@ -193,7 +193,7 @@ void usage() {
   writeln("  --snapshot-remote=<urls>  optional comma separated SNAPSHOT upstreams;");
   writeln("                   used for SNAPSHOT only, never falling back to --remote");
   writeln("                   (no default mirrors, no Central fallback); without it a");
-  writeln("                   SNAPSHOT already in the local snapshot library is used");
+  writeln("                   SNAPSHOT already in the local repository is used");
   writeln("                   as-is, and only a missing one is an error");
   writeln("  --offline        use the local repositories only: no remote probing");
   writeln("                   and no downloads (missing artifacts fail instead)");
@@ -791,7 +791,6 @@ private int printMultiWebappInfo(BootArgs opts, Resolver resolver, LaunchSpec sp
   }
   writeln("webapps: " ~ spec.subapps.length.to!string);
   writeln("local: " ~ resolver.local.base);
-  writeln("snapshots: " ~ resolver.local.snapshotBase);
   string[] remotes;
   foreach (r; resolver.remotes) {
     remotes ~= r.base;
@@ -890,10 +889,9 @@ private int printInfo(BootArgs opts, Resolver resolver, string appPath,
   writeln("main source: " ~ sourceName(mainClass.source));
   if (nativeArchive.length) {
     writeln("archive: " ~ nativeArchive);
-    writeln("root: " ~ nativeRoot);
+  writeln("root: " ~ nativeRoot);
   }
   writeln("local: " ~ resolver.local.base);
-  writeln("snapshots: " ~ resolver.local.snapshotBase);
   string[] remotes;
   foreach (r; resolver.remotes) {
     remotes ~= r.base;
@@ -1013,7 +1011,7 @@ private string canonicalDir(string path) {
 }
 
 /**
- * repo 子命令：仿照 org.beangle.boot.launcher.Repo，做离线仓库整合。
+ * repo 子命令：离线仓库整合。
  * 解析 target 的依赖描述，把 --local 仓库缺失的构件从 --source 仓库复制过来，
  * 成功时输出 local 仓库基目录。
  */
@@ -1137,8 +1135,7 @@ private int runFetch(BootArgs opts) {
 private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
   auto gav = targetGav(target);
   if (gav.length) {
-    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, showProgress(opts), "",
-        opts.offline);
+    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, showProgress(opts), opts.offline);
     return r.ok ? r.path : "";
   }
   return resolver.fetchTarget(target);
@@ -1151,7 +1148,7 @@ private RemoteRepo[] remotesOf(BootArgs opts) {
 
 /**
  * SNAPSHOT 解析的上游：只取 `--snapshot-remote`，**不**兜到 `--remote`；不追加 Central、
- * 不给默认镜像（见 `jstart.repo.buildSnapshotRemotes`）。为空时 SNAPSHOT 只用本地快照库
+ * 不给默认镜像（见 `jstart.repo.buildSnapshotRemotes`）。为空时 SNAPSHOT 只用本地仓库
  * （本地命中即可用，本地缺失才报错）；`--offline` 一律为空。
  */
 private RemoteRepo[] snapshotRemotesOf(BootArgs opts) {

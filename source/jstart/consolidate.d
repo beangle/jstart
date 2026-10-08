@@ -1,15 +1,13 @@
 /**
- * Offline repository consolidation, imitating
- * org.beangle.boot.launcher.Repo of the beangle/boot project.
- *
- * Resolves an application's dependency description and copies the artifacts
+ * Offline repository consolidation: resolves an application's dependency
+ * description and copies the artifacts
  * missing in the target (local) repository from a source repository, so that
  * a machine can start the application fully offline.
  */
 module jstart.consolidate;
 
 import std.file : exists, mkdirRecurse;
-import std.path : dirName;
+import std.path : baseName, dirName;
 import std.stdio : File;
 
 import jstart.archive : Archive, Artifact;
@@ -37,6 +35,19 @@ private void copyFile(string src, string dst) {
  * Returns false when the artifact is not present in the source repository.
  */
 bool copyArtifactFrom(Artifact a, LocalRepo source, LocalRepo target) {
+  // SNAPSHOT 通常只有带时间戳的构建文件，先按最新时间戳原样搬过去（同名），
+  // 再退回字面别名。
+  if (a.isSnapshot) {
+    auto ts = source.snapshotPathOf(a);
+    if (ts.length) {
+      auto dst = target.snapshotPathFor(a, baseName(ts));
+      copyFile(ts, dst);
+      if (exists(ts ~ ".sha1")) {
+        copyFile(ts ~ ".sha1", dst ~ ".sha1");
+      }
+      return true;
+    }
+  }
   auto src = source.filePath(a);
   if (!exists(src)) {
     return false;
@@ -59,6 +70,9 @@ string[] consolidateArtifacts(Archive[] deps, LocalRepo source, LocalRepo target
   foreach (dep; deps) {
     if (auto a = cast(Artifact) dep) {
       if (exists(target.filePath(a))) {
+        continue;
+      }
+      if (a.isSnapshot && target.snapshotPathOf(a).length > 0) {
         continue;
       }
       if (!copyArtifactFrom(a, source, target)) {

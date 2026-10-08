@@ -201,7 +201,7 @@ CLASSPATH_EXTRA → WEB-INF/classes → WEB-INF/lib/*.jar（排序） → 应用
 ```
 
 引擎依赖以 g:a:v 与应用依赖去重（不重复追加）。解析/下载/校验与普通依赖完全一致
-（curl 并行、`.sha1`、SNAPSHOT 快照库），且仍遵守"不解析传递依赖"的项目约束——
+（curl 并行、`.sha1`、SNAPSHOT 时间戳解析），且仍遵守"不解析传递依赖"的项目约束——
 引擎 jar 是用户在 `[engine]` 里**显式写出的清单**。
 
 ## 与其它命令的关系

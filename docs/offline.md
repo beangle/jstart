@@ -6,8 +6,8 @@ jstart 的下载只发生在"本地仓库缺构件"时。因此可以在一台�
 ## 场景一：联网机器上准备离线仓库
 
 ```bash
-# 1. 联网机器上把 release 依赖集齐到 ~/.m2/repository
-#    （SNAPSHOT 时间戳构件在独立的 ~/.m2/snapshots，不在此目录，见下方注意事项）
+# 1. 联网机器上把依赖集齐到 ~/.m2/repository
+#    （release 与 SNAPSHOT 同库：SNAPSHOT 时间戳文件在对应版本目录里）
 jstart --quiet resolve /path/to/app.jar
 
 # 2. 整合到独立离线目录（默认源为 ~/.m2/repository）
@@ -45,18 +45,16 @@ exec java -cp "$cp" "$main" --port=8080
 - 若 jar 在离线目录中已存在且 `.sha1` 齐全、校验通过，jstart 对 release 构件**不会发起
   任何网络请求**（连远程探测都没有——下载实现只在实际缺件时调用 curl）。SNAPSHOT 只在
   配了 `--snapshot-remote` 时才会向上游问一次「最新构建」（HEAD 别名或取
-  `maven-metadata.xml`）以拿到最新时间戳；没配快照上游就直接用本地快照库已有文件，
+  `maven-metadata.xml`）以拿到最新时间戳；没配快照上游就直接用本地仓库已有文件，
   不发请求也不报错，只有本地缺失、需要拉取才报错。
 - 本地文件行（`lib/extra.jar` 等）不会被 `repo` 复制，请随应用一起部署；其路径相对
   启动时的工作目录。
 - 拷贝时请连同 `.sha1` 一起复制：一旦离线机器上 jar 与 `.sha1` 不一致，jstart 会删除
   构件并尝试重下（离线时即失败并报 Missing）。
-- **快照库与 repository 不混合**：`repo` 整合只覆盖本地仓库（release 布局）；SNAPSHOT
-  时间戳构件平时在独立的 `~/.m2/snapshots`，不会被 `repo` 复制。若应用依赖 SNAPSHOT
-  且目标机无外网，请把联网机上快照库对应时间戳文件（默认
-  `~/.m2/snapshots/g/a/1.0-SNAPSHOT/a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）拷贝到目标机
-  相同位置；使用 `--local=/opt/offline-repo` 时，放到该目录下对应的快照路径即可
-  （显式 `--local` 后快照文件定位在同一 base，不再另设 `~/.m2/snapshots`）。
+- **SNAPSHOT 走同一条路**：`repo` 现在也覆盖 SNAPSHOT——把源仓库里该构件版本目录中
+  最新的时间戳文件（含 `.sha1`，默认 `~/.m2/repository/g/a/1.0-SNAPSHOT/
+  a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）复制到目标仓库的同名位置；`target` 已有时间戳
+  文件时跳过，不覆盖。手抄时保持同名即可，jstart 认最新时间戳。
 
 ### `--offline`：连探测都不发
 
@@ -69,7 +67,7 @@ jstart resolve myapp.war --local=/opt/offline-repo --offline
 
 - 远程列表按空处理：不下载、也不做 SNAPSHOT 的 `latest` 头 / `maven-metadata.xml`
   探测，http(s) 目标与远程文件依赖直接报缺件；
-- SNAPSHOT 仍然可用：取本地快照库（或 `--local` base 下）已有的最新时间戳文件；
+- SNAPSHOT 仍然可用：取本地仓库（或 `--local` base 下）已有的最新时间戳文件；
 - 缺件时以 Missing / exit 1 结束，不会静默等待网络超时。
 
 ## 常见流程示例
@@ -104,7 +102,7 @@ jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/
   [war-engine.md](war-engine.md)），解析出的具体版本与其它引擎 jar 一样随 `run --print`
   预下载进离线仓库；
 - 引擎 jar 是 release 构件，落在普通本地仓库布局，随仓库一起拷贝即可，无需处理
-  快照库。
+  本地仓库。
 
 无外网机请使用**本地** `.jstart`：远程 spec 需要联网下载（`run` 才支持；
 `repo` 只接受本地 target，远程 spec 在进入流程前即被拒绝）。

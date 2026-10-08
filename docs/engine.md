@@ -173,9 +173,9 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 - **jstart 不内置任何依赖目录**，容器 jar 也要自己写全；锁版本、升级、换镜像、引用本地
   jar、切容器都只改本文件。依赖可留空（脚本自带 classpath 时如此）。
 - **原样解析，没有占位符**：每行就是一条依赖（gav/本地文件/远程 url），版本号直接写。
-- 引擎 jar 的解析/下载/校验与普通依赖完全一致（curl、`.sha1`、SNAPSHOT 快照库），
+- 引擎 jar 的解析/下载/校验与普通依赖完全一致（curl、`.sha1`、SNAPSHOT 时间戳解析），
   仍只认显式清单，**不解析传递依赖**。
-- SNAPSHOT 依赖按 `--snapshot-remote` 解析（不回退 `--remote`）；本地快照库已有则可用。
+- SNAPSHOT 依赖按 `--snapshot-remote` 解析（不回退 `--remote`）；本地版本目录已有则可用。
 
 ### 外部引擎工具（creator）
 

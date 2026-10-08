@@ -15,32 +15,25 @@ import std.string : indexOf, lastIndexOf, startsWith, strip, toLower;
 
 import jstart.archive : Artifact, expandLocalPath;
 
-/** Local maven repository, ~/.m2/repository by default. */
+/**
+ * Local maven repository, ~/.m2/repository by default.
+ *
+ * 只有一个仓库：正式版与 SNAPSHOT 都在 maven2 布局的版本目录下
+ * （`<base>/g/a/<version>/`）。SNAPSHOT 的版本目录里通常放带时间戳的
+ * 构建文件，另可有 `a-1.0-SNAPSHOT.jar` 这样的字面别名；两者共存，
+ * 由 [[snapshotPathOf]] 取最新时间戳的那个。
+ */
 final class LocalRepo {
   /// Repository base directory, no trailing slash.
   string base;
-  /// Timestamped snapshot lookup base, ~/.m2/snapshots by default.
-  string snapshotBase;
 
-  this(string base = "", string snapshotBaseDir = "") {
+  this(string base = "") {
     auto given = base.strip;
     string b = given.length ? expandLocalPath(given) : defaultLocalBase();
     while (b.length > 1 && b[$ - 1] == '/') {
       b = b[0 .. $ - 1];
     }
     this.base = b;
-    auto givenSnapshot = snapshotBaseDir.strip;
-    if (givenSnapshot.length) {
-      auto snap = expandLocalPath(givenSnapshot);
-      while (snap.length > 1 && snap[$ - 1] == '/') {
-        snap = snap[0 .. $ - 1];
-      }
-      this.snapshotBase = snap;
-    } else {
-      // 与 beangle/boot 一致：显式给出 base 时快照也放该 base；默认才是
-      // ~/.m2/snapshots。
-      this.snapshotBase = given.length ? b : defaultSnapshotBase();
-    }
     if (!exists(this.base)) {
       mkdirRecurse(this.base);
     }
@@ -51,21 +44,22 @@ final class LocalRepo {
     return base ~ a.layoutPath;
   }
 
-  /// 快照库中该工件的版本目录（绝对路径，不带尾斜杠）。
+  /// 该构件的版本目录（绝对路径，不带尾斜杠）：正式版与 SNAPSHOT 同一布局。
   string snapshotDirOf(Artifact a) const {
-    return snapshotBase ~ a.dirPath;
+    return base ~ a.dirPath;
   }
 
-  /// 快照库中该工件某个具体文件（通常是时间戳文件）的绝对路径。
+  /// 版本目录下某个具体文件（通常是 SNAPSHOT 时间戳文件）的绝对路径。
   string snapshotPathFor(Artifact a, string fileName) const {
     return snapshotDirOf(a) ~ "/" ~ fileName;
   }
 
   /**
    * Latest local timestamped snapshot file for a snapshot artifact, e.g.
-   * <snapshotBase>/g/a/1.0-SNAPSHOT/a-1.0-20260101.010101-2.jar, or ""
-   * when none exists. Timestamp format: yyyyMMdd.HHmmss-build, the newest
-   * (timestamp, build) pair wins, mirroring beangle/boot LocalSnapshot.
+   * <base>/g/a/1.0-SNAPSHOT/a-1.0-20260101.010101-2.jar, or "" when none
+   * exists. Timestamp format: yyyyMMdd.HHmmss-build; the newest
+   * (timestamp, build) pair wins, so a newer download always shadows the
+   * previous build in the same version directory.
    */
   string snapshotPathOf(Artifact a) const {
     if (!a.isSnapshot) {
@@ -143,15 +137,6 @@ string defaultLocalBase() {
   return home ~ "/.m2/repository";
 }
 
-/// Default timestamped snapshot repository location.
-string defaultSnapshotBase() {
-  auto home = environment.get("HOME");
-  if (home.length == 0) {
-    home = ".";
-  }
-  return home ~ "/.m2/snapshots";
-}
-
 /** sha1 hex digest of a file. */
 string sha1OfFile(string path) {
   auto dg = digest!SHA1(cast(ubyte[]) read(path));
@@ -201,8 +186,8 @@ struct RemoteRepo {
  * Default remote repositories: aliyun, huaweicloud and maven central.
  *
  * 这是「内置镜像 + Central 兜底」策略的唯一出处：调用方（bas 等）只透传自己配置的
- * 仓库列表，不再各拼一份默认值；`buildRemotes` 在给定列表缺少 Central 时补到末尾
- * （对齐 beangle/boot 行为）。需要完全离线时用 `--offline`，不要依赖空 `--remote`。
+ * 仓库列表，不再各拼一份默认值；`buildRemotes` 在给定列表缺少 Central 时补到末尾。
+ * 需要完全离线时用 `--offline`，不要依赖空 `--remote`。
  */
 RemoteRepo[] defaultRemotes() {
   return [
@@ -233,7 +218,7 @@ RemoteRepo[] buildRemotes(string spec = "") {
 
 /**
  * SNAPSHOT 解析专用的上游列表：**只用 spec 里显式给出的仓库**，不追加 Central、不给
- * 缺省镜像；spec 为空即空列表（只用本地快照库）。
+ * 缺省镜像；spec 为空即空列表（只用本地仓库）。
  *
  * 开发版构件通常来自专用的快照/开发仓库，把它兜到公共镜像既没必要、也会造成
  * 「明明没配快照上游却从公网拉开发版」的意外；普通构件仍由 [[buildRemotes]] 提供默认

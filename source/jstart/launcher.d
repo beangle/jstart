@@ -1,10 +1,11 @@
 /**
  * Launchers for prepared applications.
  *
- * `run` follows the beangle/boot idea: after jstart resolves the application
- * and prepares the dependency environment, the process replaces itself with
- * the real application process via exec(). The running process afterwards is
- * `java`, not jstart, and there is no parent/child waiting between them.
+ * `run` keeps the launcher out of the final process tree: after jstart
+ * resolves the application and prepares the dependency environment, the
+ * process replaces itself with the real application process via exec(). The
+ * running process afterwards is `java`, not jstart, and there is no
+ * parent/child waiting between them.
  *
  * jstart focuses on Java artifacts (jar/war) while keeping this exec entry
  * generic; the native executable launcher below is reserved for later use.

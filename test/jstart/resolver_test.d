@@ -173,7 +173,7 @@ unittest {
 
   auto tmpBase = buildPath(tempDir(), "jstart-dir-deps-" ~ thisProcessID.to!string);
   scope (exit) rmTree(tmpBase);
-  auto resolver = new Resolver(new LocalRepo(buildPath(tmpBase, "repo"), tmpBase), [], false);
+  auto resolver = new Resolver(new LocalRepo(buildPath(tmpBase, "repo")), [], false);
 
   // ① 裸目录（无 WEB-INF）
   auto bare = buildPath(tmpBase, "bare");
@@ -211,7 +211,7 @@ unittest {
     remove(path);
   }
 
-  // dependencyPath：release 走本地仓库布局；SNAPSHOT 命中本地快照库时间戳文件。
+  // dependencyPath：release 走本地仓库布局；SNAPSHOT 命中版本目录里的时间戳文件。
   auto tmpBase = buildPath(tempDir(), "jstart-deppath-test-" ~ to!string(thisProcessID));
   rmTree(tmpBase);
   mkdirRecurse(tmpBase);

@@ -225,7 +225,6 @@ unittest {
   rmTree(tmp);
   auto remote = buildPath(tmp, "remote");
   auto localBase = buildPath(tmp, "repository");
-  auto snapBase = buildPath(tmp, "snapshots");
   scope (exit) rmTree(tmp);
 
   // 1) micdn 风格：别名 HEAD 回带 latest 头，指向时间戳文件
@@ -272,13 +271,13 @@ unittest {
     }
   }
 
-  auto local = new LocalRepo(localBase, snapBase);
+  auto local = new LocalRepo(localBase);
   auto resolver = new Resolver(local, [RemoteRepo("test", base)], false);
   // SNAPSHOT 上游与普通上游分开：本用例显式给出（生产由 bas 的 <SnapshotRepo remote> 传）
   resolver.snapshotRemotes = [RemoteRepo("test", base)];
 
   auto demo = parseGav("org.example:demo:1.0-SNAPSHOT", "org.example:demo:1.0-SNAPSHOT");
-  auto expected = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT",
+  auto expected = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT",
       "demo-1.0-20260102.020202-2.jar");
 
   // 依赖解析路径（classpath 取时间戳文件）与下载：latest 头 → 时间戳文件
@@ -302,22 +301,22 @@ unittest {
   // 标准 maven：maven-metadata.xml 挑最新时间戳
   auto meta = parseGav("org.example:meta:2.0-SNAPSHOT", "org.example:meta:2.0-SNAPSHOT");
   assert(resolver.ensureArtifact(meta, ts), "maven-metadata 应解析出时间戳文件");
-  assert(ts == buildPath(snapBase, "org/example/meta/2.0-SNAPSHOT",
+  assert(ts == buildPath(localBase, "org/example/meta/2.0-SNAPSHOT",
       "meta-2.0-20260103.030303-4.jar"), ts);
   assert(cast(string) read(ts) == "meta-new");
 
   // fetch/发行包侧不做快照元数据解析：-SNAPSHOT 只当字面版本名，直接下别名文件，
   // 不理会 latest 头（与 resolve 的 maven 解析不同）
-  rmTree(buildPath(snapBase, "org/example/demo"));
+  rmTree(buildPath(localBase, "org/example/demo"));
   write(buildPath(demoDir, "demo-1.0-SNAPSHOT.jar"), "literal");
   write(buildPath(demoDir, "demo-1.0-SNAPSHOT.jar.sha1"),
       sha1OfFile(buildPath(demoDir, "demo-1.0-SNAPSHOT.jar")));
-  auto literal = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT/demo-1.0-SNAPSHOT.jar");
-  auto fr = fetchDist("org.example:demo:1.0-SNAPSHOT", "", base, localBase, false, snapBase);
+  auto literal = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT/demo-1.0-SNAPSHOT.jar");
+  auto fr = fetchDist("org.example:demo:1.0-SNAPSHOT", "", base, localBase, false);
   assert(fr.ok && !fr.reused && !fr.viaDelta, "fetch 应整包下载字面别名");
   assert(fr.path == literal, fr.path);
   assert(cast(string) read(fr.path) == "literal");
-  auto fr2 = fetchDist("org.example:demo:1.0-SNAPSHOT", "", base, localBase, false, snapBase);
+  auto fr2 = fetchDist("org.example:demo:1.0-SNAPSHOT", "", base, localBase, false);
   assert(fr2.ok && fr2.reused && fr2.path == literal, "再取应复用本地字面文件");
 }
 
@@ -328,7 +327,6 @@ unittest {
   rmTree(tmp);
   auto remote = buildPath(tmp, "remote");
   auto localBase = buildPath(tmp, "repository");
-  auto snapBase = buildPath(tmp, "snapshots");
   auto dir = buildPath(remote, "org/example/demo/1.0-SNAPSHOT");
   mkdirRecurse(dir);
   write(buildPath(dir, "demo-1.0-20260101.010101-1.jar"), "one");
@@ -348,13 +346,13 @@ unittest {
       ~ "org.example:demo:1.0-SNAPSHOT\n", warnings);
   assert(spec.libs.length == 1);
 
-  auto local = new LocalRepo(localBase, snapBase);
+  auto local = new LocalRepo(localBase);
   auto resolver = new Resolver(local, [], false);
   resolver.snapshotRemotes = [RemoteRepo("test", base)];
   auto deps = resolver.parseDependencyText(spec.libs.join("\n"));
   assert(deps.length == 1);
 
-  auto first = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT",
+  auto first = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT",
       "demo-1.0-20260101.010101-1.jar");
   auto missing = resolver.ensureDependencies(deps, 1);
   assert(missing.length == 0, missing.length ? missing[0] : "");
@@ -367,7 +365,7 @@ unittest {
   server.headExtra[aliasPath] = "latest: demo-1.0-20260102.020202-2.jar\r\n";
   missing = resolver.ensureDependencies(deps, 1);
   assert(missing.length == 0, missing.length ? missing[0] : "");
-  auto second = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT",
+  auto second = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT",
       "demo-1.0-20260102.020202-2.jar");
   assert(resolver.dependencyPath(deps[0]) == second, resolver.dependencyPath(deps[0]));
 }
@@ -378,7 +376,6 @@ unittest {
   rmTree(tmp);
   auto remote = buildPath(tmp, "remote");
   auto localBase = buildPath(tmp, "repository");
-  auto snapBase = buildPath(tmp, "snapshots");
   mkdirRecurse(buildPath(remote, "org/example/demo/1.0-SNAPSHOT"));
   scope (exit) rmTree(tmp);
 
@@ -387,7 +384,7 @@ unittest {
   scope (exit) server.stop();
   auto base = "http://127.0.0.1:" ~ to!string(server.port);
 
-  auto local = new LocalRepo(localBase, snapBase);
+  auto local = new LocalRepo(localBase);
   // 故意传入远端：offline 必须压过 --remote，一个请求都不发
   auto resolver = new Resolver(local, [RemoteRepo("test", base)], false, true, true);
   auto snap = parseGav("org.example:demo:1.0-SNAPSHOT", "org.example:demo:1.0-SNAPSHOT");
@@ -397,7 +394,7 @@ unittest {
   assert(server.requests.length == 0, "offline 不应发出任何请求");
 
   // 本地放入时间戳文件后命中，仍然没有请求
-  auto dir = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT");
+  auto dir = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT");
   mkdirRecurse(dir);
   auto tsFile = buildPath(dir, "demo-1.0-20261003.120000-1.jar");
   write(tsFile, "local");
@@ -419,7 +416,6 @@ unittest {
   rmTree(tmp);
   auto remote = buildPath(tmp, "remote");
   auto localBase = buildPath(tmp, "repository");
-  auto snapBase = buildPath(tmp, "snapshots");
   auto dir = buildPath(remote, "org/example/demo/1.0-SNAPSHOT");
   mkdirRecurse(dir);
   write(buildPath(dir, "demo-1.0-20261003.120000-1.jar"), "remote");
@@ -432,7 +428,7 @@ unittest {
   server.headExtra["/org/example/demo/1.0-SNAPSHOT/demo-1.0-SNAPSHOT.jar"]
     = "latest: demo-1.0-20261003.120000-1.jar\r\n";
 
-  auto local = new LocalRepo(localBase, snapBase);
+  auto local = new LocalRepo(localBase);
   auto resolver = new Resolver(local, [RemoteRepo("test", base)], false, true);
   auto snap = parseGav("org.example:demo:1.0-SNAPSHOT", "org.example:demo:1.0-SNAPSHOT");
 
@@ -442,7 +438,7 @@ unittest {
   assert(server.requests.length == 0, "未配置快照上游时不应发出请求");
 
   // 本地放入快照文件后，即使没配快照上游也直接采用，不发请求也不报错
-  auto snapDir = buildPath(snapBase, "org/example/demo/1.0-SNAPSHOT");
+  auto snapDir = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT");
   mkdirRecurse(snapDir);
   auto localSnap = buildPath(snapDir, "demo-1.0-20260101.010101-1.jar");
   write(localSnap, "local");

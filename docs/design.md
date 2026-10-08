@@ -128,23 +128,23 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
 
 ## 仓库与校验策略
 
-- **本地仓库与快照库分离（重点）**：release/普通构件（含 `.sha1`）落在本地仓库
-  （默认 `~/.m2/repository`，`--local=` 覆盖）；SNAPSHOT **时间戳**构件
-  （`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）只落在**独立的快照库**（默认
-  `~/.m2/snapshots`）——repository 内不会出现时间戳文件名，快照库内只放带时间戳的
-  文件，二者不混合。时间戳由构建工具以 UTC 生成并编码在文件名里，字符串即时间序：
+- **单一本地仓库（重点）**：release/普通构件（含 `.sha1`）与 SNAPSHOT 都落在同一个
+  本地仓库（默认 `~/.m2/repository`，`--local=` 覆盖）。SNAPSHOT 的**时间戳**构件
+  （`a-1.0-<yyyyMMdd.HHmmss>-<build>.jar`）与 `<a>-<v>-SNAPSHOT.jar` 字面别名同处
+  版本目录 `g/a/<v>-SNAPSHOT/`，取用时先选最新时间戳、其次字面别名——采用 maven 原生
+  布局，`sbt publishM2`/`mvn install` 的产物无需搬运即可被 jstart 使用。时间戳由构建
+  工具以 UTC 生成并编码在文件名里，字符串即时间序：
   解析 `-SNAPSHOT` 别名时按 `--remote` 顺序询问上游——先 HEAD 别名读 micdn 的
   `latest` 响应头，再取版本目录的 `maven-metadata.xml`（`<snapshotVersions>` 按
   extension/classifier 取最新，老式元数据回退 `<snapshot>` 的 timestamp/buildNumber）——
-  得到时间戳文件名后落盘到快照库；本地已有该时间戳文件且 `.sha1` 通过就不再下载。上游
-  都解析不出时退回本地快照库已有的最新时间戳文件，离线可用；不比较本地 mtime 与远端
-  Last-Modified。显式 `--local=<dir>` 时快照时间戳文件也定位到该 base 下的快照路径
-  （对齐 boot 显式 base 语义），二者仍按 maven 发布/快照布局区分存放。
+  得到时间戳文件名后落盘到本地仓库；本地已有该时间戳文件且 `.sha1` 通过就不再下载。上游
+  都解析不出时退回本地仓库已有的最新时间戳文件，离线可用；不比较本地 mtime 与远端
+  Last-Modified。
 - 远程列表分两份（`Resolver.remotes` / `Resolver.snapshotRemotes`）：
   - **正式版**：默认阿里云 public → 华为云 maven → Maven Central；`--remote=` 覆盖时
     Central 总会保留在末尾（对齐原版行为）；
   - **SNAPSHOT**：只用 `--snapshot-remote`，**不兜到 `--remote`**，也**不追加 Central、
-    不给默认镜像**；不配时本地快照库命中即用（不发请求、不报错），只有本地缺失、需要
+    不给默认镜像**；不配时本地仓库命中即用（不发请求、不报错），只有本地缺失、需要
     拉取才报错（`--offline` 只是不拉取，语义等同于没配上游）。开发版一般来自专用快照
     仓库，兜到 `--remote`/公共镜像既无必要也会造成"没配快照上游却从公网拉开发版"的意外。
 - sha1 语义（对齐原版）：
@@ -153,10 +153,9 @@ launch spec target（`.jstart`，支持本地路径或 http(s) url，见
   - 一旦发生下载（release 与 SNAPSHOT 均如此），从同一远程补拉 `.sha1` 复核，
     不匹配则删除并尝试下一远程；远程无 `.sha1` 时接受（verify aborted）；
   - SNAPSHOT 构件：每次向上游解析最新时间戳文件（`latest` 头或
-    `maven-metadata.xml`），落盘到本地快照库（默认 `~/.m2/snapshots`，`--local`
-    显式给定时用该 base，镜像 boot `LocalSnapshot`）后从同一远程复核 `.sha1`
+    `maven-metadata.xml`），落盘到本地仓库的版本目录后从同一远程复核 `.sha1`
     （远程无 `.sha1` 时接受，与 release 语义一致）；本地已有该时间戳文件且校验通过
-    则跳过下载。上游解析不出时退回本地快照库最新时间戳文件，最后才下载远端
+    则跳过下载。上游解析不出时退回本地仓库最新时间戳文件，最后才下载远端
     `-SNAPSHOT` 字面文件。
 - 下载统一走宿主 `curl` 命令：`--fail --silent --show-error -L`，先写同目录
   `.name.part` 临时文件再 rename，避免跨设备移动与半截文件；多依赖下载默认并发

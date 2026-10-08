@@ -289,9 +289,9 @@ java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.a
   init 命令准备环境、再 exec 容器（launch spec 用 `[engine] init` 选 init 命令、
   `[engine]` 其余行罗列引擎 + 容器 jar——jstart 不内置依赖目录，必须显式声明），见
   [engine.md](engine.md) 与 [war-engine.md](war-engine.md)。
-- 下载侧已排入路线图（跨版本，与 spec 无关）：Range 多线程分段下载与断点续传、
-  SNAPSHOT 时间戳版本解析（`~/.m2/snapshots`）；另有 zip/war/ear `.diff` 增量补丁与
-  Windows 原生支持等既有路线图项，见 [release-v0.0.1.md](release-v0.0.1.md)。
+- 下载侧已排入路线图（跨版本，与 spec 无关）：Range 多线程分段下载与断点续传；
+  另有 zip/war/ear `.diff` 增量补丁与 Windows 原生支持等既有路线图项，
+  见 [release-v0.0.1.md](release-v0.0.1.md)。
 
 ## 边界决策
 
