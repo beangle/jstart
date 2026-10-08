@@ -104,8 +104,8 @@ entry = $T/app.jar
 org.slf4j:slf4j-api:2.0.17
 INI
 out="$("$JSTART" --local="$REPO" info "$T/deps-alias.jstart" 2>&1)"; code=$?
-check "deps alias warns" "$code" 0 "改名为"
-printf '%s' "$out" | grep -q "已改名为 \[libs\]" \
+check "deps alias warns" "$code" 0 "was renamed to"
+printf '%s' "$out" | grep -q "renamed to \[libs\]" \
   || { echo "FAIL deps alias warning text: $out" >&2; failures=$((failures + 1)); }
 check "deps alias merges" "$code" 0 "deps: 1"
 
@@ -189,7 +189,7 @@ entry = $T/app.war
 engine = tomcat
 INI
 out="$("$JSTART" --local="$REPO" run --print "$T/oldkey.jstart" 2>&1)"; code=$?
-check "[app] engine removed" "$code" 1 "已移除"
+check "[app] engine removed" "$code" 1 "was removed"
 
 # war 必须显式声明引擎：jstart 无内置引擎目录，也不从 .war 后缀反推
 cat > "$T/noengine.jstart" <<INI
@@ -333,7 +333,9 @@ SH
   BB="$T/inst-b"
   outA="$("$JSTART" --quiet --base="$BA" resolve "$SLEEPER")"; codeA=$?
   outB="$("$JSTART" --quiet --base="$BB" resolve "$SLEEPER")"; codeB=$?
+  out="$outA"
   check "copy A resolve" "$codeA" 0 "$BA"
+  out="$outB"
   check "copy B resolve" "$codeB" 0 "$BB"
   # 解压目录按组件目录：<根>/<组件键>/app（每个 base 一份）
   case "$outA" in "$BA"/sleeper-1.0-linux-amd64.tar.gz-*/app/sleeper-1.0/bin/sleeper) ;;

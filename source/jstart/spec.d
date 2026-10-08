@@ -178,7 +178,7 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
       section = name;
       if (section == "deps") {
         // 旧名 [deps]：0.0.x 起改名 [libs]，语义也从"替换内置清单"改为"追加/覆盖"。
-        warnings ~= format("line %d: [deps] 已改名为 [libs]，请更新 spec", i + 1);
+        warnings ~= format("line %d: [deps] was renamed to [libs], update your spec", i + 1);
         section = "libs";
       } else if (section == "engine") {
         spec.hasEngine = true; // [engine] 段存在即为准
@@ -224,8 +224,8 @@ LaunchSpec parseLaunchSpec(string content, out string[] warnings) {
             spec.instance = value;
             break;
           case "engine":
-            warnings ~= format("line %d: [app] engine 已移除：引擎入口改由 [engine] init"
-                ~ " = <路径|命令> 指定（不是 java 类）", i + 1);
+            warnings ~= format("line %d: [app] engine was removed: declare the engine"
+                ~ " entry with [engine] init = <path|command> (not a java class)", i + 1);
             break;
           default:
             warnings ~= format("line %d: unknown [app] key %s", i + 1, key);
