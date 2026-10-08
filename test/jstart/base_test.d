@@ -100,6 +100,34 @@ unittest {
   assert(resolveBase("app.war", sharedRoot).startsWith(sharedRoot));
 }
 
+/// 回归：组件目录必须自己收敛到 0700，不能因为 umask 建出来的权限而拒绝。
+unittest {
+  version (Posix) {
+    import core.sys.posix.sys.stat : chmod, umask;
+    import std.conv : octal;
+    import std.string : toStringz;
+
+    auto tmp = makeTmp();
+    scope (exit) rmTree(tmp);
+    auto root = buildPath(tmp, "umask-root");
+
+    // umask 0002：mkdir 落地 0775，jstart 建完就该压成 0700，否则首次运行即失败
+    auto saved = umask(octal!0002);
+    scope (exit) umask(saved);
+    auto base = resolveBase("app.jar", root);
+    assert(base.length, "component base must be usable under a 0002 umask");
+    assert(isPrivateDir(base), base ~ " should be a 0700 directory");
+
+    // 历史 umask 留下的 0775 存量目录：同样收紧，而不是永久拒绝
+    auto stale = buildPath(root, "stale");
+    mkdirRecurse(stale);
+    chmod(stale.toStringz, octal!775);
+    auto named = resolveBase("app.jar", root, "stale");
+    assert(named == stale, named);
+    assert(isPrivateDir(named), named ~ " should be tightened to 0700");
+  }
+}
+
 /// 目录是否为 0700 且属于当前用户（与 jstart.base 的私有目录约定一致）。
 private bool isPrivateDir(string dir) {
   version (Posix) {

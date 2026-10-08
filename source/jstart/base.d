@@ -85,9 +85,12 @@ string baseRootDir(string explicit = "") {
 
 /**
  * Create (when needed) and verify a private directory: it must exist, be a
- * real directory (not a symlink an attacker could have planted), be owned by
- * this user and carry no group/other write bit. The mode is then forced to
- * 0700. Returns the path, or "" on failure.
+ * real directory (not a symlink an attacker could have planted) and be owned
+ * by this user -- ownership is what stops another user planting a directory
+ * under a predictable name in a shared root. The mode is then forced to 0700,
+ * which also seals a directory that was left group/world accessible (mkdir
+ * honours the umask, so a 0002 umask would otherwise create 0775). Returns
+ * the path, or "" on failure.
  */
 private string privateDir(string dir) {
   version (Posix) {
@@ -97,9 +100,11 @@ private string privateDir(string dir) {
     import std.string : toStringz;
 
     auto uid = getuid();
+    bool created = false;
     try {
       if (!exists(dir)) {
         mkdirRecurse(dir);
+        created = true;
       }
     } catch (Exception e) {
       stderr.writeln("Cannot prepare " ~ dir ~ ": " ~ e.msg);
@@ -108,10 +113,13 @@ private string privateDir(string dir) {
     stat_t st;
     // lstat: 拒绝符号链接（即便链接指向自己的目录），避免在共享根下被顶替
     if (lstat(dir.toStringz, &st) != 0 || (st.st_mode & S_IFMT) != S_IFDIR
-        || st.st_uid != uid || (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        || st.st_uid != uid) {
       stderr.writeln("Refusing to use " ~ dir
-          ~ ": not a private directory owned by this user (pass --base=<your own dir>).");
+          ~ ": not a directory owned by this user (pass --base=<your own dir>).");
       return "";
+    }
+    if (!created && (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+      stderr.writeln("Note: " ~ dir ~ " was group/world accessible, tightening to 0700.");
     }
     chmod(dir.toStringz, octal!700);
     return dir;
