@@ -88,9 +88,9 @@ string baseRootDir(string explicit = "") {
  * real directory (not a symlink an attacker could have planted) and be owned
  * by this user -- ownership is what stops another user planting a directory
  * under a predictable name in a shared root. The mode is then forced to 0700,
- * which also seals a directory that was left group/world accessible (mkdir
- * honours the umask, so a 0002 umask would otherwise create 0775). Returns
- * the path, or "" on failure.
+ * which also seals a directory that was left group/world **writable** (mkdir
+ * honours the umask, so a 0002 umask would otherwise create 0775). Readability
+ * is not this check's business. Returns the path, or "" on failure.
  */
 private string privateDir(string dir) {
   version (Posix) {
@@ -119,7 +119,7 @@ private string privateDir(string dir) {
       return "";
     }
     if (!created && (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-      stderr.writeln("Note: " ~ dir ~ " was group/world accessible, tightening to 0700.");
+      stderr.writeln("Note: " ~ dir ~ " was group/world writable, tightening to 0700.");
     }
     chmod(dir.toStringz, octal!700);
     return dir;
