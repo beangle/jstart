@@ -198,12 +198,12 @@ struct SnapshotFetch {
 
 /** [[fetchSnapshot]] 的 [[RemoteRepo]] 版本（jstart.resolver 用）。 */
 SnapshotFetch fetchSnapshot(LocalRepo local, RemoteRepo[] remotes, Artifact a,
-    bool verbose = true) {
+    bool verbose = true, bool logDownloads = true) {
   string[] bases;
   foreach (r; remotes) {
     bases ~= r.base;
   }
-  return fetchSnapshot(local, bases, a, verbose);
+  return fetchSnapshot(local, bases, a, verbose, logDownloads);
 }
 
 /**
@@ -217,9 +217,12 @@ SnapshotFetch fetchSnapshot(LocalRepo local, RemoteRepo[] remotes, Artifact a,
  * 所有上游都解析不出时退回本地仓库已有的最新时间戳文件（离线可用）。每次调用都会询问
  * 上游（每个 SNAPSHOT 一次 HEAD 或元数据 GET），这样开发版每次都能拿到最新构建；上游
  * 不可达不会导致失败。
+ *
+ * `logDownloads` 只控制构件下载那一行结果日志（见 [[jstart.http.downloadFileSmart]]），
+ * 与 `verbose`（探测/元数据等过程细节）分开。
  */
 SnapshotFetch fetchSnapshot(LocalRepo local, string[] remoteBases, Artifact a,
-    bool verbose = true) {
+    bool verbose = true, bool logDownloads = true) {
   SnapshotFetch r;
   foreach (base; remoteBases) {
     auto name = remoteSnapshotFileName(base, a, verbose);
@@ -233,9 +236,9 @@ SnapshotFetch fetchSnapshot(LocalRepo local, string[] remoteBases, Artifact a,
     }
     auto url = base ~ a.dirPath ~ "/" ~ name;
     if (verbose) {
-      writeln("Downloading " ~ url);
+      stderr.writeln("Downloading " ~ url);
     }
-    if (!downloadFileSmart(url, target, verbose, a.raw)) {
+    if (!downloadFileSmart(url, target, logDownloads, a.raw)) {
       continue;
     }
     auto sha1Url = url ~ ".sha1";

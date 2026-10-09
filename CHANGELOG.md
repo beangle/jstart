@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **下载日志默认输出（每个 url 一行，D 打印到 stderr）**：`resolve`/`run`/`classpath`/
+  `info`/`fetch` 下载构件时，默认就打一行 `<label> Downloaded <url> (N bytes, Ns)`
+  （失败 `Download failed <url> …`）到 **stderr**，`--quiet` 关闭；`--verbose` 另给
+  `Downloading <url>` 开始行等过程细节（此前下载结果行只在 `--verbose` 下出现）。
+  日志仍由 jstart 自己打印，curl 保持 `--fail --silent --show-error`（不输出进度条）；
+  `.sha1` 等附属下载不打行，一个构件只刷一行。stdout 继续只放命令结果，
+  `jstart resolve x 2>/dev/null` 仍是纯路径
 - **SNAPSHOT 与正式版统一到单一本地仓库（maven 原生布局）**：去掉独立的快照库
   `~/.m2/snapshots`，SNAPSHOT 时间戳构件与 `-SNAPSHOT` 字面别名都落在
   `~/.m2/repository/g/a/<version>-SNAPSHOT/` 版本目录里，取用时先选最新时间戳、其次

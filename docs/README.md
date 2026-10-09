@@ -111,9 +111,12 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   （`<根>/<name>`，不拼指纹）：同一组件跑多个副本时给每个副本一个 base，避免共用运行目录
 - `--main=<class>` 指定 java 主类，优先于 `[app] main` 与 jar 内
   `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略
-- `--verbose`/`-v` 输出解析、下载、
-  init 命令的 stdout 与将执行的启动命令等过程细节（默认只输出告警/错误与命令结果），
-  `--quiet` 在默认之上再关闭告警（`--verbose` 与 `--quiet` 同给时以 `--quiet` 为准）
+- `--verbose`/`-v` 输出解析、下载开始（`Downloading <url>`）、
+  init 命令的 stdout 与将执行的启动命令等过程细节（默认只输出告警/错误、每 url 一行
+  下载结果与命令结果），`--quiet` 在默认之上再关闭告警与下载日志
+  （`--verbose` 与 `--quiet` 同给时以 `--quiet` 为准）。**下载结果行默认就有**：
+  每下载一个 url 打一行 `<label> Downloaded <url> (…)` 到 **stderr**（stdout 只留命令
+  结果，curl 不输出进度、日志由 D 打印）
 - `--print` 仅 run：打印将执行的命令行（逐参数引号）而不 exec；`--jobs=N` 并行下载
   并发数（默认 10，1 = 串行）
 

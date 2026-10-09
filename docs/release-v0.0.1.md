@@ -73,9 +73,10 @@
   完成真实运行验证。
 - 多依赖并行下载（`--jobs`）与单文件 Range 分段并行（远端支持且 ≥1MB，最多 4 段）
   已实现；后续：跨次运行断点续传。
-- 下载进度显示：**明确不做**——下载期间不输出进度条；默认也不输出下载结果行，
-  只在 `--verbose` 时给出每个文件下载完成后的 `Downloaded ...`，与"命令型轻量工具、
-  输出可管道"的定位一致。
+- 下载进度显示：**明确不做**——下载期间不输出进度条；每个下载 url 默认打一行
+  `Downloaded ...` 到 stderr（`--quiet` 关），`--verbose` 另给 `Downloading ...`
+  开始行，日志由 D 打印而 curl 保持静默，与"命令型轻量工具、输出可管道"的定位一致
+  （stdout 只留命令结果）。
 - SNAPSHOT 解析已实现：按上游解析最新时间戳文件（micdn 的 `latest` 头优先，其次
   `maven-metadata.xml` 的 `<snapshotVersions>`/`<snapshot>`），落盘到本地快照库
   `~/.m2/snapshots` 并复核 `.sha1`（同 release 语义），本地已有同一构建时跳过下载，

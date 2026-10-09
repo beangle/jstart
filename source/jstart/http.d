@@ -188,12 +188,17 @@ bool remoteExists(string url, bool verbose = false) {
  * server supports ranges and the payload is at least minRangeSize; the
  * parts are merged and renamed over location. Falls back to one plain
  * request when the probe fails or a part is corrupted.
+ *
+ * `log` 是否为该 url 打**一行**结果日志（成功 `Downloaded ...`，失败
+ * `Download failed ...`）到 stderr——日志由 D 打印，curl 始终
+ * `--silent --show-error`，不输出进度。主构件下载传调用方的下载日志开关，
+ * 附属下载（`.sha1` 等）传 false 以免一个构件刷两行。
  */
-bool downloadFileSmart(string url, string location, bool verbose = true,
+bool downloadFileSmart(string url, string location, bool log = true,
     string label = "") {
   auto probe = probeHttp(url);
   if (!probe.ok || !probe.range || probe.length < minRangeSize) {
-    return downloadFile(url, location, verbose, label);
+    return downloadFile(url, location, log, label);
   }
   auto parent = dirName(location);
   if (parent.length && !exists(parent)) {
@@ -209,7 +214,7 @@ bool downloadFileSmart(string url, string location, bool verbose = true,
     parts = maxRangeParts;
   }
   if (parts < 2) {
-    return downloadFile(url, location, verbose, label);
+    return downloadFile(url, location, log, label);
   }
 
   auto tmpPath = parent ~ "/." ~ base ~ ".part";
@@ -251,7 +256,7 @@ bool downloadFileSmart(string url, string location, bool verbose = true,
   sw.stop();
   foreach (i; 0 .. parts) {
     if (!ok[i]) {
-      return downloadFile(url, location, verbose, label); // 清理后回退单请求
+      return downloadFile(url, location, log, label); // 清理后回退单请求
     }
   }
   // Merge parts in order into the .part temp file.
@@ -269,15 +274,15 @@ bool downloadFileSmart(string url, string location, bool verbose = true,
     output.close(); // flush + close, size 检查必须发生在落盘之后
   }
   if (!exists(tmpPath) || getSize(tmpPath) != probe.length) {
-    return downloadFile(url, location, verbose, label);
+    return downloadFile(url, location, log, label);
   }
   if (exists(location)) {
     remove(location);
   }
   rename(tmpPath, location);
-  if (verbose) {
+  if (log) {
     auto prefix = label.length ? label ~ " " : "";
-    writeln(format("%sDownloaded %s (%d bytes, %.1fs, %d ranges)", prefix,
+    stderr.writeln(format("%sDownloaded %s (%d bytes, %.1fs, %d ranges)", prefix,
         url, getSize(location), sw.peek.total!"seconds", parts));
   }
   return true;
@@ -285,9 +290,10 @@ bool downloadFileSmart(string url, string location, bool verbose = true,
 
 /**
  * Download url into location with the curl command.
- * Returns false on any failure; verbose controls the messages.
+ * Returns false on any failure; `log` controls the one-line-per-url result
+ * message on stderr (curl itself stays `--silent --show-error`).
  */
-bool downloadFile(string url, string location, bool verbose = true, string label = "") {
+bool downloadFile(string url, string location, bool log = true, string label = "") {
   auto parent = dirName(location);
   if (parent.length && !exists(parent)) {
     try {
@@ -314,7 +320,7 @@ bool downloadFile(string url, string location, bool verbose = true, string label
   auto result = execute(args);
   sw.stop();
   if (result.status != 0) {
-    if (verbose) {
+    if (log) {
       auto detail = result.output.strip;
       if (detail.length) {
         stderr.writeln(format("Download failed %s (curl exit %d): %s", url, result.status, detail));
@@ -325,7 +331,7 @@ bool downloadFile(string url, string location, bool verbose = true, string label
     return false;
   }
   if (!exists(tmpPath)) {
-    if (verbose) {
+    if (log) {
       stderr.writeln("Download failed " ~ url ~ ": temp file missing after download");
     }
     return false;
@@ -334,9 +340,9 @@ bool downloadFile(string url, string location, bool verbose = true, string label
     remove(location);
   }
   rename(tmpPath, location);
-  if (verbose) {
+  if (log) {
     auto prefix = label.length ? label ~ " " : "";
-    writeln(format("%sDownloaded %s (%d bytes, %.1fs)", prefix, url,
+    stderr.writeln(format("%sDownloaded %s (%d bytes, %.1fs)", prefix, url,
         getSize(location), sw.peek.total!"seconds"));
   }
   return true;

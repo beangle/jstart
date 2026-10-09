@@ -54,6 +54,7 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 
 - 现场构造瘦 jar（含依赖描述与 Manifest）；
 - resolve：真实下载 `org.slf4j:slf4j-api:2.0.17`；
+- 下载日志：默认每个 url 一行、由 D 打到 stderr（stdout 无日志，`--quiet` 静音）；
 - classpath：输出含 `Main-Class@` 与依赖路径；
 - 二次 resolve：本地缓存命中（无网络请求）；
 - run：参数（`--port=8080`、普通参数）透传并 exec 成功；

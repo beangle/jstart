@@ -50,10 +50,17 @@ final class Resolver {
      与 [[remotes]] 分开，是因为开发版一般来自专用仓库，兜到公共镜像没有意义。
    */
   RemoteRepo[] snapshotRemotes;
-  /// 过程细节（解析/下载/命中本地）是否输出，由调用方决定。
+  /// 过程细节（解析/下载开始/命中本地）是否输出，由调用方决定。
   bool verbose;
   /// 静默：连错误也只在退出码里体现（--quiet）。
   bool quiet;
+  /**
+     每个下载的 url 是否打**一行**结果日志（`Downloaded <url> (...)`，失败同理）到
+     stderr：默认开、`--quiet` 关，与 `--verbose` 无关——日志由 D 打印，curl 保持
+     `--silent`。打在 stderr 是为了 stdout 只留命令结果（resolve/info/classpath 可直接
+     管道给脚本）。附属下载（`.sha1` 等）不打，避免一个构件刷两行。
+   */
+  bool logDownloads;
   /// 离线：只用本地仓库，http(s) 目标/远程文件依赖不下载（--offline）。
   bool offline;
   /// Snapshot 构件解析到的本地时间戳文件（raw -> path）。
@@ -67,6 +74,7 @@ final class Resolver {
     this.quiet = quiet;
     this.offline = offline;
     this.snapshotRemotes = snapshotRemotes;
+    this.logDownloads = !quiet;
   }
 
   // ------------------------------------------------------------- target
@@ -91,9 +99,9 @@ final class Resolver {
       auto target = remoteLocalPath(rf);
       if (!exists(target)) {
         if (verbose) {
-          writeln("Downloading " ~ s);
+          stderr.writeln("Downloading " ~ s);
         }
-        if (!downloadFile(s, target, verbose, baseName(target))) {
+        if (!downloadFile(s, target, logDownloads, baseName(target))) {
           error("Cannot download " ~ s);
           return "";
         }
@@ -288,9 +296,9 @@ final class Resolver {
       return false;
     }
     if (verbose) {
-      writeln("Downloading " ~ rf.url);
+      stderr.writeln("Downloading " ~ rf.url);
     }
-    if (downloadFileSmart(rf.url, target, verbose, baseName(target))) {
+    if (downloadFileSmart(rf.url, target, logDownloads, baseName(target))) {
       return true;
     }
     error("Cannot download " ~ rf.url);
@@ -363,7 +371,7 @@ final class Resolver {
       foreach (remote; remotes) {
         auto url = remote.base ~ a.layoutPath;
         logInfo("Downloading " ~ url);
-        if (!downloadFileSmart(url, file, verbose, a.raw)) {
+        if (!downloadFileSmart(url, file, logDownloads, a.raw)) {
           continue;
         }
         // 下载后从同一远程复核 .sha1（SNAPSHOT 同样校验）；该远程无 .sha1
@@ -418,7 +426,7 @@ final class Resolver {
       snapshotPath = localPath;
       return true;
     }
-    snapshotPath = fetchSnapshot(local, snapshotRemotes, a, verbose).path;
+    snapshotPath = fetchSnapshot(local, snapshotRemotes, a, verbose, logDownloads).path;
     return snapshotPath.length > 0;
   }
 
@@ -507,7 +515,7 @@ final class Resolver {
 
   private void logInfo(string msg) {
     if (verbose) {
-      writeln(msg);
+      stderr.writeln(msg);
     }
   }
 

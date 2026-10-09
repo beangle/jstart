@@ -24,10 +24,17 @@ jstart [options] <command> <target> [args...]
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
 | `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
-| `--verbose` / `-v` | 输出过程细节：解析、下载、将执行的启动命令与 init 命令的 stdout（默认只输出告警/错误与命令结果） |
-| `--quiet` / `-q` | 在默认之上再关闭告警，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
+| `--verbose` / `-v` | 输出过程细节：解析、下载开始（`Downloading <url>`）、将执行的启动命令与 init 命令的 stdout（默认只输出告警/错误、每 url 一行下载结果与命令结果） |
+| `--quiet` / `-q` | 在默认之上再关闭告警与每 url 一行的下载日志，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
+
+输出约定：**stdout 只放命令结果**（解析出的路径、classpath、info、fetch 路径、
+`--print` 的命令行），**过程与诊断走 stderr**——包括默认就有的、**每个下载 url 一行**
+的结果日志 `<label> Downloaded <url> (N bytes, Ns)`（`--quiet` 关闭；`--verbose` 另给
+`Downloading <url>` 开始行等细节）。日志由 jstart 自己打印，curl 始终
+`--silent --show-error`，没有进度条；`.sha1` 等附属下载不打行，避免一个构件刷两行。
+脚本里 `jstart resolve x 2>/dev/null` 即得纯路径。
 
 退出码约定：
 
@@ -374,7 +381,10 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
   运行失败或产物尺寸与补丁头声明的输出长度不符时，自动回退到内置实现（只需 `bzip2`）。
   用 `JSTART_BSPATCH=<path>` 指定特定 bspatch，`JSTART_BSPATCH=builtin`
   （`none`/`internal` 同义）强制内置实现；CentOS 8 等未打包 bspatch 的发行版直接用内置实现；
-- `--quiet` 只输出最终本地路径（供脚本捕获），进度与回退原因打到 stderr/stdout。
+- 下载结果日志（每 url 一行 `Downloaded ...`，失败 `Download failed ...`）默认打到
+  **stderr**、`--quiet` 关闭；stdout 只输出最终本地路径（供脚本捕获），
+  `--verbose` 追加的过程细节（`Delta ...`、`Using local ...`、回退原因）按原样打到
+  stdout。
 
 示例：
 

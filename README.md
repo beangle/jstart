@@ -70,9 +70,12 @@ Maven 依赖、准备依赖环境，并 exec 成 `java` 启动应用。它本身
   `/tmp` 的 noexec、tmpfs、清理周期等影响见 [docs/commands.md](docs/commands.md)）。
 - 下载走宿主 `curl` 命令（同 micdn 方式），不链接 libcurl；多依赖默认并行下载
   （`--jobs=10`），远端支持 Range 且大文件时自动分段并行。
-- 输出分级：默认只输出告警/错误与命令结果（`resolve` 的路径、`classpath` 的
-  `Main-Class@classpath`、`fetch` 的本地路径等）；`--verbose`/`-v` 追加解析、下载、
-  init 命令的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连告警也关闭。
+- 输出分级：默认输出告警/错误、命令结果（`resolve` 的路径、`classpath` 的
+  `Main-Class@classpath`、`fetch` 的本地路径等）与**每个下载 url 一行的结果日志**
+  （`<label> Downloaded <url> (…)` 打到 **stderr**，stdout 只留命令结果，日志由 D 打印
+  而 curl 保持静默）；`--verbose`/`-v` 追加解析、下载开始行（`Downloading <url>`）、
+  init 命令的 stdout 与将执行的启动命令等过程细节，`--quiet`/`-q` 则连告警与下载日志
+  也关闭。
 
 > **项目约束**：不做传递依赖解析。依赖清单是依赖的唯一来源，应用的全部运行期依赖须由构建期
 > beangle maven/sbt 插件显式写全；漏写不推导，`resolve`/`run` 会以 Missing 失败。

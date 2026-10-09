@@ -64,6 +64,29 @@ echo "== resolve (downloads slf4j-api) =="
 out="$("$JSTART" --local="$REPO" --quiet resolve "$T/app.jar")"; code=$?
 check "resolve" "$code" 0 "$T/app.jar"
 
+# 下载日志默认就有：每个 url 一行、由 D 打到 stderr（curl 保持静默），
+# stdout 只留命令结果可直接管道；--quiet 才关掉。
+echo "== download log (default on, stderr; --quiet off) =="
+LOGREPO="$T/repo-download-log"
+err="$T/resolve-download.err"
+out="$("$JSTART" --local="$LOGREPO" resolve "$T/app.jar" 2>"$err")"; code=$?
+check "resolve logs download" "$code" 0 "$T/app.jar"
+if printf '%s' "$out" | grep -q "Downloaded"; then
+  echo "FAIL download log must stay off stdout: $out" >&2
+  failures=$((failures + 1))
+fi
+if ! grep -q "Downloaded .*slf4j-api-2.0.17.jar" "$err"; then
+  echo "FAIL resolve printed no download line on stderr: $(cat "$err")" >&2
+  failures=$((failures + 1))
+fi
+err="$T/resolve-quiet.err"
+out="$("$JSTART" --quiet --local="$T/repo-quiet" resolve "$T/app.jar" 2>"$err")"; code=$?
+check "quiet resolve" "$code" 0 "$T/app.jar"
+if grep -q "Downloaded" "$err"; then
+  echo "FAIL --quiet should suppress the download line: $(cat "$err")" >&2
+  failures=$((failures + 1))
+fi
+
 echo "== classpath =="
 out="$("$JSTART" --local="$REPO" --quiet classpath "$T/app.jar")"; code=$?
 check "classpath main" "$code" 0 "org.jstarttest.Hello@"

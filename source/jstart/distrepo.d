@@ -116,7 +116,8 @@ string deltaUrl(string base, Artifact a, string oldVersion) {
  * offline（`--offline`）时远程列表为空：只用本地已有的构件，不做增量探测或下载。
  */
 FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
-    string localBase, bool verbose = true, bool offline = false) {
+    string localBase, bool verbose = true, bool offline = false,
+    bool logDownloads = true) {
   FetchResult r;
   Artifact a;
   try {
@@ -159,7 +160,7 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
         if (verbose) {
           writeln("Delta " ~ baseline ~ " -> " ~ a.ver ~ " found at " ~ base);
         }
-        if (fetchViaDelta(local, base, a, baseline, baselineFile, verbose)) {
+        if (fetchViaDelta(local, base, a, baseline, baselineFile, verbose, logDownloads)) {
           r.ok = true;
           r.path = localArtifactPath(local, a);
           r.viaDelta = true;
@@ -175,7 +176,7 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
   }
 
   // 3) 整包（含 .sha1 校验）
-  if (downloadWhole(local, bases, a, verbose)) {
+  if (downloadWhole(local, bases, a, verbose, logDownloads)) {
     r.ok = true;
     r.path = localArtifactPath(local, a);
     return r;
@@ -285,12 +286,16 @@ string inferBaselineVersion(LocalRepo local, Artifact a) {
 
 /**
  * 下载整包及其 .sha1，按远程仓库顺序尝试；SNAPSHOT 与正式版都落在本地仓库的版本目录里。
+ *
+ * `logDownloads`：整包下载那一行结果日志（stderr，每 url 一行）；`verbose` 管其余过程
+ * 细节（坏件、镜像兜底失败等）。`.sha1` 是附属下载，不打日志。
  */
-private bool downloadWhole(LocalRepo local, string[] bases, Artifact a, bool verbose) {
+private bool downloadWhole(LocalRepo local, string[] bases, Artifact a, bool verbose,
+    bool logDownloads) {
   auto target = localArtifactPath(local, a);
   auto sha1File = target ~ ".sha1";
   foreach (base; bases) {
-    if (!downloadFileSmart(distUrl(base, a), target, verbose, a.fileName)) {
+    if (!downloadFileSmart(distUrl(base, a), target, logDownloads, a.fileName)) {
       continue;
     }
     // 远程有 .sha1 才校验；没有时按既有依赖下载语义接受
@@ -333,7 +338,7 @@ bool isCompressedTar(string packaging) {
  * the temporary files are removed, the local baseline is left untouched.
  */
 private bool fetchViaDelta(LocalRepo local, string base, Artifact a,
-    string baselineVersion, string baselineFile, bool verbose) {
+    string baselineVersion, string baselineFile, bool verbose, bool logDownloads) {
   auto packed = isCompressedTar(a.packaging);
   if (!bspatchAvailable() || (packed && !gzipAvailable())) {
     if (verbose) {
@@ -358,7 +363,7 @@ private bool fetchViaDelta(LocalRepo local, string base, Artifact a,
   }
 
   auto patchUrl = deltaUrl(base, a, baselineVersion);
-  if (!downloadFileSmart(patchUrl, patchFile, verbose, baseName(patchFile))) {
+  if (!downloadFileSmart(patchUrl, patchFile, logDownloads, baseName(patchFile))) {
     return false;
   }
   // 补丁自身的 sha1：服务端有就校验，没有就跳过（与依赖下载同语义）

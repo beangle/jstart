@@ -60,9 +60,9 @@ struct BootArgs {
   bool print;
   /// 并行下载并发数（--jobs），1 = 串行。
   int jobs = 10;
-  /// --verbose: 输出解析/下载/启动命令等过程细节。
+  /// --verbose: 输出解析/下载开始/启动命令等过程细节。
   bool verbose;
-  /// --quiet: 连告警也静默（比默认更安静）。
+  /// --quiet: 连告警与每 url 一行的下载日志也静默（比默认更安静）。
   bool quiet;
   /// --offline: 只用本地仓库，不做任何远程探测与下载。
   bool offline;
@@ -203,8 +203,9 @@ void usage() {
   writeln("                   war/native");
   writeln("  --print          run only: print the command to execute (no exec)");
   writeln("  --jobs=N         parallel dependency downloads (default 10, 1 = serial)");
-  writeln("  --verbose, -v    show progress details (resolve/download/explode/exec)");
-  writeln("  --quiet          suppress warnings and progress (exit code still tells)");
+  writeln("  --verbose, -v    show process detail (resolve/download start/explode/exec)");
+  writeln("  --quiet          suppress warnings, per-url download logs and progress");
+  writeln("                   (one download line per url otherwise goes to stderr)");
   writeln("  -h, --help       show this help");
   writeln("  -V, --version    print the version");
 }
@@ -212,6 +213,8 @@ void usage() {
 /**
  * 过程细节（resolving/downloading/exploding/running 等）是否输出：只有
  * --verbose 打开且未给 --quiet 时才输出；默认只保留告警与命令结果。
+ * 每个下载 url 的结果行不走这里：默认就打到 stderr、--quiet 关
+ * （见 Resolver.logDownloads）。
  */
 private bool showProgress(BootArgs opts) {
   return opts.verbose && !opts.quiet;
@@ -1129,7 +1132,8 @@ private int runFetch(BootArgs opts) {
 private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
   auto gav = targetGav(target);
   if (gav.length) {
-    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, showProgress(opts), opts.offline);
+    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, showProgress(opts),
+        opts.offline, !opts.quiet);
     return r.ok ? r.path : "";
   }
   return resolver.fetchTarget(target);
