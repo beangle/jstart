@@ -18,6 +18,7 @@ java。本目录存放项目文档。
 | [offline.md](offline.md) | 离线部署：仓库整合、无外网机器上的启动方式与注意事项 |
 | [build.md](build.md) | 构建、测试与打包：dub/release、单测与冒烟、deb/rpm 脚本、产物布局 |
 | [release-v0.0.1.md](release-v0.0.1.md) | v0.0.1 发布说明：范围、已知限制与路线图 |
+| [release-v0.0.3.md](release-v0.0.3.md) | v0.0.3 发布说明：v0.0.1 → v0.0.3 的全部变化（v0.0.2 主体 + v0.0.3）、破坏性变更与迁移 |
 
 ## 快速开始
 
