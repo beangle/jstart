@@ -32,8 +32,9 @@ import jstart.resolver : Resolver;
 import jstart.spec : LaunchSpec, LaunchType, flattenLibs, isSpecFile, launchType,
   launchTypeName, parseLaunchSpec, validateLaunchSpec;
 
-/// Version of the jstart binary.
-enum jstartVersion = "0.0.1";
+/// Version of the jstart binary; sync it with the tag before releasing
+/// (release checklist in docs/build.md) — `-V` prints exactly this string.
+enum jstartVersion = "0.0.3";
 
 /// Parsed command line.
 struct BootArgs {
