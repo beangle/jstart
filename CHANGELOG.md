@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **打包脚本校验 `-V` 版本与 tag 一致**：`-V` 的版本来自 `source/app.d` 的
+  `jstartVersion`，包版本来自 git tag，两者不一致时 `scripts/build_common.sh` 直接报错
+  退出，不再让错位混进发行物——v0.0.1 → v0.0.3 三个 tag 都打在了版本同步提交之前，
+  于是从 tag 构建的包版本号正确、`-V` 却报旧版本。常量已同步为 `0.0.4`，发版顺序固定
+  为「改常量 → 提交 → 打 tag」
 - **下载日志默认输出（每个 url 一行，D 打印到 stderr）**：`resolve`/`run`/`classpath`/
   `info`/`fetch` 下载构件时，默认就打一行 `<label> Downloaded <url> (N bytes, Ns)`
   （失败 `Download failed <url> …`）到 **stderr**，`--quiet` 关闭；`--verbose` 另给

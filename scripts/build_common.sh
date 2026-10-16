@@ -44,7 +44,35 @@ jstart_package_version() {
     echo "==========================================================" >&2
     exit 1
   fi
+  jstart_require_version_match "$ver"
   printf '%s' "$ver"
+}
+
+# `-V` 打印的版本是 source/app.d 里的 jstartVersion 常量，包版本却来自 git tag：
+# 两者漏同步就会出现「包叫 0.0.3、-V 报 0.0.1」。v0.0.1 → v0.0.3 三个 tag 都是这样
+# 漏的——tag 打在了同步提交之前，于是从 tag 构建的包（如 AUR 的 PKGBUILD）版本对、
+# `-V` 报旧版本。版本号没法只有一个来源，只能在这里硬对齐：不一致直接失败，不许
+# 混进发行物。顺序固定为「改常量 → 提交 → 打 tag vX.Y.Z」。
+jstart_source_version() {
+  local root="${JSTART_HOME:?JSTART_HOME not set}"
+  # 只认行首的 `enum jstartVersion = "x.y.z";`，注释里的示例不会被读到
+  sed -n 's/^enum jstartVersion *= *"\([^"]*\)".*/\1/p' "$root/source/app.d" 2>/dev/null \
+    | head -n 1
+}
+
+jstart_require_version_match() {
+  local tagver="$1" srcver=""
+  srcver="$(jstart_source_version)"
+  if [ "$srcver" = "$tagver" ]; then
+    return 0
+  fi
+  echo "==========================================================" >&2
+  echo "Version mismatch: git tag says '${tagver}', source/app.d says '${srcver:-<not found>}'" >&2
+  echo "（-V 输出 source/app.d 的 jstartVersion，包版本取自 git tag）" >&2
+  echo "先改 source/app.d 的常量并提交，再打 tag v${srcver:-X.Y.Z}；" >&2
+  echo "tag 早于同步提交时，从该 tag 构建的包就是「版本号对、-V 报旧版本」。" >&2
+  echo "==========================================================" >&2
+  exit 1
 }
 
 jstart_prepare_release_build() {

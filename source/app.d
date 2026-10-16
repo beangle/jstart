@@ -33,8 +33,9 @@ import jstart.spec : LaunchSpec, LaunchType, flattenLibs, isSpecFile, launchType
   launchTypeName, parseLaunchSpec, validateLaunchSpec;
 
 /// Version of the jstart binary; sync it with the tag before releasing
-/// (release checklist in docs/build.md) — `-V` prints exactly this string.
-enum jstartVersion = "0.0.3";
+/// (release checklist in docs/build.md) — `-V` prints exactly this string, and
+/// the packaging scripts refuse to build when it differs from the git tag.
+enum jstartVersion = "0.0.4";
 
 /// Parsed command line.
 struct BootArgs {

@@ -15,7 +15,9 @@
 `<v>` 取自**最近的 git tag**（`v0.0.1` → `0.0.1`，见 `build_common.sh` 的
 `jstart_package_version`）；`dub.json` 不再写 `version`。仓库里没有可达 tag（还没打 tag、
 浅克隆或 `--no-tags` 克隆）时脚本报错退出，并把 git 的原话打出来，不拿分支名兜底出一个
-合不成的版本号。RPM 的 `%changelog` 只收 `CHANGELOG.md` 里 `## v<版本>` 小节的条目，
+合不成的版本号。`-V` 输出的版本来自 `source/app.d` 的 `jstartVersion`，与 tag 不一致时
+同样报错退出，所以发版顺序固定为「改常量 → 提交 → 打 tag」——免得再出现「包是 0.0.3、
+`-V` 报 0.0.1」的错位。RPM 的 `%changelog` 只收 `CHANGELOG.md` 里 `## v<版本>` 小节的条目，
 `## Unreleased` 的预留内容不进包。
 
 `.deb`/`.rpm` 仅安装 `/usr/bin/jstart`。jstart 定位为**命令**而非系统服务（区别于

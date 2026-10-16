@@ -116,8 +116,11 @@ bash scripts/build_deb.sh          # Debian/Ubuntu → target/jstart_0.0.1-1_amd
 ## 发布核对单
 
 1. `CHANGELOG.md` 增加版本条目，并在条目末尾链接 `docs/release-vX.Y.Z.md`；
-2. 同步 `source/app.d` 的 `jstartVersion`（`-V` 输出的版本），并打 tag `vX.Y.Z`——
-   包版本号由 tag 决定，dub 不再从 `dub.json` 读取；
+2. 改 `source/app.d` 的 `jstartVersion`（`-V` 输出的版本）**并提交**，再打 tag
+   `vX.Y.Z`——包版本号由 tag 决定，dub 不再从 `dub.json` 读取。顺序不能反：tag 若
+   早于同步提交，从该 tag 构建的包（如 AUR 的 PKGBUILD）就是「包版本号对、`-V` 报
+   旧版本」——v0.0.1 → v0.0.3 三个 tag 都是这么漏的；`scripts/build_common.sh`
+   现在会校验常量与 tag 一致，不一致直接失败；
 3. `dub test` + `bash test/smoke.sh` 全绿；
 4. 各平台打包：`scripts/build_rpm.sh`、`scripts/build_deb.sh`；
 5. 用 `rpm -qpl`/`dpkg-deb -c` 抽查包内容。

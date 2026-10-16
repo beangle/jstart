@@ -1,6 +1,6 @@
 # 命令详解
 
-jstart 0.0.1 提供六子命令：`run` / `resolve` / `classpath` / `info` / `repo` / `fetch`。
+jstart 提供六子命令：`run` / `resolve` / `classpath` / `info` / `repo` / `fetch`。
 命令名可以省略（默认 `run`）；选项与目标的位置不敏感，`--xxx=value` 形式。
 未被 jstart 消费的参数进入 `run` 的透传列表。
 
