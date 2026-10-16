@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **发行物加固为 FULL RELRO**：`dub.json` 的 `application` 配置带 `-z now`，GOT 在加载
+  时一次性解析并置为只读（`readelf` 里应出现 `BIND_NOW` 与 `GNU_RELRO`，校验命令见
+  [build.md](docs/build.md)）。用早于本条的 tag（含 `v0.0.3`）构建的包不具备该加固
 - **打包脚本校验 `-V` 版本与 tag 一致**：`-V` 的版本来自 `source/app.d` 的
   `jstartVersion`，包版本来自 git tag，两者不一致时 `scripts/build_common.sh` 直接报错
   退出，不再让错位混进发行物——v0.0.1 → v0.0.3 三个 tag 都打在了版本同步提交之前，
