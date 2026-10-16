@@ -11,7 +11,7 @@
   "importPaths": ["source"],
   "mainSourceFile": "source/app.d",
   "configurations": [
-    { "name": "application", "targetType": "executable", "targetPath": "target" },
+    { "name": "application", "targetType": "executable", "targetPath": "target", "lflags": ["-z", "now"] },
     {
       "name": "unittest",
       "targetPath": "target",

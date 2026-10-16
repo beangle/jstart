@@ -24,6 +24,12 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 - `targetPath`: target → 所有产物进 `target/`（与 micdn 布局一致）。
 - 配置：`application`（默认 release 构建）与 `unittest`（`sourcePaths`/`importPaths`
   含 `source` 与 `test`，供 `dub test` 自动采用，仿 micdn）。
+- `lflags`：`application` 配置带 `-z now` → 产物是 **FULL RELRO**（`GNU_RELRO` +
+  `BIND_NOW`），GOT 在加载时一次性解析并置为只读；校验用
+  `readelf -d target/jstart | grep -E 'BIND_NOW|FLAGS'` 与 `readelf -lW target/jstart
+  | grep -i relro`。该参数是 v0.0.3 之后的提交才加的，用更早的 tag 构建的包不具备
+  FULL RELRO（`namcap` / `checksec` 会报 `lacks FULL RELRO`）——`dub` 无法从命令行
+  传链接参数（`LDFLAGS` 不生效，`DFLAGS` 会顶掉整个构建类型），要补只能改 `dub.json`。
 
 ## 单元测试
 
