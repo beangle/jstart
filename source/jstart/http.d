@@ -16,7 +16,7 @@ import std.file : exists, getSize, mkdirRecurse, remove, rename;
 import std.format : format;
 import std.parallelism : TaskPool;
 import std.path : baseName, dirName;
-import std.process : Config, environment, execute;
+import std.process : Config, execute;
 import std.range : iota;
 import std.stdio : File, stderr, stdout, writeln;
 import std.string : indexOf, startsWith, strip, toLower;
@@ -26,13 +26,12 @@ enum minRangeSize = 1024 * 1024;
 /// Upper bound of parallel range requests for one file.
 enum maxRangeParts = 4;
 
-/** 认证参数：设置环境变量 `micdn_token` 后，构件 GET 附加 `Authorization: Bearer`。
+/** 认证参数：仓库配置了令牌时，构件 GET 附加 `Authorization: Bearer`。
  *
  * HEAD 探测（`probeHttp` / `remoteExists`）保持匿名——micdn 的 HEAD 与目录列表不受
  * `download-key` 限制，这样没有令牌时也能正常探测与回退。未设置令牌时返回空数组。
  */
-private string[] authArgs() {
-  auto token = environment.get("micdn_token");
+private string[] authArgs(string token) {
   if (token.length == 0) {
     return [];
   }
@@ -144,13 +143,13 @@ HttpHead headHeaders(string url, bool verbose = false) {
  * GET 一个文本资源（如版本目录下的 `maven-metadata.xml`），成功时把响应体写入 text。
  * 受 `download-key` 保护的仓库要求 GET 带令牌，故沿用 `authArgs`。
  */
-bool httpGetText(string url, out string text, bool verbose = false) {
+bool httpGetText(string url, out string text, bool verbose = false, string token = "") {
   text = "";
   auto args = [
     "curl", "--fail", "--silent", "--show-error", "-L", "--connect-timeout", "10",
     "--max-time", "60"
   ];
-  args ~= authArgs();
+  args ~= authArgs(token);
   args ~= [url];
   auto res = execute(args);
   if (res.status != 0) {
@@ -195,10 +194,10 @@ bool remoteExists(string url, bool verbose = false) {
  * 附属下载（`.sha1` 等）传 false 以免一个构件刷两行。
  */
 bool downloadFileSmart(string url, string location, bool log = true,
-    string label = "") {
+    string label = "", string token = "") {
   auto probe = probeHttp(url);
   if (!probe.ok || !probe.range || probe.length < minRangeSize) {
-    return downloadFile(url, location, log, label);
+    return downloadFile(url, location, log, label, token);
   }
   auto parent = dirName(location);
   if (parent.length && !exists(parent)) {
@@ -214,7 +213,7 @@ bool downloadFileSmart(string url, string location, bool log = true,
     parts = maxRangeParts;
   }
   if (parts < 2) {
-    return downloadFile(url, location, log, label);
+    return downloadFile(url, location, log, label, token);
   }
 
   auto tmpPath = parent ~ "/." ~ base ~ ".part";
@@ -248,7 +247,7 @@ bool downloadFileSmart(string url, string location, bool log = true,
       "10", "--max-time", "300", "--speed-time", "30", "--speed-limit", "1024",
       "-r", to!string(start) ~ "-" ~ to!string(end), "-o", partPath,
     ];
-    args ~= authArgs();
+    args ~= authArgs(token);
     args ~= [url];
     auto res = execute(args);
     ok[i] = res.status == 0 && exists(partPath) && getSize(partPath) == expected[i];
@@ -256,7 +255,7 @@ bool downloadFileSmart(string url, string location, bool log = true,
   sw.stop();
   foreach (i; 0 .. parts) {
     if (!ok[i]) {
-      return downloadFile(url, location, log, label); // 清理后回退单请求
+      return downloadFile(url, location, log, label, token); // 清理后回退单请求
     }
   }
   // Merge parts in order into the .part temp file.
@@ -274,7 +273,7 @@ bool downloadFileSmart(string url, string location, bool log = true,
     output.close(); // flush + close, size 检查必须发生在落盘之后
   }
   if (!exists(tmpPath) || getSize(tmpPath) != probe.length) {
-    return downloadFile(url, location, log, label);
+    return downloadFile(url, location, log, label, token);
   }
   if (exists(location)) {
     remove(location);
@@ -293,7 +292,8 @@ bool downloadFileSmart(string url, string location, bool log = true,
  * Returns false on any failure; `log` controls the one-line-per-url result
  * message on stderr (curl itself stays `--silent --show-error`).
  */
-bool downloadFile(string url, string location, bool log = true, string label = "") {
+bool downloadFile(string url, string location, bool log = true, string label = "",
+    string token = "") {
   auto parent = dirName(location);
   if (parent.length && !exists(parent)) {
     try {
@@ -315,7 +315,7 @@ bool downloadFile(string url, string location, bool log = true, string label = "
     "--max-time", "300", "--speed-time", "30", "--speed-limit", "1024", "-o",
     tmpPath
   ];
-  args ~= authArgs();
+  args ~= authArgs(token);
   args ~= [url];
   auto result = execute(args);
   sw.stop();

@@ -23,7 +23,18 @@ unittest {
   auto remotes = buildRemotes("https://repo.example.com/maven2");
   assert(remotes.length == 2);
   assert(remotes[0].base == "https://repo.example.com/maven2");
+  assert(remotes[0].token == "");
   assert(remotes[1].base == "https://repo1.maven.org/maven2");
+
+  auto custom = buildRemotes("key-a@https://a.example.com/maven,"
+      ~ "https://b.example.com/maven,key-b@https://c.example.com/maven");
+  assert(custom.length == 4);
+  assert(custom[0].token == "key-a" && custom[1].token == "");
+  assert(custom[2].token == "key-b");
+  assert(custom[3].base == "https://repo1.maven.org/maven2" && custom[3].token == "");
+
+  auto atToken = buildRemotes("key@with@at@https://repo.example.com/maven");
+  assert(atToken[0].token == "key@with@at" && atToken[0].base == "https://repo.example.com/maven");
 
   auto one = buildRemotes("https://repo1.maven.org/maven2");
   assert(one.length == 1);
@@ -40,6 +51,8 @@ unittest {
   auto two = buildSnapshotRemotes("http://a/maven, https://b/maven/");
   assert(two.length == 2);
   assert(two[0].base == "http://a/maven" && two[1].base == "https://b/maven");
+  auto snapTokens = buildSnapshotRemotes("snap-a@http://a/maven,https://b/maven");
+  assert(snapTokens[0].token == "snap-a" && snapTokens[1].token == "");
 }
 
 unittest {

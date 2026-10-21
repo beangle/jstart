@@ -196,16 +196,6 @@ struct SnapshotFetch {
   string remote;
 }
 
-/** [[fetchSnapshot]] 的 [[RemoteRepo]] 版本（jstart.resolver 用）。 */
-SnapshotFetch fetchSnapshot(LocalRepo local, RemoteRepo[] remotes, Artifact a,
-    bool verbose = true, bool logDownloads = true) {
-  string[] bases;
-  foreach (r; remotes) {
-    bases ~= r.base;
-  }
-  return fetchSnapshot(local, bases, a, verbose, logDownloads);
-}
-
 /**
  * 按上游列表解析 SNAPSHOT 别名到最新时间戳文件，并取回到本地仓库。
  *
@@ -221,11 +211,11 @@ SnapshotFetch fetchSnapshot(LocalRepo local, RemoteRepo[] remotes, Artifact a,
  * `logDownloads` 只控制构件下载那一行结果日志（见 [[jstart.http.downloadFileSmart]]），
  * 与 `verbose`（探测/元数据等过程细节）分开。
  */
-SnapshotFetch fetchSnapshot(LocalRepo local, string[] remoteBases, Artifact a,
+SnapshotFetch fetchSnapshot(LocalRepo local, RemoteRepo[] remotes, Artifact a,
     bool verbose = true, bool logDownloads = true) {
   SnapshotFetch r;
-  foreach (base; remoteBases) {
-    auto name = remoteSnapshotFileName(base, a, verbose);
+  foreach (remote; remotes) {
+    auto name = remoteSnapshotFileName(remote.base, a, verbose, remote.token);
     if (name.length == 0) {
       continue;
     }
@@ -234,15 +224,15 @@ SnapshotFetch fetchSnapshot(LocalRepo local, string[] remoteBases, Artifact a,
       r.path = target;
       return r;
     }
-    auto url = base ~ a.dirPath ~ "/" ~ name;
+    auto url = remote.base ~ a.dirPath ~ "/" ~ name;
     if (verbose) {
       stderr.writeln("Downloading " ~ url);
     }
-    if (!downloadFileSmart(url, target, logDownloads, a.raw)) {
+    if (!downloadFileSmart(url, target, logDownloads, a.raw, remote.token)) {
       continue;
     }
     auto sha1Url = url ~ ".sha1";
-    if (downloadFile(sha1Url, target ~ ".sha1", false, "")) {
+    if (downloadFile(sha1Url, target ~ ".sha1", false, "", remote.token)) {
       if (!verifySha1File(target, target ~ ".sha1")) {
         if (verbose) {
           stderr.writeln("Error sha1 for " ~ a.raw ~ ",Remove it.");
@@ -254,7 +244,7 @@ SnapshotFetch fetchSnapshot(LocalRepo local, string[] remoteBases, Artifact a,
     }
     r.path = target;
     r.downloaded = true;
-    r.remote = base;
+    r.remote = remote.base;
     return r;
   }
   r.path = localSnapshotFile(local, a, verbose);
@@ -301,7 +291,7 @@ string localSnapshotFile(LocalRepo local, Artifact a, bool verbose = false) {
  * `latest` 头要能解析成与请求 packaging/classifier 完全一致的快照文件名才采纳
  * （避免 `-sources.jar` 之类误配）。
  */
-string remoteSnapshotFileName(string base, Artifact a, bool verbose = false) {
+string remoteSnapshotFileName(string base, Artifact a, bool verbose = false, string token = "") {
   auto head = headHeaders(base ~ a.layoutPath, verbose);
   if (head.ok) {
     auto found = "latest" in head.headers;
@@ -314,7 +304,7 @@ string remoteSnapshotFileName(string base, Artifact a, bool verbose = false) {
     }
   }
   string meta;
-  if (!httpGetText(base ~ a.dirPath ~ "/" ~ metadataFileName, meta, verbose)) {
+  if (!httpGetText(base ~ a.dirPath ~ "/" ~ metadataFileName, meta, verbose, token)) {
     return "";
   }
   auto value = newestSnapshotValue(meta, a.baseVersion, a.packaging, a.classifier);

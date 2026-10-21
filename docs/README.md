@@ -97,11 +97,11 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
 - `--local=<dir>` 本地仓库（默认 `~/.m2/repository`；release 与 SNAPSHOT 同库同布局，
   SNAPSHOT 时间戳文件在对应版本目录里；SNAPSHOT 每次向上游解析最新时间戳文件，
   本地已有同一构建时不重复下载）
-- `--remote=<urls>` 逗号分隔远程仓库：**正式版**用，缺省阿里云 public、华为云 maven、
-  Maven Central，显式给出时也会补 Central
-- `--snapshot-remote=<urls>` 可选，**仅 SNAPSHOT** 的开发版上游（逗号分隔）：**不兜到
-  `--remote`**，也不含默认镜像与 Central 兜底；不配时本地仓库命中即用（不发请求、
-  不报错），只有本地缺失、需要拉取才报错
+- `--remote=<repos>` 逗号分隔远程仓库，每项为 `[token@]url`：**正式版**用，缺省阿里云
+  public、华为云 maven、Maven Central，显式给出时也会补 Central
+- `--snapshot-remote=<repos>` 可选，**仅 SNAPSHOT** 的开发版上游（逗号分隔，每项为
+  `[token@]url`）：**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时本地
+  仓库命中即用（不发请求、不报错），只有本地缺失、需要拉取才报错
 - `--offline` 只用本地仓库：不探测远端（含 SNAPSHOT 的 `latest`/元数据探测）、不下载，
   缺件直接失败
 - `--source=<dir>` repo 命令的源仓库（默认 `~/.m2/repository`，须与 `--local` 不同）

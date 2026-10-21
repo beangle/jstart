@@ -18,14 +18,22 @@ import std.array : split;
 import std.conv : to;
 import std.file : exists, getSize, mkdirRecurse, read, remove, tempDir, write;
 import std.process : ProcessPipes, Redirect, environment, execute, pipeProcess,
-  thisProcessID, wait;
+  spawnProcess, thisProcessID, wait;
 import std.stdio : File, stderr, writeln;
 import std.string : strip;
 
 /// Whether the host provides the bzip2 command the patch format requires.
 bool bzip2Available() {
   try {
-    return execute(["bzip2", "--version"]).status == 0;
+    auto input = File("/dev/null", "rb");
+    auto output = File("/dev/null", "wb");
+    auto errors = File("/dev/null", "wb");
+    scope (exit) {
+      input.close();
+      output.close();
+      errors.close();
+    }
+    return wait(spawnProcess(["bzip2", "--version"], input, output, errors)) == 0;
   } catch (Exception e) {
     return false;
   }

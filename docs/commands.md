@@ -17,8 +17,8 @@ jstart [options] <command> <target> [args...]
 | `--local=<dir>` | 本地仓库，默认 `~/.m2/repository`；release 与 SNAPSHOT **同库同布局**（SNAPSHOT 时间戳文件在对应版本目录里）；repo 命令里是"目标仓库" |
 | `--source=<dir>` | 仅 repo 命令：源仓库，默认 `~/.m2/repository`，须与 `--local` 不同 |
 | `--from=<version>` | fetch 命令与 native（tar.gz）gav 目标：增量补丁的基线版本；缺省取本地仓库里最接近的较低版本 |
-| `--remote=<urls>` | 远程仓库，逗号分隔，含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"本地仓库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
-| `--snapshot-remote=<urls>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖与 gav 目标）：开发版上游，逗号分隔。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地仓库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
+| `--remote=<repos>` | 远程仓库，逗号分隔；每项为 `[token@]url`（token 只发给该仓库）。含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"本地仓库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
+| `--snapshot-remote=<repos>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖与 gav 目标）：开发版上游，逗号分隔，每项为 `[token@]url`。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地仓库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
 | `--offline` | 只用本地仓库：不探测远端（SNAPSHOT 也不做 `latest`/元数据探测）、不下载，缺件直接失败；与 `--remote`/`--snapshot-remote` 同时给出时以离线为准 |
 | `--base=<dir>` | run：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与运行目录"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
@@ -372,9 +372,10 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
 - 发行包侧不做快照语义：native 构建费时、包大、发布不频繁，开发版一般不上传，所以
   `gav` 里的 `-SNAPSHOT` 只当字面版本名，不发 HEAD `latest`、也不取
   `maven-metadata.xml`（与 `resolve` 的 maven 快照解析不同）；
-- 仓库配了读令牌（micdn 的 `<auth download-key="…"/>`）时设置环境变量 `micdn_token`，下载构件
-  与增量补丁会带 `Authorization: Bearer <token>`；HEAD 探测保持匿名（micdn 不限制 HEAD），
-  未设置令牌时行为不变；
+- 仓库配了读令牌（micdn 的 `<auth download-key="…"/>`）时，把 token 写在对应地址前：
+  `--remote=key-a@https://a,https://b,key-b@https://c`。没有 `token@` 前缀的仓库匿名，
+  凭证不会发给另一个仓库或自动追加的 Maven Central。下载构件、元数据与增量补丁会按
+  所属仓库带 `Authorization: Bearer <token>`；HEAD 探测始终匿名（micdn 不限制 HEAD）；
 - 依赖宿主命令：`curl` 下载，增量路径另需 `bzip2`（解压补丁里的 bzip2 流），
   tar.gz 还需要 `gzip`；缺对应命令时只走整包下载；
 - 打补丁优先用系统 `bspatch`：`PATH` 上有就用（`bspatch <old> <new> <patch>`），

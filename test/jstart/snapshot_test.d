@@ -12,7 +12,7 @@ import std.conv : to;
 import std.file : exists, isDir, mkdirRecurse, read, remove, tempDir, write, SpanMode,
   dirEntries;
 import std.path : buildPath;
-import std.process : environment, thisProcessID;
+import std.process : thisProcessID;
 import std.socket : AddressFamily, InternetAddress, Socket, SocketType;
 import std.string : indexOf, startsWith, strip, toLower;
 
@@ -257,24 +257,10 @@ unittest {
   auto aliasPath = "/org/example/demo/1.0-SNAPSHOT/demo-1.0-SNAPSHOT.jar";
   server.headExtra[aliasPath] = "latest: demo-1.0-20260102.020202-2.jar\r\n";
 
-  // GET 带令牌、HEAD 保持匿名
-  auto hadToken = () {
-    auto v = environment.get("micdn_token");
-    return v.length ? v : "";
-  }();
-  environment["micdn_token"] = "secret-token";
-  scope (exit) {
-    if (hadToken.length) {
-      environment["micdn_token"] = hadToken;
-    } else {
-      environment.remove("micdn_token");
-    }
-  }
-
   auto local = new LocalRepo(localBase);
   auto resolver = new Resolver(local, [RemoteRepo("test", base)], false);
   // SNAPSHOT 上游与普通上游分开：本用例显式给出（生产由 bas 的 <SnapshotRepo remote> 传）
-  resolver.snapshotRemotes = [RemoteRepo("test", base)];
+  resolver.snapshotRemotes = [RemoteRepo("test", base, "secret-token")];
 
   auto demo = parseGav("org.example:demo:1.0-SNAPSHOT", "org.example:demo:1.0-SNAPSHOT");
   auto expected = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT",
@@ -312,10 +298,13 @@ unittest {
   write(buildPath(demoDir, "demo-1.0-SNAPSHOT.jar.sha1"),
       sha1OfFile(buildPath(demoDir, "demo-1.0-SNAPSHOT.jar")));
   auto literal = buildPath(localBase, "org/example/demo/1.0-SNAPSHOT/demo-1.0-SNAPSHOT.jar");
-  auto fr = fetchDist("org.example:demo:1.0-SNAPSHOT", "", base, localBase, false);
+  auto fr = fetchDist("org.example:demo:1.0-SNAPSHOT", "", "dist-token@" ~ base,
+      localBase, false);
   assert(fr.ok && !fr.reused && !fr.viaDelta, "fetch 应整包下载字面别名");
   assert(fr.path == literal, fr.path);
   assert(cast(string) read(fr.path) == "literal");
+  assert(server.lastGetAuth == "Bearer dist-token",
+      "fetchDist GET 应带令牌: " ~ server.lastGetAuth);
   auto fr2 = fetchDist("org.example:demo:1.0-SNAPSHOT", "", base, localBase, false);
   assert(fr2.ok && fr2.reused && fr2.path == literal, "再取应复用本地字面文件");
 }

@@ -101,7 +101,7 @@ final class Resolver {
         if (verbose) {
           stderr.writeln("Downloading " ~ s);
         }
-        if (!downloadFile(s, target, logDownloads, baseName(target))) {
+        if (!downloadFile(s, target, logDownloads, baseName(target), tokenForUrl(s))) {
           error("Cannot download " ~ s);
           return "";
         }
@@ -298,7 +298,7 @@ final class Resolver {
     if (verbose) {
       stderr.writeln("Downloading " ~ rf.url);
     }
-    if (downloadFileSmart(rf.url, target, logDownloads, baseName(target))) {
+    if (downloadFileSmart(rf.url, target, logDownloads, baseName(target), tokenForUrl(rf.url))) {
       return true;
     }
     error("Cannot download " ~ rf.url);
@@ -371,13 +371,13 @@ final class Resolver {
       foreach (remote; remotes) {
         auto url = remote.base ~ a.layoutPath;
         logInfo("Downloading " ~ url);
-        if (!downloadFileSmart(url, file, logDownloads, a.raw)) {
+        if (!downloadFileSmart(url, file, logDownloads, a.raw, remote.token)) {
           continue;
         }
         // 下载后从同一远程复核 .sha1（SNAPSHOT 同样校验）；该远程无 .sha1
         // 时接受（verify aborted），与既有 release 语义一致。
         auto sha1Url = remote.base ~ a.sha1.layoutPath;
-        if (downloadFile(sha1Url, sha1File, false, "")) {
+        if (downloadFile(sha1Url, sha1File, false, "", remote.token)) {
           if (!verifySha1(local, a)) {
             error("Error sha1 for " ~ a.raw ~ ",Remove it.");
             remove(file);
@@ -428,6 +428,25 @@ final class Resolver {
     }
     snapshotPath = fetchSnapshot(local, snapshotRemotes, a, verbose, logDownloads).path;
     return snapshotPath.length > 0;
+  }
+
+  /** 与某个已配置仓库前缀匹配时使用该仓库令牌；不向无关主机发送凭据。 */
+  private string tokenForUrl(string url) {
+    string best;
+    string token;
+    foreach (r; snapshotRemotes) {
+      if (r.token.length && urlMatches(url, r.base) && r.base.length > best.length) {
+        best = r.base;
+        token = r.token;
+      }
+    }
+    foreach (r; remotes) {
+      if (r.token.length && urlMatches(url, r.base) && r.base.length > best.length) {
+        best = r.base;
+        token = r.token;
+      }
+    }
+    return token;
   }
 
   // --------------------------------------------------------- classpath
@@ -524,4 +543,9 @@ final class Resolver {
       stderr.writeln(msg);
     }
   }
+}
+
+/// URL 是否落在仓库根之下（或恰好等于仓库根）。
+private bool urlMatches(string url, string base) {
+  return base.length > 0 && (url == base || url.startsWith(base ~ "/"));
 }

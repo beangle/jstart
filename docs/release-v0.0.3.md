@@ -15,13 +15,13 @@
 - **新增 `fetch`**：统一取包命令——gav 从发行仓库取 native tar.gz/jar/war（本地有基线且
   远端有 bsdiff 补丁时只下补丁，否则整包），`http(s)` url 直接下载并按主机路径缓存到
   本地仓库，本地文件原样返回路径；默认发行仓库 `https://sas.openurp.net/native`
-  （micdn 的 `/native`），仓库配 `<auth download-key>` 时用环境变量 `micdn_token` 带
+  （micdn 的 `/native`），仓库配 `<auth download-key>` 时用 `--remote=token@url` 带
   `Authorization: Bearer`（HEAD 探测保持匿名）。
 - **新增 `--verbose`/`-v`**：输出解析、下载开始、将执行的启动命令与 init 命令的
   stdout 等过程细节（默认只输出告警/错误与命令结果）。
 - **新增 `--offline`**：只用本地仓库——不探测、不下载（SNAPSHOT 也不查 `latest`/
   `maven-metadata.xml`），缺件直接失败。
-- **新增 `--snapshot-remote=<urls>`**：SNAPSHOT 专用上游，**不兜到 `--remote`**、
+- **新增 `--snapshot-remote=<repos>`**：SNAPSHOT 专用上游，**不兜到 `--remote`**、
   不追加默认镜像与 Central；不配时本地命中即用（不发请求、不报错），本地缺失、需要
   拉取才报错。
 - **新增 `--base=<dir>`、`--main=<class>`、`--from=<version>`**：组件 base 根目录、

@@ -208,9 +208,12 @@ unittest {
   assert(deltaUrl("https://repo.example.com/native", a, "1.0")
       == "https://repo.example.com/native/org/example/demo/2.0-SNAPSHOT/demo-1.0_2.0-SNAPSHOT-linux-amd64.tar.gz.diff");
 
-  assert(buildDistRemotes().length == 1 && buildDistRemotes()[0] == defaultDistRemote);
+  assert(buildDistRemotes().length == 1 && buildDistRemotes()[0].base == defaultDistRemote);
   auto custom = buildDistRemotes("https://a.example.com//,https://b.example.com");
-  assert(custom == ["https://a.example.com", "https://b.example.com"]);
+  assert(custom.length == 2);
+  assert(custom[0].base == "https://a.example.com" && custom[1].base == "https://b.example.com");
+  auto customAuth = buildDistRemotes("dist-key@https://a.example.com//,https://b.example.com");
+  assert(customAuth[0].token == "dist-key" && customAuth[1].token == "");
 
   assert(compareVersion("4.20.9", "4.20.13") < 0);
   assert(compareVersion("4.20.13", "4.20.13") == 0);

@@ -184,13 +184,13 @@ void usage() {
   writeln("  --local=<dir>    local repository (default ~/.m2/repository)");
   writeln("  --source=<dir>   source repository for the repo command");
   writeln("                   (default ~/.m2/repository, must differ from --local)");
-  writeln("  --remote=<urls>  comma separated remote repositories");
-  writeln("                   (release artifacts; Central is appended, and the");
-  writeln("                   built-in mirrors are used when the option is absent)");
-  writeln("  --snapshot-remote=<urls>  comma separated SNAPSHOT upstreams,");
-  writeln("                   used for SNAPSHOT only and never falling back to");
-  writeln("                   --remote; without it a SNAPSHOT already local is");
-  writeln("                   used as-is and only a missing one is an error");
+  writeln("  --remote=<repos> comma separated remote repositories, each as");
+  writeln("                   [token@]url (release artifacts; Central is appended,");
+  writeln("                   and built-in mirrors are used when the option is absent)");
+  writeln("  --snapshot-remote=<repos>  comma separated SNAPSHOT upstreams, each as");
+  writeln("                   [token@]url; used for SNAPSHOT only and never falling");
+  writeln("                   back to --remote; without it a SNAPSHOT already local");
+  writeln("                   is used as-is and only a missing one is an error");
   writeln("  --offline        local repositories only: no remote probing, no");
   writeln("                   downloads (missing artifacts fail instead)");
   writeln("  --from=<version> fetch/native gav: delta baseline version (default:");
@@ -1134,7 +1134,15 @@ private int runFetch(BootArgs opts) {
 private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
   auto gav = targetGav(target);
   if (gav.length) {
-    auto r = fetchDist(gav, opts.from, opts.remote, opts.local, showProgress(opts),
+    auto remote = opts.remote;
+    try {
+      auto artifact = parseGav(gav, gav);
+      if (artifact.isSnapshot && opts.snapshotRemote.strip.length > 0) {
+        remote = opts.snapshotRemote;
+      }
+    } catch (Exception e) {
+    }
+    auto r = fetchDist(gav, opts.from, remote, opts.local, showProgress(opts),
         opts.offline, !opts.quiet);
     return r.ok ? r.path : "";
   }

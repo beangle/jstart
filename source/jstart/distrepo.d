@@ -21,7 +21,6 @@
  */
 module jstart.distrepo;
 
-import std.array : split;
 import std.conv : to;
 import std.file : dirEntries, exists, isDir, readText, remove, rename, SpanMode;
 import std.path : baseName, dirName;
@@ -33,7 +32,7 @@ import jstart.archive : Artifact, parseGav;
 import jstart.bspatch : applyBsdiff, bspatchAvailable;
 import jstart.gzip : gzipAvailable, gzipTo, gunzipTo;
 import jstart.http : downloadFile, downloadFileSmart, remoteExists;
-import jstart.repo : LocalRepo, parseSha1Text, sha1OfFile;
+import jstart.repo : LocalRepo, RemoteRepo, parseRemoteSpec, parseSha1Text, sha1OfFile;
 
 /// Default dist repository: micdn's `/native` endpoint (single root for releases and snapshots).
 enum defaultDistRemote = "https://sas.openurp.net/native";
@@ -50,23 +49,13 @@ struct FetchResult {
   string remote;
 }
 
-/// Build the dist repository list from a comma separated spec.
-string[] buildDistRemotes(string spec = "") {
-  string[] bases;
-  foreach (b; spec.split(",")) {
-    auto base = b.strip;
-    if (base.length == 0) {
-      continue;
-    }
-    while (base.length > 1 && base[$ - 1] == '/') {
-      base = base[0 .. $ - 1];
-    }
-    bases ~= base;
+/// Build the dist repository list from a comma separated `[token@]url` spec.
+RemoteRepo[] buildDistRemotes(string spec = "") {
+  auto remotes = parseRemoteSpec(spec);
+  if (remotes.length == 0) {
+    remotes ~= RemoteRepo(defaultDistRemote, defaultDistRemote);
   }
-  if (bases.length == 0) {
-    bases ~= defaultDistRemote;
-  }
-  return bases;
+  return remotes;
 }
 
 /// Url of the artifact in a dist repository.
@@ -127,7 +116,7 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
     return r;
   }
   auto local = new LocalRepo(localBase);
-  auto bases = offline ? [] : buildDistRemotes(remoteSpec);
+  auto remotes = offline ? [] : buildDistRemotes(remoteSpec);
 
   // 1) 本地已有：SNAPSHOT 先查最新时间戳文件，再看字面别名
   auto existing = findLocalArtifact(local, a, verbose);
@@ -153,18 +142,18 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
         writeln("No local " ~ baseline ~ " baseline, skip delta " ~ a.ver);
       }
     } else {
-      foreach (base; bases) {
-        if (!remoteExists(deltaUrl(base, a, baseline))) {
+      foreach (remote; remotes) {
+        if (!remoteExists(deltaUrl(remote.base, a, baseline))) {
           continue; // 没有 delta 很正常
         }
         if (verbose) {
-          writeln("Delta " ~ baseline ~ " -> " ~ a.ver ~ " found at " ~ base);
+          writeln("Delta " ~ baseline ~ " -> " ~ a.ver ~ " found at " ~ remote.base);
         }
-        if (fetchViaDelta(local, base, a, baseline, baselineFile, verbose, logDownloads)) {
+        if (fetchViaDelta(local, remote, a, baseline, baselineFile, verbose, logDownloads)) {
           r.ok = true;
           r.path = localArtifactPath(local, a);
           r.viaDelta = true;
-          r.remote = base;
+          r.remote = remote.base;
           return r;
         }
         if (verbose) {
@@ -176,7 +165,7 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
   }
 
   // 3) 整包（含 .sha1 校验）
-  if (downloadWhole(local, bases, a, verbose, logDownloads)) {
+  if (downloadWhole(local, remotes, a, verbose, logDownloads)) {
     r.ok = true;
     r.path = localArtifactPath(local, a);
     return r;
@@ -290,16 +279,16 @@ string inferBaselineVersion(LocalRepo local, Artifact a) {
  * `logDownloads`：整包下载那一行结果日志（stderr，每 url 一行）；`verbose` 管其余过程
  * 细节（坏件、镜像兜底失败等）。`.sha1` 是附属下载，不打日志。
  */
-private bool downloadWhole(LocalRepo local, string[] bases, Artifact a, bool verbose,
+private bool downloadWhole(LocalRepo local, RemoteRepo[] remotes, Artifact a, bool verbose,
     bool logDownloads) {
   auto target = localArtifactPath(local, a);
   auto sha1File = target ~ ".sha1";
-  foreach (base; bases) {
-    if (!downloadFileSmart(distUrl(base, a), target, logDownloads, a.fileName)) {
+  foreach (remote; remotes) {
+    if (!downloadFileSmart(distUrl(remote.base, a), target, logDownloads, a.fileName, remote.token)) {
       continue;
     }
     // 远程有 .sha1 才校验；没有时按既有依赖下载语义接受
-    if (downloadFile(distSha1Url(base, a), sha1File, false, "")) {
+    if (downloadFile(distSha1Url(remote.base, a), sha1File, false, "", remote.token)) {
       if (!verifyBeside(target)) {
         if (verbose) {
           writeln("Error sha1 for " ~ a.raw ~ ",Remove it.");
@@ -312,7 +301,7 @@ private bool downloadWhole(LocalRepo local, string[] bases, Artifact a, bool ver
     return true;
   }
   if (verbose) {
-    writeln("Not found(" ~ to!string(bases.length) ~ " mirrors):" ~ a.raw);
+    writeln("Not found(" ~ to!string(remotes.length) ~ " mirrors):" ~ a.raw);
   }
   return false;
 }
@@ -337,7 +326,7 @@ bool isCompressedTar(string packaging) {
  * verify the result. False means "delta unusable, download the whole thing";
  * the temporary files are removed, the local baseline is left untouched.
  */
-private bool fetchViaDelta(LocalRepo local, string base, Artifact a,
+private bool fetchViaDelta(LocalRepo local, RemoteRepo remote, Artifact a,
     string baselineVersion, string baselineFile, bool verbose, bool logDownloads) {
   auto packed = isCompressedTar(a.packaging);
   if (!bspatchAvailable() || (packed && !gzipAvailable())) {
@@ -362,12 +351,12 @@ private bool fetchViaDelta(LocalRepo local, string base, Artifact a,
     }
   }
 
-  auto patchUrl = deltaUrl(base, a, baselineVersion);
-  if (!downloadFileSmart(patchUrl, patchFile, logDownloads, baseName(patchFile))) {
+  auto patchUrl = deltaUrl(remote.base, a, baselineVersion);
+  if (!downloadFileSmart(patchUrl, patchFile, logDownloads, baseName(patchFile), remote.token)) {
     return false;
   }
   // 补丁自身的 sha1：服务端有就校验，没有就跳过（与依赖下载同语义）
-  if (downloadFile(patchUrl ~ ".sha1", patchSha1, false, "")) {
+  if (downloadFile(patchUrl ~ ".sha1", patchSha1, false, "", remote.token)) {
     auto expectedPatch = parseSha1Text(readText(patchSha1));
     if (expectedPatch.length != 40 || expectedPatch != sha1OfFile(patchFile)) {
       if (verbose) {
@@ -377,7 +366,8 @@ private bool fetchViaDelta(LocalRepo local, string base, Artifact a,
     }
   }
   // 目标版本的 sha1 必须拿到，否则无法验证重建结果
-  if (!downloadFileSmart(distSha1Url(base, a), sha1File, verbose, a.sha1.fileName)) {
+  if (!downloadFileSmart(distSha1Url(remote.base, a), sha1File, verbose, a.sha1.fileName,
+      remote.token)) {
     if (verbose) {
       stderr.writeln("Cannot find " ~ a.ver ~ " .sha1, ignore the delta.");
     }

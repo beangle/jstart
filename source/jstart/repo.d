@@ -180,6 +180,14 @@ struct RemoteRepo {
   string id;
   /// Base url, no trailing slash.
   string base;
+  /// Optional bearer token for body-bearing GETs; HEAD probes stay anonymous.
+  string token;
+
+  this(string id, string base, string token = "") {
+    this.id = id;
+    this.base = base;
+    this.token = token;
+  }
 }
 
 /**
@@ -205,7 +213,7 @@ RemoteRepo[] buildRemotes(string spec = "") {
   if (spec.strip.length == 0) {
     return defaultRemotes();
   }
-  auto remotes = parseRemotes(spec);
+  auto remotes = parseRemoteSpec(spec);
   auto central = defaultRemotes()[2];
   foreach (r; remotes) {
     if (r.base == central.base) {
@@ -225,14 +233,41 @@ RemoteRepo[] buildRemotes(string spec = "") {
  * 镜像与 Central 兜底。两者可以不同（`jstart.resolver` 分别持有 remotes / snapshotRemotes）。
  */
 RemoteRepo[] buildSnapshotRemotes(string spec = "") {
-  return parseRemotes(spec);
+  return parseRemoteSpec(spec);
 }
 
-/// 解析逗号分隔的仓库 spec：补 http://、去尾斜杠、丢弃空项；不附加任何默认值。
-private RemoteRepo[] parseRemotes(string spec) {
+/**
+ * 解析逗号分隔的仓库 spec：每项为 `[token@]url`，补 http://、去尾斜杠、丢弃空项；
+ * 不附加任何默认值。
+ *
+ * token 与地址写在一起，不同仓库可以各用自己的凭证。拆分点是 URL scheme 前的 `@`，
+ * 因此 token 自身可以含 `@`；没有前缀 token 的地址按匿名处理。凭证不会发给另一个仓库。
+ */
+RemoteRepo[] parseRemoteSpec(string spec = "") {
   RemoteRepo[] remotes;
-  foreach (b; spec.split(",")) {
-    auto base = b.strip;
+  foreach (item; spec.split(",")) {
+    auto raw = item.strip;
+    if (raw.length == 0) {
+      continue;
+    }
+    auto scheme = raw.indexOf("https://");
+    auto httpAt = raw.indexOf("http://");
+    if (httpAt >= 0 && (scheme < 0 || httpAt < scheme)) {
+      scheme = httpAt;
+    }
+    string token;
+    string base = raw;
+    if (scheme > 0 && raw[scheme - 1] == '@') {
+      token = raw[0 .. scheme - 1].strip;
+      base = raw[scheme .. $].strip;
+    } else if (scheme < 0) {
+      // 兼容不带 scheme 的旧写法；无 scheme 时以最后一个 @ 分隔 token 与主机。
+      auto at = raw.lastIndexOf('@');
+      if (at >= 0) {
+        token = raw[0 .. at].strip;
+        base = raw[at + 1 .. $].strip;
+      }
+    }
     if (base.length == 0) {
       continue;
     }
@@ -242,7 +277,7 @@ private RemoteRepo[] parseRemotes(string spec) {
     while (base.length > 1 && base[$ - 1] == '/') {
       base = base[0 .. $ - 1];
     }
-    remotes ~= RemoteRepo(base, base);
+    remotes ~= RemoteRepo(base, base, token);
   }
   return remotes;
 }
