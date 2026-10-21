@@ -4,7 +4,7 @@
 |------|------|
 | `build_common.sh` | 打包共用：`dub clean`、清空 `target/`、`dub build --build=release-nobounds` |
 | `build_deb.sh` | 构建 `.deb`（需 Debian 系或 `dpkg-deb`、`fakeroot`） |
-| `build_rpm.sh` | 构建二进制 `.rpm`（需 `rpmbuild`、`fakeroot`，在 Fedora/RHEL 系运行） |
+| `build_rpm.sh` | 构建二进制 `.rpm`（需 `rpmbuild >= 4.14`、`fakeroot`） |
 
 产物统一输出到 `target/`：
 
