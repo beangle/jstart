@@ -1117,12 +1117,26 @@ private int runFetch(BootArgs opts) {
 // ------------------------------------------------------------------ native
 
 /**
- * 取回一个文件目标：gav 走发行仓库逻辑（含增量补丁，即 fetch 的核心），
+ * 取回一个文件目标。
+ *
+ * gav 分两种情况：
+ *  - 普通构件 / native tar.gz：走发行仓库逻辑（含增量补丁），SNAPSHOT 按字面版本；
+ *  - Maven SNAPSHOT 的 jar/war：走 jstart 的快照解析（latest / maven-metadata.xml），
+ *    否则本地一旦有旧时间戳文件，新构建永远不会被看到。
+ *
  * http(s) url 下载并按主机路径缓存到本地仓库，本地文件返回绝对路径。
  */
 private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
   auto gav = targetGav(target);
   if (gav.length) {
+    try {
+      auto artifact = parseGav(gav, gav);
+      if (artifact.isSnapshot && !isNativeTarget(target)) {
+        // 只取构件、不解析依赖；上游只看 --snapshot-remote。
+        return resolver.fetchTarget(gav);
+      }
+    } catch (Exception e) {
+    }
     auto remote = opts.remote;
     try {
       auto artifact = parseGav(gav, gav);

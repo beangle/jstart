@@ -16,9 +16,9 @@ jstart [options] <command> <target> [args...]
 |------|------|
 | `--local=<dir>` | 本地仓库，默认 `~/.m2/repository`；release 与 SNAPSHOT **同库同布局**（SNAPSHOT 时间戳文件在对应版本目录里）；repo 命令里是"目标仓库" |
 | `--source=<dir>` | 仅 repo 命令：源仓库，默认 `~/.m2/repository`，须与 `--local` 不同 |
-| `--from=<version>` | fetch 命令与 native（tar.gz）gav 目标：增量补丁的基线版本；缺省取本地仓库里最接近的较低版本 |
+| `--from=<version>` | fetch/native 的 release 构件与 native（tar.gz）gav 目标：增量补丁的基线版本；缺省取本地仓库里最接近的较低版本。Maven SNAPSHOT jar/war 先解析最新时间戳，不走增量补丁 |
 | `--remote=<repos>` | 远程仓库，逗号分隔；每项为 `[token@]url`（token 只发给该仓库）。含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"本地仓库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
-| `--snapshot-remote=<repos>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖与 gav 目标）：开发版上游，逗号分隔，每项为 `[token@]url`。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地仓库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
+| `--snapshot-remote=<repos>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖、以及 fetch 的 Maven SNAPSHOT jar/war）：开发版上游，逗号分隔，每项为 `[token@]url`。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地仓库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
 | `--offline` | 只用本地仓库：不探测远端（SNAPSHOT 也不做 `latest`/元数据探测）、不下载，缺件直接失败；与 `--remote`/`--snapshot-remote` 同时给出时以离线为准 |
 | `--base=<dir>` | run：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与运行目录"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
@@ -67,8 +67,9 @@ SNAPSHOT 都在 maven2 布局的版本目录下：
   库；本地已有该时间戳文件且 `.sha1` 通过就跳过下载。每个 SNAPSHOT 都会询问一次上游，
   这样开发版每次部署都拿到最新构建；上游都解析不出时退回本地仓库已有的最新时间戳
   文件（其次本地仓库里的字面别名，离线可用）。不比较 mtime 与 Last-Modified；
-  这套元数据解析只服务于 maven 依赖（`resolve`/`run` 的 jar/war 等）；`fetch`/native
-  发行包不做任何快照元数据探测（native 构建费时、包大、发布不频繁，开发版一般不上传），
+  这套元数据解析同时服务于 maven 依赖（`resolve`/`run` 的 jar/war 等）与 `fetch` 的
+  Maven SNAPSHOT jar/war：fetch 也先解析最新时间戳，再只取构件、不解析依赖。
+  `fetch` 的 native tar.gz 发行包不做快照元数据探测（native 构建费时、包大、发布不频繁），
   `-SNAPSHOT` 只当字面版本名走「本地命中 → 增量补丁 → 整包下载」；
 - SNAPSHOT 与正式版共用 `--local` 指定的仓库；时间戳文件与字面别名按 maven 布局同处
   版本目录，文件名互不覆盖。
@@ -339,10 +340,11 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
 `g/a/v/a-v.jar`，**SNAPSHOT** 落在同一仓库的 `g/a/v-SNAPSHOT/` 版本目录里，时间戳文件
 与 `-SNAPSHOT` 字面别名并存。
 
-流程：
+流程（Maven SNAPSHOT jar/war 在第一步之前先解析 `latest`/`metadata`，取最新时间戳文件；
+以下增量流程只针对正式版与 native tar.gz）：
 
-1. 本地已有就直接用：SNAPSHOT 先看版本目录里时间戳最新的一份，再看同在其中的
-   `-SNAPSHOT` 字面文件；正式版看同一版本目录的普通文件。命中且 `.sha1` 校验通过即返回（exit 0）；
+1. 正式版/native 本地已有就直接用；native `-SNAPSHOT` 先看版本目录里时间戳最新的一份，
+   再看同在其中的 `-SNAPSHOT` 字面文件。命中且 `.sha1` 校验通过即返回（exit 0）；
 2. 确定基线版本：`--from=<version>` 优先；缺省扫描 `--local` 仓库里该构件的版本目录
    （正式版与 SNAPSHOT 同一棵树），取比目标版本低的最高版本；
 3. 探测 `<仓库>/<g>/<a>/<version>/<a>-<基线>_<版本>[-<classifier>].<packaging>.diff`
