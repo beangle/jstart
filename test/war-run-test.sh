@@ -164,7 +164,7 @@ check "engine answers http (code=$code)" "[ \"$code\" != '000' ]"
 check "log: $ENGINE started" "grep -q '$STARTED_LOG' \"$LOG\""
 check "log: beangle app booted" "grep -Eq 'ROOT started|Action scan completed' \"$LOG\""
 check "exploded docBase present" "[ -d \"$CDIR/webapps/ROOT\" ]"
-check "engine jars on launch command" "tr '\\0' '\\n' < \"$CDIR/engine-entry.argv\" | grep -q '$ENGINE_JAR'"
+check "engine jars on launch command" "tr '\\0' ' ' < /proc/$JPID/cmdline | grep -q '$ENGINE_JAR'"
 
 echo "== graceful shutdown =="
 kill -TERM "$JPID" 2>/dev/null

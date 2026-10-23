@@ -86,20 +86,19 @@ tar czf offline-bundle.tgz jstart app.jar offline-repo/
 `[engine]` 段罗列，jstart 不内置依赖目录），两者都要在联网机上先集齐：
 
 ```bash
-# 联网机：解析并下载（run --print 也会下载后只打印命令，不启动）
-jstart --quiet run --print app.jstart --local=/opt/offline-repo
+# 联网机：解析并下载（resolve 现在也包含 [engine] 段的引擎 jar）
+jstart --quiet resolve app.jstart --local=/opt/offline-repo
 
-# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动；--print 不跑 init 命令）
-jstart --local=/opt/offline-repo --offline --quiet run --print app.jstart >/dev/null && echo ready
+# 校验：离线机上按同一 spec 预演（缺件以 Missing 失败，不启动）
+jstart --local=/opt/offline-repo --offline --quiet resolve app.jstart >/dev/null && echo ready
 ```
 
 注意：
 
 - `repo` 子命令**只整合应用依赖**（war 内置清单或 spec `[libs]`），不读取 `[engine]`
-  段，也不会复制引擎 jar；引擎依赖请用上面的 `run --print`（或 `resolve` 后手工
-  `repo` 引擎 spec 的 `[libs]`）预下载进离线仓库；
+  段，也不会复制引擎 jar；引擎依赖请用上面的 `resolve` 预下载进离线仓库；
 - 引擎与容器版本直接在 `[engine]` 行里写死（不再有版本后缀/占位符，见
-  [war-engine.md](war-engine.md)），解析出的具体版本与其它引擎 jar 一样随 `run --print`
+  [war-engine.md](war-engine.md)），解析出的具体版本与其它引擎 jar 一样随 `resolve`
   预下载进离线仓库；
 - 引擎 jar 是 release 构件，落在普通本地仓库布局，随仓库一起拷贝即可，无需处理
   本地仓库。

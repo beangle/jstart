@@ -12,7 +12,8 @@ java。本目录存放项目文档。
 | [design.md](design.md) | 设计思路：与 beangle/boot 的对应关系、进程形态（jstart 如何 exec 成 java）、默认 base 根选型、模块架构、依赖准备流程 |
 | [commands.md](commands.md) | 命令详解：`run`/`resolve`/`classpath`/`repo`/`fetch`、选项、退出码与示例 |
 | [dependencies.md](dependencies.md) | 依赖描述文件格式：gav 规则、jar/war 存放位置、路径展开、构建端生成方式 |
-| [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[libs]/[engine] 语义、run --print 与范围规划 |
+| [launch-spec.md](launch-spec.md) | 启动说明文件：ini 式 spec 的格式、[libs]/[engine] 语义与范围规划 |
+| [handoff.md](handoff.md) | jstart 与 engine init 的交接：jstart.argv / jstart.args、NUL 格式与生命周期 |
 | [war-engine.md](war-engine.md) | war 运行：何时启用、`[engine] init` init 命令、`[engine]` 依赖罗列、参数与限制 |
 | [engine.md](engine.md) | **引擎 init 命令协议**：两阶段启动、argv 文件、`--entry` 语义、多 webapp 交付文件（`<base>/engine-subapps.jstart`，spec 片段）、classpath 文件与 docBase 归属 |
 | [offline.md](offline.md) | 离线部署：仓库整合、无外网机器上的启动方式与注意事项 |
@@ -118,7 +119,7 @@ dub build -b release --compiler=ldc2          # 产物 target/jstart
   （`--verbose` 与 `--quiet` 同给时以 `--quiet` 为准）。**下载结果行默认就有**：
   每下载一个 url 打一行 `<label> Downloaded <url> (…)` 到 **stderr**（stdout 只留命令
   结果，curl 不输出进度、日志由 D 打印）
-- `--print` 仅 run：打印将执行的命令行（逐参数引号）而不 exec；`--jobs=N` 并行下载
+- `--jobs=N` 并行下载
   并发数（默认 10，1 = 串行）
 
 更多细节见各篇文档。

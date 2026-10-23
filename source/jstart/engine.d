@@ -26,11 +26,11 @@
 module jstart.engine;
 
 import std.algorithm : endsWith;
-import std.array : split;
-import std.file : exists, isFile, remove;
-import std.path : buildPath;
+import std.array : appender, join, split;
+import std.file : exists, isFile, mkdirRecurse, remove, write;
+import std.path : absolutePath, buildPath, dirName;
 import std.process : environment;
-import std.string : indexOf, startsWith;
+import std.string : indexOf, replace, startsWith;
 
 import jstart.archive : Archive, Artifact, expandLocalPath;
 
@@ -63,8 +63,14 @@ Archive[] appendEngineDeps(Archive[] appDeps, Archive[] engineDeps) {
   return result;
 }
 
-/// File under the component base where the engine init script writes the final argv.
-immutable string entryArgvFile = "engine-entry.argv";
+/// File under the component base holding the final launch argv (NUL separated).
+immutable string argvFile = "jstart.argv";
+
+/// Java @argfile used when the launch command is too long.
+immutable string argsFile = "jstart.args";
+
+/** 命令行参数总长超过该值时改用 `java @jstart.args`，避免 E2BIG（与 basctl 一致）。 */
+private enum argFileLimit = 4000;
 
 /// File under the component base holding the application dependency classpath.
 /// The classpath can be very long, so it is handed to the engine init script
@@ -101,11 +107,10 @@ immutable string subappsPlanFile = "engine-subapps.jstart";
  * final launch command.
  *
  * The engine/app classpath files and the multi-webapp plan are only inputs to
- * the init command; the final command written to `engine-entry.argv` no longer
- * references them. `engine-entry.argv` itself is kept: it is the record of what
- * was actually launched (`run --print` reads it back), and when the command is
- * folded into `engine-entry.argv.args`, java still reads that argfile at
- * startup - so both stay.
+ * the init command; the final command written to `jstart.argv` no longer
+ * references them. `jstart.argv` stays after exec as the record of the last
+ * launch; when the command is folded into `jstart.args`, java still reads that
+ * argfile at startup, so it stays too.
  *
  * Cleanup failures are ignored: a leftover file is harmless, a failed launch is
  * not.
@@ -233,7 +238,7 @@ string findOnPath(string name) {
 
 /**
  * 解析 `[engine] init`：返回要执行的 argv（裸命令名解析成 PATH 上的绝对路径）。
- * `missing` 表示程序没找到（路径不存在，或裸名不在 PATH 上）；`--print` 可忽略它。
+ * `missing` 表示程序没找到（路径不存在，或裸名不在 PATH 上）。
  */
 string[] resolveEngineInit(string initValue, out bool missing) {
   auto argv = engineInitArgv(initValue);
@@ -252,6 +257,67 @@ string[] resolveEngineInit(string initValue, out bool missing) {
     }
   }
   return argv;
+}
+
+/** Write an argv as NUL separated bytes. */
+void writeArgvFile(string path, const(string)[] argv) {
+  auto parent = dirName(path);
+  if (parent.length)
+    mkdirRecurse(parent);
+  string buffer;
+  foreach (a; argv)
+    buffer ~= a ~ "\0";
+  write(path, buffer);
+}
+
+/** java @argfile 中一个参数占一行；含空白/引号/反斜杠或行首为 `#` 时加双引号并转义。 */
+private string quoteArgFileArg(string arg) {
+  bool need = arg.length == 0;
+  foreach (i, c; arg) {
+    if (need)
+      break;
+    need = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '"'
+      || c == '\'' || c == '\\' || (i == 0 && c == '#');
+  }
+  if (!need)
+    return arg;
+  auto sb = appender!string;
+  sb.put('"');
+  foreach (c; arg) {
+    if (c == '\\' || c == '"')
+      sb.put('\\');
+    sb.put(c);
+  }
+  sb.put('"');
+  return sb.data;
+}
+
+/**
+ * 写出非引擎启动的最终 argv：短命令写 `jstart.argv`；过长时把 cmd[1..] 写到
+ * `jstart.args`，`jstart.argv` 只留 `[java, @<abs>/jstart.args]`，避免 E2BIG。
+ * 返回实际要 exec 的 argv。
+ */
+string[] writeJstartArgv(string base, const(string)[] cmd) {
+  if (cmd.length == 0)
+    throw new Exception("Empty launch command");
+  auto argvPath = buildPath(base, argvFile);
+  auto argsPath = buildPath(base, argsFile);
+  int size;
+  foreach (i; 1 .. cmd.length)
+    size += cast(int) cmd[i].length + 1;
+  if (size <= argFileLimit) {
+    if (exists(argsPath))
+      remove(argsPath); // 上一次长命令的残留
+    writeArgvFile(argvPath, cmd);
+    return cmd.dup;
+  }
+  auto sb = appender!string;
+  foreach (i; 1 .. cmd.length)
+    sb.put(quoteArgFileArg(cmd[i]) ~ "\n");
+  write(argsPath, sb.data);
+  string[] folded = [cmd[0], "@" ~ absolutePath(argsPath)];
+  writeArgvFile(argvPath, folded);
+  return folded;
 }
 
 /**

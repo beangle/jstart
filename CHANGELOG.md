@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **所有模式写出 `jstart.argv`，取消 `--print`**：jar/native 由 jstart 写，engine 由
+  init 脚本通过 `--entry-out=<base>/jstart.argv` 写；文件和超长命令的 `jstart.args`
+  都在启动后保留，作为最后一次实际命令的记录。`run --print` 被移除，需要看命令时读
+  `jstart.argv`（NUL 分隔，用 `tr '\0' '\n'` 展开）。`jstart resolve <spec>` 现在
+  也会取回 `[engine]` 段的引擎 jar，可代替原来的 `run --print` 做离线预取。
 - **发行物加固为 FULL RELRO**：`dub.json` 的 `application` 配置带 `-z now`，GOT 在加载
   时一次性解析并置为只读（`readelf` 里应出现 `BIND_NOW` 与 `GNU_RELRO`，校验命令见
   [build.md](docs/build.md)）。用早于本条的 tag（含 `v0.0.3`）构建的包不具备该加固

@@ -20,10 +20,10 @@ import std.string : startsWith, strip;
 import jstart.archive : Artifact, Archive, expandLocalPath, mergeLibraries, parseArchive, parseGav;
 import jstart.base : nativeDirName, resolveBase;
 import jstart.distrepo : fetchDist;
-import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
+import jstart.engine : appendEngineDeps, argvFile, engineDepsClasspathFile,
   entryClasspathFile, parseEntryArgv, removeEngineWorkFiles, resolveEngineInit, subappsPlanFile;
 import jstart.http : runProcessCapture;
-import jstart.launcher : execCommand, printCommand, printJavaCommand, runJarApp, runNativeApp;
+import jstart.launcher : execCommand, runJarApp, runNativeApp;
 import jstart.mainclass : MainClass, MainSource, isPlausibleMainClass, pickMainClass,
   sourceName;
 import jstart.native : extractTarGz, findExecutable, isNativeTarget, targetGav;
@@ -58,8 +58,6 @@ struct BootArgs {
   bool hasMain;
   /// --source: 源仓库目录（repo 命令从该仓库复制依赖）
   string source;
-  /// --print: 只打印将要执行的命令，不 exec。
-  bool print;
   /// 并行下载并发数（--jobs），1 = 串行。
   int jobs = 10;
   /// --verbose: 输出解析/下载开始/启动命令等过程细节。
@@ -84,8 +82,6 @@ BootArgs parseArgs(string[] args) {
       r.quiet = true;
     } else if (a == "--verbose" || a == "-v") {
       r.verbose = true;
-    } else if (a == "--print") {
-      r.print = true;
     } else if (a.startsWith("--jobs=")) {
       auto n = 0;
       try {
@@ -203,7 +199,6 @@ void usage() {
   writeln("                   [app] main and the jar's Main-Class manifest");
   writeln("                   entry; only for jar/dir targets, ignored for");
   writeln("                   war/native");
-  writeln("  --print          run only: print the command to execute (no exec)");
   writeln("  --jobs=N         parallel dependency downloads (default 10, 1 = serial)");
   writeln("  --verbose, -v    show process detail (resolve/download start/explode/exec)");
   writeln("  --quiet          suppress warnings, per-url download logs and progress");
@@ -243,12 +238,6 @@ int main(string[] args) {
     stderr.writeln("Invalid --main value"
         ~ (opts.mainClass.length ? " `" ~ opts.mainClass ~ "`" : "")
         ~ ": expected a java class name, e.g. --main=com.example.Main.");
-    return 2;
-  }
-
-  // --print 只对 run 有意义：打印将要执行的命令行（当前即 java）。
-  if (opts.print && opts.command != "run") {
-    stderr.writeln("--print is only supported by the run command");
     return 2;
   }
 
@@ -365,8 +354,12 @@ int main(string[] args) {
   auto missing = resolver.ensureDependencies(deps, opts.jobs);
 
   if (opts.command == "resolve") {
+    // 引擎依赖不在 [libs]/war 清单里，单靠应用依赖无法预取；resolve 一并取回。
+    bool engineOk = true;
+    if (specMode && launchType(spec) == LaunchType.engine)
+      engineOk = ensureEngineDependencies(resolver, spec, opts.jobs);
     writeln(appPath);
-    return missing.length ? 1 : 0;
+    return missing.length || !engineOk ? 1 : 0;
   }
 
   if (missing.length > 0) {
@@ -375,7 +368,7 @@ int main(string[] args) {
   }
 
   if (nativeMode) {
-    return runNative(opts, resolver, appPath, deps, specMode, spec, nativeArchive, nativeRoot);
+    return runNative(opts, resolver, appPath, deps, specMode, spec, nativeArchive, nativeRoot, base);
   }
 
   auto manifestMain = resolver.mainClassOf(appPath);
@@ -441,7 +434,7 @@ int main(string[] args) {
     }
   }
 
-  if (!opts.print && specMode && spec.workingDir.length > 0) {
+  if (specMode && spec.workingDir.length > 0) {
     auto dir = expandLocalPath(spec.workingDir);
     if (!changeDir(dir)) {
       stderr.writeln("Cannot chdir to " ~ dir);
@@ -453,11 +446,21 @@ int main(string[] args) {
   // entry/working_dir 一致的 ~ 与 ${VAR} 语义）；jar 缺省按 JAVA_HOME/PATH 取 java。
   auto runtimeCmd = specMode && spec.runtime.length > 0 ? expandLocalPath(spec.runtime) : "";
 
-  if (opts.print) {
-    return printJavaCommand(classpath, mainClass.name, runtimeOptions, appArgs, runtimeCmd);
-  }
   return runJarApp(classpath, mainClass.name, runtimeOptions, appArgs, showProgress(opts),
-      runtimeCmd);
+      runtimeCmd, base);
+}
+
+/** resolve 时把 `[engine]` 段里的引擎 jar 也取回（run 阶段会再解析一次，幂等）。 */
+private bool ensureEngineDependencies(Resolver resolver, LaunchSpec spec, int jobs) {
+  if (spec.engineDeps.length == 0)
+    return true;
+  auto deps = resolver.parseDependencyText(spec.engineDeps.join("\n"));
+  auto missing = resolver.ensureDependencies(deps, jobs);
+  if (missing.length > 0) {
+    stderr.writeln("Missing: " ~ missing.join(","));
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -478,15 +481,14 @@ int main(string[] args) {
  *   argv（NUL 分隔）写入 --entry-out 文件；非 0 退出即失败；
  * - base 就是组件的 base（--base / [app] base / [app] instance）；--path/--port 等参数
  *   一律原样交给 init 命令转发（jstart 不再读取 --path）；
- * - --print：照常准备（跑 init 命令），但只打印最终命令不 exec。
  */
 private int runEngine(BootArgs opts, Resolver resolver, string entry,
     Archive[] appDeps, LaunchSpec spec, string base) {
   // [engine] init 是引擎入口：可执行文件路径或命令行（程序 + 参数）。运行时必须能解析到
-  // 程序（--print 只打印准备命令，不要求已就位）。
+  // 程序。
   bool initMissing;
   auto initCmd = resolveEngineInit(spec.engineInit, initMissing);
-  if (initCmd.length == 0 || (!opts.print && initMissing)) {
+  if (initCmd.length == 0 || initMissing) {
     stderr.writeln("Engine init command not found: " ~ spec.engineInit
         ~ " ([engine] init must be an executable path or command, not a java class).");
     return 1;
@@ -512,7 +514,7 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
     }
   }
 
-  if (!opts.print && spec.workingDir.length > 0) {
+  if (spec.workingDir.length > 0) {
     auto dir = expandLocalPath(spec.workingDir);
     if (!changeDir(dir)) {
       stderr.writeln("Cannot chdir to " ~ dir);
@@ -524,7 +526,7 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
   // 最终 classpath（WEB-INF 的位置只有引擎知道）。
   auto engineCp = resolver.depsClasspath(engineDeps);
   auto appCp = resolver.buildClasspath("", appDeps);
-  auto entryOut = buildPath(base, entryArgvFile);
+  auto entryOut = buildPath(base, argvFile);
   // 两个 classpath 都可能很长，写入文件由 init 命令读取，避免命令行超长
   auto engineCpFile = buildPath(base, engineDepsClasspathFile);
   auto appCpFile = buildPath(base, entryClasspathFile);
@@ -542,17 +544,6 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
   }
   engineCmd ~= passthrough;
 
-  if (opts.print) {
-    // 只打印：上次运行留下的 argv 文件存在时打印真实启动命令，否则打印引擎准备
-    // 命令（准备过程可能有副作用，--print 不执行它）。
-    if (exists(entryOut)) {
-      auto saved = parseEntryArgv(readText(entryOut));
-      if (saved.length > 0) {
-        return printCommand(saved);
-      }
-    }
-    return printCommand(engineCmd);
-  }
   if (exists(entryOut)) {
     remove(entryOut); // 清掉上次残留，避免引擎准备失败时误读旧命令
   }
@@ -581,7 +572,8 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
     stderr.writeln("Engine init command wrote an empty launch command to " ~ entryOut);
     return 1;
   }
-  // 启动命令已到手：清掉 init 阶段的中间文件，只留 argv（及其 @argfile）
+  // 启动命令已读入内存：只清 init 阶段的两个 classpath 文件；jstart.argv
+  // （以及可能的 jstart.args）保留，作为最后一次实际启动命令的记录。
   removeEngineWorkFiles(base);
   return execCommand(argv, showProgress(opts));
 }
@@ -656,10 +648,11 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   }
 
   if (opts.command == "resolve") {
+    auto engineOk = ensureEngineDependencies(resolver, spec, opts.jobs);
     foreach (entry; entries) {
       writeln(entry);
     }
-    return missingAny ? 1 : 0;
+    return missingAny || !engineOk ? 1 : 0;
   }
   if (opts.command == "info") {
     if (missingAny) {
@@ -684,7 +677,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   // 引擎，validateLaunchSpec 已在校验阶段拦下缺声明）。
   bool initMissing;
   auto initCmd = resolveEngineInit(spec.engineInit, initMissing);
-  if (initCmd.length == 0 || (!opts.print && initMissing)) {
+  if (initCmd.length == 0 || initMissing) {
     stderr.writeln("Engine init command not found: " ~ spec.engineInit
         ~ " ([engine] init must be an executable path or command, not a java class).");
     return 1;
@@ -707,7 +700,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     }
   }
 
-  if (!opts.print && spec.workingDir.length > 0) {
+  if (spec.workingDir.length > 0) {
     auto dir = expandLocalPath(spec.workingDir);
     if (!changeDir(dir)) {
       stderr.writeln("Cannot chdir to " ~ dir);
@@ -729,7 +722,7 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   write(planPath, plan);
 
   auto engineCp = resolver.depsClasspath(engineDeps);
-  auto entryOut = buildPath(base, entryArgvFile);
+  auto entryOut = buildPath(base, argvFile);
   auto engineCpFile = buildPath(base, engineDepsClasspathFile);
   write(engineCpFile, engineCp);
   auto engineCmd = initCmd ~ ["--base=" ~ base,
@@ -743,15 +736,6 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
   }
   engineCmd ~= passthrough;
 
-  if (opts.print) {
-    if (exists(entryOut)) {
-      auto saved = parseEntryArgv(readText(entryOut));
-      if (saved.length > 0) {
-        return printCommand(saved);
-      }
-    }
-    return printCommand(engineCmd);
-  }
   if (exists(entryOut)) {
     remove(entryOut);
   }
@@ -774,7 +758,8 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     stderr.writeln("Engine init command wrote an empty launch command to " ~ entryOut);
     return 1;
   }
-  // 启动命令已到手：清掉 init 阶段的中间文件，只留 argv（及其 @argfile）
+  // 启动命令已读入内存：只清 init 阶段的两个 classpath 文件与多应用计划；
+  // jstart.argv / jstart.args 保留，作为最后一次实际启动命令的记录。
   removeEngineWorkFiles(base);
   return execCommand(argv, showProgress(opts));
 }
@@ -1206,7 +1191,7 @@ private void reportNativeExecMissing(string archive, string[] candidates, string
  * native 无意义，给出时告警忽略。classpath 对 native 无意义，报错退出。
  */
 private int runNative(BootArgs opts, Resolver resolver, string execPath, Archive[] deps,
-    bool specMode, LaunchSpec spec, string archive, string root) {
+    bool specMode, LaunchSpec spec, string archive, string root, string base) {
   if (opts.command == "classpath") {
     stderr.writeln(
         "classpath needs a jar/war target; use resolve to get the native executable path");
@@ -1227,16 +1212,12 @@ private int runNative(BootArgs opts, Resolver resolver, string execPath, Archive
   }
   string[] appArgs = specMode ? spec.args.dup : null;
   appArgs ~= opts.rest;
-  if (!opts.print && specMode && spec.workingDir.length > 0) {
+  if (specMode && spec.workingDir.length > 0) {
     auto dir = expandLocalPath(spec.workingDir);
     if (!changeDir(dir)) {
       stderr.writeln("Cannot chdir to " ~ dir);
       return 1;
     }
   }
-  auto cmd = [execPath] ~ appArgs;
-  if (opts.print) {
-    return printCommand(cmd);
-  }
-  return runNativeApp(execPath, appArgs, showProgress(opts));
+  return runNativeApp(execPath, appArgs, showProgress(opts), base);
 }

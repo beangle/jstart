@@ -185,10 +185,10 @@ mkdir -p "$T/war/WEB-INF"
 printf '<web-app/>\n' > "$T/war/WEB-INF/web.xml"
 (cd "$T/war" && zip -qr "$T/app.war" .)
 # run 不再直接吃 war：必须先写 launch spec（[app] entry + [engine] init）
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.war" --port=8080 2>&1)"; code=$?
+out="$("$JSTART" --local="$REPO" --quiet run "$T/app.war" --port=8080 2>&1)"; code=$?
 check "bare war run rejected" "$code" 1 "must run through a launch spec"
 
-# 引擎 jar 用本地空文件即可（--print 走完解析但不执行脚本）
+# 引擎 jar 用本地空文件即可
 mkdir -p "$T/engine"
 : > "$T/engine/beangle-bas-engine-0.13.17.jar"
 : > "$T/engine/tomcat-embed-core-11.0.21.jar"
@@ -202,7 +202,7 @@ main = org.example.Main
 [engine]
 init = $T/engine/init.sh
 INI
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/bad.jstart" 2>&1)"; code=$?
+out="$("$JSTART" --local="$REPO" --quiet run "$T/bad.jstart" 2>&1)"; code=$?
 check "main+engine rejected" "$code" 1 "mutually exclusive"
 
 # [app] engine 已移除：告警提示改用 [engine] init（不再是引擎声明）
@@ -211,7 +211,7 @@ cat > "$T/oldkey.jstart" <<INI
 entry = $T/app.war
 engine = tomcat
 INI
-out="$("$JSTART" --local="$REPO" run --print "$T/oldkey.jstart" 2>&1)"; code=$?
+out="$("$JSTART" --local="$REPO" run "$T/oldkey.jstart" 2>&1)"; code=$?
 check "[app] engine removed" "$code" 1 "was removed"
 
 # war 必须显式声明引擎：jstart 无内置引擎目录，也不从 .war 后缀反推
@@ -219,7 +219,7 @@ cat > "$T/noengine.jstart" <<INI
 [app]
 entry = $T/app.war
 INI
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/noengine.jstart" 2>&1)"; code=$?
+out="$("$JSTART" --local="$REPO" --quiet run "$T/noengine.jstart" 2>&1)"; code=$?
 check "war needs engine" "$code" 1 "init = <script>"
 
 cat > "$T/nodeps.jstart" <<INI
@@ -229,48 +229,8 @@ entry = $T/app.war
 [engine]
 $T/engine/tomcat-embed-core-11.0.21.jar
 INI
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/nodeps.jstart" 2>&1)"; code=$?
+out="$("$JSTART" --local="$REPO" --quiet run "$T/nodeps.jstart" 2>&1)"; code=$?
 check "engine needs init" "$code" 1 "needs an init command"
-
-# --print 只打印引擎准备命令，不真的运行 init 脚本
-cat > "$T/app.jstart" <<INI
-[app]
-entry = $T/app.war
-
-[engine]
-init = $T/engine/init.sh
-$T/engine/beangle-bas-engine-0.13.17.jar
-$T/engine/tomcat-embed-core-11.0.21.jar
-
-[args]
---path=/demo
-INI
-out="$("$JSTART" --local="$REPO" --main=org.example.Ignored run --print "$T/app.jstart" --port=8080 --base="$T/bas" 2>&1)"; code=$?
-check "war print exit" "$code" 0 "$T/engine/init.sh"
-check "war entry" "$code" 0 "--entry=$T/app.war"
-check "war engine classpath" "$code" 0 "--engine-classpath-file="
-check "war app classpath" "$code" 0 "--app-classpath-file="
-check "war local repo" "$code" 0 "--local-repo="
-check "war port" "$code" 0 "'--port=8080'"
-check "war context" "$code" 0 "'--path=/demo'"
-check "war ignores --main" "$code" 0 "ignored for engine targets"
-# --base 是根：组件目录 <根>/<组件键> 由 jstart 建（spec 目标的组件键取 spec 文件名）
-# jstart 不再自己爆炸 war：docBase 布局与爆炸都归引擎 init 脚本（见 docs/engine.md）
-warBase="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
-case "$warBase" in
-  "$T/bas"/app.jstart-*) ;;
-  *) echo "FAIL war --base layout: $warBase" >&2; failures=$((failures + 1)) ;;
-esac
-
-# 未显式 --base 时用默认根 /var/tmp/jstart（组件目录 <根>/<组件键>）
-out="$("$JSTART" --local="$REPO" --quiet run --print "$T/app.jstart" --path=/iso)"; code=$?
-check "war default base" "$code" 0 "base=/var/tmp/jstart/"
-baseIso="$(printf '%s' "$out" | sed -n "s/.*--base=\([^']*\)'.*/\1/p")"
-case "$baseIso" in
-  /var/tmp/jstart/app.jstart-*) ;;
-  *) echo "FAIL war default base layout: $baseIso" >&2; failures=$((failures + 1)) ;;
-esac
-[ -n "$baseIso" ] && sweep "$baseIso"
 
 echo
 if command -v tar >/dev/null 2>&1; then
@@ -295,10 +255,6 @@ SH
     "$ND"/demo-1.0-linux-amd64.tar.gz-*/app/demo-1.0/bin/demo) ;;
     *) echo "FAIL native resolve layout: $out" >&2; failures=$((failures + 1)) ;;
   esac
-
-  # --print：参数按序跟在可执行文件之后
-  out="$("$JSTART" --quiet --base="$ND" run --print "$T/demo-1.0-linux-amd64.tar.gz" --port=8080 extra)"; code=$?
-  check "native print" "$code" 0 "'--port=8080' 'extra'"
 
   # run：直接 exec 解压出的可执行文件，参数原样透传
   out="$("$JSTART" --quiet --base="$ND" run "$T/demo-1.0-linux-amd64.tar.gz" --port=8080 extra)"; code=$?
@@ -441,8 +397,8 @@ INI
   for i in $(seq 1 120); do grep -q "sleeper-up" "$T/war-run.log" 2>/dev/null && break; sleep 0.5; done
   grep -q "sleeper-up" "$T/war-run.log" \
     || { echo "FAIL engine argv not exec'd: $(cat "$T/war-run.log")" >&2; failures=$((failures + 1)); }
-  ls "$T/war-base"/engine.jstart-*/engine-entry.argv >/dev/null 2>&1 \
-    || { echo "FAIL engine-entry.argv not written" >&2; failures=$((failures + 1)); }
+  ls "$T/war-base"/engine.jstart-*/jstart.argv >/dev/null 2>&1 \
+    || { echo "FAIL jstart.argv not written" >&2; failures=$((failures + 1)); }
   kill "$pidW" 2>/dev/null || true
   wait "$pidW" 2>/dev/null || true
 else
@@ -518,7 +474,8 @@ while IFS= read -r l; do
   esac
 done < "$plan"
 cp="$(cat "$engineCpFile")"
-printf '%s\0' "$JAVA" -cp "$cp" org.jstarttest.PlanEcho "$plan" > "$entryOut"
+cp "$plan" "$base/engine-subapps.plan"
+printf '%s\0' "$JAVA" -cp "$cp" org.jstarttest.PlanEcho "$base/engine-subapps.plan" > "$entryOut"
 SH
   chmod +x "$T/fake-dist-init"
   javac -d "$T/fakedist" "$T/src/org/jstarttest/PlanEcho.java"
@@ -532,6 +489,8 @@ SH
   mkdir -p "$T/multi-a/WEB-INF/classes/META-INF/beangle"
   printf 'org.slf4j:slf4j-api:0.0.1-nonexistent\n' \
     > "$T/multi-a/WEB-INF/classes/META-INF/beangle/dependencies"
+  mkdir -p "$T/multi-b/WEB-INF/classes/META-INF/beangle"
+  : > "$T/multi-b/WEB-INF/classes/META-INF/beangle/dependencies"
   (cd "$T/multi-a" && zip -qr "$T/portal.war" .)
   (cd "$T/multi-b" && zip -qr "$T/admin.war" .)
 

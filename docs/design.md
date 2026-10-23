@@ -65,11 +65,11 @@ jstart 是单二进制，没法像 shell 那样"自己退出再换一个程序�
 1. **准备阶段（jstart 还是进程本体）**：解析 launch spec → 定位目标、下载缺失依赖
    （宿主 `curl` 子进程，jstart 逐个等待）→ native 目标解压（`tar` 子进程）→ war 目标
    运行 `[engine] init` 命令（子进程，jstart 等它退出后读它写出的
-   `<base>/engine-entry.argv`）。这一步里出现的子进程都是短命的，用完即回收；它们
+   `<base>/jstart.argv`）。这一步里出现的子进程都是短命的，用完即回收；它们
    结束后进程树里只剩 jstart 自己。
 2. **组装最终 argv**：
    - jar/解压目录：`java [runtime 参数] -cp <classpath> <Main-Class> [应用参数...]`
-   - war：init 命令写进 `engine-entry.argv` 的那条容器启动命令（NUL 分隔 argv，jstart
+   - war：init 命令写进 `jstart.argv` 的那条容器启动命令（NUL 分隔 argv，jstart
      只负责读出，不拼装，见 [engine.md](engine.md)）
    - native：`<解压根>/<可执行文件> [应用参数...]`
 3. **exec**（`source/jstart/launcher.d` 的 `execCmd`）：把 argv 拷成以 NULL 结尾的
@@ -81,9 +81,6 @@ jstart 是单二进制，没法像 shell 那样"自己退出再换一个程序�
    - **失败：才返回**，打印 `Cannot execute <cmd>` 并以 **127** 退出（shell 的
      "找不到命令"惯例）。
 
-`--print` 是唯一的例外路径：走到第 2 步后只把 argv 按 POSIX 单引号打印出来就退出
-（exit 0），不 exec——它打印的就是第 3 步本要 exec 的那条命令。
-
 代码路径对照：
 
 | 目标 | 最终进程 | 调用链（`source/app.d` → `launcher.d`） |
@@ -91,7 +88,6 @@ jstart 是单二进制，没法像 shell 那样"自己退出再换一个程序�
 | jar / 解压目录 | `java -cp ... <Main-Class>` | `runJarApp` → `execCmd` → `execvp` |
 | war（引擎） | init 写出的容器命令 | `runProcessCapture(init)` → `parseEntryArgv` → `execCommand` → `execvp` |
 | native tar.gz | 解压出的可执行文件 | `runNativeApp` → `execCmd` → `execvp` |
-| 任意目标 + `--print` | 不启动，只打印 | `printJavaCommand` / `printCommand`（exit 0） |
 
 ### 自己验证
 
@@ -128,12 +124,12 @@ java 并回传退出码），代码里以 `version (Windows)` 分支隔离；POS
 <根>/<组件键>/webapps/<ctx>/   引擎解压出的 docBase（引擎的 --base 就是组件目录）
 <根>/<组件键>/engine-app.classpath 应用依赖 classpath（init 输入，启动前删除）
 <根>/<组件键>/engine-deps.classpath 引擎依赖 classpath（init 输入，启动前删除）
-<根>/<组件键>/engine-entry.argv init 命令写出的最终启动命令（NUL 分隔 argv，保留）
+<根>/<组件键>/jstart.argv 最终启动命令（NUL 分隔 argv，保留）
 ```
 
 - **init 的中间文件不长期保留**：classpath 文件、多应用计划（`engine-subapps.jstart`）
-  在 exec 前删除；`engine-entry.argv` 留作启动记录（`--print` 会读），超长命令另有
-  `engine-entry.argv.args`，java 启动时还要读，保留；
+  在 exec 前删除；超长命令另有 `jstart.args`，java 启动时还要读，
+  与 `jstart.argv` 一样保留；
 
 - **jstart 只写运行目录，不管运行中的实例**：exec 之后进程即应用，pid 的记录与停止
   交给调用方（pid 由上层工具自行记录）。要跑多个副本就给每个副本

@@ -43,7 +43,7 @@ java <jvm opts> -cp <引擎 jar + 应用依赖 + WEB-INF> <容器入口类> --ba
 两个 classpath 都可能非常长，jstart 不放在命令行上，而是分别写入文件，用
 `--engine-classpath-file=` / `--app-classpath-file=` 把**文件路径**交给脚本（脚本读文件
 自己拼最终 `-cp`）。若脚本拼出的最终命令过长（例如把应用依赖放进了 `-cp`），可以把它
-写成一个 java **参数文件**，`--entry-out` 里只留 `java @<file>`，由 java launcher 展开，
+写成一个 java **参数文件** `<base>/jstart.args`，`--entry-out` 里只留 `java @<file>`，由 java launcher 展开，
 避免超出行参上限（E2BIG）。
 
 一个最小的 init 脚本（bash，演示协议）：
@@ -70,7 +70,7 @@ printf '%s\0' java -cp "$cp" com.example.ContainerMain > "$entryOut"
 |------|------|------|
 | `--base=<dir>` | 是 | 组件 base（jstart 的 `--base`/`[app] base`/`[app] instance`）；`webapps/`、引擎目录都在其下 |
 | `--entry=<path>` | 单应用是 | war 文件，或**已解压的 webapp 目录** |
-| `--entry-out=<file>` | 是 | 最终 argv 的写出文件（NUL 分隔） |
+| `--entry-out=<file>` | 是 | 最终 argv 的写出文件（NUL 分隔）；jstart 传 `<base>/jstart.argv` |
 | `--engine-classpath-file=<file>` | 否 | 引擎依赖 classpath 的文件（`[engine]` 段除 `init` 外的行，`<base>/engine-deps.classpath`）；文件可能为空 |
 | `--app-classpath-file=<file>` | 否 | 应用依赖 classpath 的文件（jstart 解析出的 gav/本地/远程 jar，`<base>/engine-app.classpath`）；文件可能为空 |
 | `--local-repo=<dir>` | 否 | 本地仓库路径（jstart 的 `--local`），供脚本给容器注入 `-Dbas.repo` 之类的仓库属性 |
@@ -85,14 +85,14 @@ printf '%s\0' java -cp "$cp" com.example.ContainerMain > "$entryOut"
 - 脚本以 **0** 退出表示成功（此时 `--entry-out` 必须存在且非空）；非 0 即失败，
   jstart 直接返回该退出码。
 - `--entry-out` 内容：**每个 argv 用 NUL(`\0`) 分隔**，通常带结尾 NUL。jstart 去掉
-  结尾空项后 exec；中间的空参数保留。若命令过长，内容可能是 `java @<base>/xxx.args`
+  结尾空项后 exec；中间的空参数保留。若命令过长，内容可能是 `java @<base>/jstart.args`
   （java 参数文件，脚本写出），jstart 原样 exec，由 java launcher 展开。
 - 脚本的 **stderr 透传**（日志/错误）；stdout 被 jstart 捕获（`--verbose` 时回显），
   以免污染 jstart 自己的输出。
 - **中间文件会被清理**：classpath 文件与多应用计划只是 init 的输入，init 成功、argv
   到手后 jstart 会删掉 `<base>/engine-deps.classpath`、`<base>/engine-app.classpath` 与
-  `<base>/engine-subapps.jstart`。`<base>/engine-entry.argv` 保留（`run --print` 与排错要
-  读它）；命令过长时脚本另写 `engine-entry.argv.args`，java 启动时还要读它，**不能删**。
+  `<base>/engine-subapps.jstart`；最终命令写到 `<base>/jstart.argv` 并保留。
+  命令过长时脚本另写 `<base>/jstart.args`，java 启动时还要读它，**不能删**。
 
 ### `--entry` 是文件还是目录
 
@@ -251,25 +251,18 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 
 ```bash
 jstart run app.jstart
-jstart run --print app.jstart      # 只打印（见下）
 ```
 
 `run` 拒绝**裸 war** 目标（本地 `app.war`、`g:a:v`、`http(s)://` 都不行）：引擎、参数、
 base 都需要显式声明，正是 launch spec 的职责。`resolve`/`fetch`/`repo` 不受此限制，
 仍可直接接受 war。
 
-## `--print`
-
-`run --print <spec>` **不执行**准备过程，只打印阶段 1 的 init 命令（准备可能有副作用，
-如解压）；程序在 `PATH` 上找不到也能打印。若 `--base` 下已有上次运行留下的 `engine-entry.argv`，
-则打印其中的**最终命令**，便于查看 prepare 之后的真实启动行。
-
 ## 与其它命令的关系
 
 - `resolve <war>`：只解析并准备 war 内置依赖，打印 war 落盘路径，**不含**引擎；
 - `classpath`/`info` 对 war 不展开、不涉及引擎（`info` 只额外给出 `engine init:` 路径）；
 - `repo <spec>`：只整合**应用**依赖，不读取 `[engine]` 段。离线机器需要引擎 jar 时，
-  先在联网机上 `jstart run --print <spec>`（会下载应用 + 引擎依赖到 `--local` 仓库），
+  先在联网机上 `jstart resolve <spec>`（现在会下载应用 + 引擎依赖到 `--local` 仓库），
   再把仓库目录拷到离线机（见 [offline.md](offline.md)）。
 
 ## 限制

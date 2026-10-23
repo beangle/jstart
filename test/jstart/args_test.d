@@ -17,7 +17,7 @@ unittest {
   // 默认：run、安静、10 并发、未给 --main
   auto d = parseArgs([]);
   assert(d.command == "run" && d.target.length == 0 && d.rest.length == 0);
-  assert(!d.verbose && !d.quiet && !d.offline && !d.print);
+  assert(!d.verbose && !d.quiet && !d.offline);
   assert(d.jobs == 10);
   assert(!d.hasMain && d.mainClass.length == 0);
 }
@@ -32,7 +32,6 @@ unittest {
   assert(both.verbose && both.quiet);
 
   assert(parseArgs(["--offline"]).offline);
-  assert(parseArgs(["--print"]).print);
   assert(parseArgs(["--help"]).help);
   assert(parseArgs(["--version"]).showVersion);
   assert(parseArgs(["-V"]).showVersion);

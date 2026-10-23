@@ -7,17 +7,18 @@
  */
 module test.jstart.engine_test;
 
+import std.algorithm : canFind, startsWith;
 import std.conv : to;
-import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
 import std.path : buildPath;
 import std.process : environment;
 import std.string : endsWith;
 import std.uuid : randomUUID;
 
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile;
-import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
+import jstart.engine : appendEngineDeps, argsFile, argvFile, engineDepsClasspathFile,
   entryClasspathFile, engineInitArgv, findOnPath, isProgramPath, parseCommandLine,
-  parseEntryArgv, removeEngineWorkFiles, resolveEngineInit, subappsPlanFile;
+  parseEntryArgv, removeEngineWorkFiles, resolveEngineInit, subappsPlanFile, writeJstartArgv;
 
 unittest {
   // --entry-out：NUL 分隔 argv；忽略结尾 NUL 与手写换行；保留中间空参数。
@@ -26,6 +27,29 @@ unittest {
   assert(parseEntryArgv("java\0-cp\0Main\n") == ["java", "-cp", "Main"]);
   assert(parseEntryArgv("a\0\0b") == ["a", "", "b"], "empty middle arg kept");
   assert(parseEntryArgv("solo") == ["solo"]);
+}
+
+unittest {
+  // 非引擎模式：jstart 自己写 jstart.argv；长命令折成 jstart.args。
+  auto dir = buildPath(tempDir(), "jstart-argv-" ~ randomUUID().toString);
+  mkdirRecurse(dir);
+  scope (exit)
+    if (exists(dir))
+      rmdirRecurse(dir);
+
+  auto cmd = ["java", "-Xmx1g", "-cp", "a.jar", "Main"];
+  auto actual = writeJstartArgv(dir, cmd);
+  assert(actual == cmd);
+  assert(readText(buildPath(dir, argvFile)) == "java\0-Xmx1g\0-cp\0a.jar\0Main\0");
+
+  auto longArg = "-Dlong=";
+  foreach (i; 0 .. 5000)
+    longArg ~= "x";
+  auto longCmd = ["java", longArg, "Main"];
+  actual = writeJstartArgv(dir, longCmd);
+  assert(actual.length == 2 && actual[1].startsWith("@"));
+  assert(readText(buildPath(dir, argvFile)) == "java\0" ~ actual[1] ~ "\0");
+  assert(readText(buildPath(dir, argsFile)).canFind("-Dlong="));
 }
 
 unittest {
@@ -50,7 +74,7 @@ unittest {
 
 unittest {
   // base 下的约定文件名稳定：init 脚本按这些名字读写 plan/argv/classpath。
-  assert(entryArgvFile == "engine-entry.argv");
+  assert(argvFile == "jstart.argv");
   assert(entryClasspathFile == "engine-app.classpath");
   assert(engineDepsClasspathFile == "engine-deps.classpath");
   assert(subappsPlanFile == "engine-subapps.jstart");
@@ -63,7 +87,7 @@ unittest {
   scope (exit)
     if (exists(dir))
       rmdirRecurse(dir);
-  foreach (name; [entryArgvFile, entryArgvFile ~ ".args", entryClasspathFile,
+  foreach (name; [argvFile, argsFile, entryClasspathFile,
       engineDepsClasspathFile, subappsPlanFile])
     write(buildPath(dir, name), "x");
 
@@ -72,8 +96,8 @@ unittest {
   assert(!exists(buildPath(dir, engineDepsClasspathFile)));
   assert(!exists(buildPath(dir, entryClasspathFile)));
   assert(!exists(buildPath(dir, subappsPlanFile)));
-  assert(exists(buildPath(dir, entryArgvFile)), "argv 记录要留下");
-  assert(exists(buildPath(dir, entryArgvFile ~ ".args")), "java @argfile 运行时还要读");
+  assert(exists(buildPath(dir, argvFile)), "removeEngineWorkFiles 不负责删 argv");
+  assert(exists(buildPath(dir, argsFile)), "java @argfile 运行时还要读");
 }
 
 unittest {

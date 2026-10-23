@@ -262,24 +262,10 @@ classpath 装配、exec 流程与现有 jar 目标共用同一套代码。`run` 
 launch spec（或带应用本体的 jar/gav/url）；**普通文本文件不再支持为依赖清单
 target**（任何命令都不接受），依赖清单只来自 jar/war 内置描述或 spec 的 `[libs]`。
 
-## --print：只打印将要执行的命令
-
-`jstart run --print app.jstart`（对 jar 目标同样可用）：
-
-- 照常解析、下载并装配 classpath（与 `run` 的准备工作一致）；
-- 不 exec，而是把将要执行的命令行打印到 stdout，每个参数按 POSIX 单引号规则转义，
-  可直接复制执行；
-- 用于审计、脚本包装与 CI 调试；对 deps 不齐等准备失败，退出码与 `run` 一致。
-
-```bash
-$ jstart run --print app.jstart
-java -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -cp 'app.jar:...' org.beangle.app.Main '--port=8080' '--path=/base'
-```
-
 ## 范围与规划
 
 - **v0.1.0 候选范围**：launch spec 文件解析（含 `[libs]` 追加/覆盖语义）+ `run`/其余
-  命令支持 spec target + `run --print`。
+  命令支持 spec target。
 - `info` 命令已实现：解析并准备依赖后输出 main、依赖数、各依赖来源与本地落盘、体积等
   结构化信息（文本 `key: value`，依赖逐行 `dep <n>: ...`），服务审计与 IDE/CI 集成，
   详见 [commands.md](commands.md)。

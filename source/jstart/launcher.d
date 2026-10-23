@@ -17,7 +17,9 @@ import std.file : exists;
 import std.path : buildPath, pathSeparator;
 import std.process : environment;
 import std.stdio : stderr, stdout, writeln;
-import std.string : replace, toStringz;
+import std.string : toStringz;
+
+import jstart.engine : writeJstartArgv;
 
 version (Posix) {
   import core.sys.posix.unistd : execvp;
@@ -60,10 +62,10 @@ private string resolveJava(string java) {
  * [app] runtime path); empty means the $JAVA_HOME/PATH lookup.
  */
 int runJarApp(string classpath, string mainClass, string[] jvmOptions,
-    string[] appArgs, bool verbose = true, string java = "") {
+    string[] appArgs, bool verbose = true, string java = "", string base = "") {
   auto cmd = [resolveJava(java)] ~ jvmOptions ~ ["-cp", classpath] ~
     [mainClass] ~ appArgs;
-  return execCmd(cmd, verbose);
+  return execCmd(base.length ? writeJstartArgv(base, cmd) : cmd, verbose);
 }
 
 /// java executable for a launch: [app] runtime override, else $JAVA_HOME/PATH.
@@ -72,41 +74,13 @@ string javaFor(string runtime = "") {
 }
 
 /**
- * Print the command `run` would exec (java [jvm] -cp cp main args), with
- * every argv POSIX-single-quoted, without executing it.
- */
-int printJavaCommand(string classpath, string mainClass, string[] jvmOptions,
-    string[] appArgs, string java = "") {
-  auto cmd = [resolveJava(java)] ~ jvmOptions ~ ["-cp", classpath] ~
-    [mainClass] ~ appArgs;
-  return printCommand(cmd);
-}
-
-/**
- * Print an argv as a POSIX-quoted command line, without executing it.
- */
-int printCommand(string[] cmd) {
-  string[] quoted;
-  foreach (a; cmd) {
-    quoted ~= shellQuote(a);
-  }
-  writeln(quoted.join(" "));
-  return 0;
-}
-
-/** Single-quote an argv for POSIX shells, escaping embedded quotes. */
-private string shellQuote(string arg) {
-  auto escaped = arg.replace("'", "'\\''");
-  return "'" ~ escaped ~ "'";
-}
-
-/**
  * Launch a native executable (the executable extracted from a tar.gz
  * distribution), replacing the current process with it; arguments are
  * appended after the executable.
  */
-int runNativeApp(string executable, string[] args, bool verbose = true) {
-  return execCmd([executable] ~ args, verbose);
+int runNativeApp(string executable, string[] args, bool verbose = true, string base = "") {
+  auto cmd = [executable] ~ args;
+  return execCmd(base.length ? writeJstartArgv(base, cmd) : cmd, verbose);
 }
 
 /**

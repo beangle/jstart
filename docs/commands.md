@@ -23,14 +23,12 @@ jstart [options] <command> <target> [args...]
 | `--base=<dir>` | run：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与运行目录"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
 | `--main=<class>` | run/classpath/info：指定 java 主类，优先于 `[app] main` 与 jar 内 `MANIFEST.MF` 的 `Main-Class`；只对 jar/gav-jar/解压目录生效，war/native 目标告警忽略 |
 | `--jobs=N` | 并行下载并发数，默认 10；`1` 为串行下载 |
-| `--print` | 仅 run：准备完成后打印将执行的命令行（逐参数 shell 引号），不 exec |
 | `--verbose` / `-v` | 输出过程细节：解析、下载开始（`Downloading <url>`）、将执行的启动命令与 init 命令的 stdout（默认只输出告警/错误、每 url 一行下载结果与命令结果） |
 | `--quiet` / `-q` | 在默认之上再关闭告警与每 url 一行的下载日志，只剩命令结果与错误（错误仍由退出码体现）；与 `--verbose` 同时给出时 `--quiet` 生效 |
 | `-h` / `--help` | 帮助 |
 | `-V` / `--version` | 版本 |
 
-输出约定：**stdout 只放命令结果**（解析出的路径、classpath、info、fetch 路径、
-`--print` 的命令行），**过程与诊断走 stderr**——包括默认就有的、**每个下载 url 一行**
+输出约定：**stdout 只放命令结果**（解析出的路径、classpath、info、fetch 路径），**过程与诊断走 stderr**——包括默认就有的、**每个下载 url 一行**
 的结果日志 `<label> Downloaded <url> (N bytes, Ns)`（`--quiet` 关闭；`--verbose` 另给
 `Downloading <url>` 开始行等细节）。日志由 jstart 自己打印，curl 始终
 `--silent --show-error`，没有进度条；`.sha1` 等附属下载不打行，避免一个构件刷两行。
@@ -42,7 +40,7 @@ jstart [options] <command> <target> [args...]
 |----|------|
 | 0 | 成功 |
 | 1 | 目标无法获取、依赖缺失、repo 源缺失或与 local 相同 |
-| 2 | 用法错误：缺少目标（打印 usage）、`--print` 用于非 run、`--main` 值为空或不是类名 |
+| 2 | 用法错误：缺少目标（打印 usage）、`--main` 值为空或不是类名 |
 | 其他 | `run` 直接继承被启动应用的退出码（exec 后即应用自身，当前为 java） |
 
 ## 本地仓库（单一目录，maven 原生布局）
@@ -161,14 +159,6 @@ org.apache.tomcat.embed:tomcat-embed-websocket:11.0.21
 jstart run app.jstart
 ```
 
-`--print`：不 exec，把将执行的命令打印到 stdout（逐参数 POSIX 单引号，可直接复制
-执行），用于审计与调试：
-
-```bash
-jstart run --print app.jstart
-jstart run --print app.jar --port=8080
-```
-
 示例：
 
 ```bash
@@ -176,7 +166,6 @@ jstart run /path/to/app.jar --port=8080 --path=/base
 jstart run org.beangle.sqlplus:beangle-sqlplus:0.0.46 data.xml
 jstart --local=/opt/repo --quiet run app.jar --port=9090
 jstart run webapp.jstart --port=8080 --path=/base       # war spec（entry 为 war）
-jstart run --print app.jstart                          # spec：war 时含 [engine] 段
 jstart run https://repo.example.com/app.jstart         # 远程 spec：下载后按 entry 解析
 ```
 
@@ -192,9 +181,10 @@ jstart [options] resolve <target>
 app=$(jstart --quiet resolve /path/to/app.jar)   # exit=0 才使用
 ```
 
-- war 目标同样适用：`resolve /path/app.war` 只解析 war 内置依赖并打印路径，不涉及引擎。
+- war 目标同样适用：裸 `resolve /path/app.war` 只解析 war 内置依赖并打印路径，不涉及引擎；
+  通过 launch spec 声明的引擎目标，`resolve <spec>` 会同时取回 `[engine]` 段的引擎 jar。
 - 多应用 spec（`[subapp <id>]`）**每行打印一个 subapp 的落盘路径**，同样按依赖是否齐备
-  决定退出码；引擎依赖不在 `resolve` 范围内（与单应用 war 一致）。
+  决定退出码；`[engine]` 段的引擎依赖也在这一步取回。
 - native（tar.gz）目标复用 `fetch` 的取包逻辑并解压，输出的是**包内可执行文件绝对路径**
   （可直接 exec；见下文"native（tar.gz）目标"）。
 - 依赖有缺失时仍会打印路径，但退出码为 1（对齐原 AppResolver 行为），缺失清单打到
@@ -417,7 +407,6 @@ boot=$(jstart --quiet resolve org.beangle.ems:beangle-ems-portal:tar.gz:linux-am
 "$boot" --port=8080
 
 # 先看将执行的命令行（逐参数引号），不 exec
-jstart run --print org.beangle.ems:beangle-ems-portal:tar.gz:linux-amd64:4.20.14-SNAPSHOT --port=8080
 ```
 
 行为要点：
@@ -486,10 +475,10 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
 | `<base>/webapps/<ctx>/` | 一个 base 一份 | 引擎解压出的 docBase（引擎拿到的 `--base` 就是组件目录） |
 | `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 命令；**init 成功后删除** |
 | `<base>/engine-deps.classpath` | 一个 base 一份 | 引擎依赖 classpath，经 `--engine-classpath-file` 交给 init 命令；**init 成功后删除** |
-| `<base>/engine-entry.argv` | 一个 base 一份 | init 命令写出的最终启动命令（NUL 分隔 argv），保留；超长时另有 `.args`，java 启动时还会读 |
+| `<base>/jstart.argv` | 一个 base 一份 | 最终启动命令（NUL 分隔 argv），保留；超长时另有 `jstart.args`，java 启动时还会读 |
 
 - 多应用计划 `<base>/engine-subapps.jstart` 同样是 init 的输入，init 成功后与两个 classpath
-  文件一起删除；`engine-entry.argv` 是启动记录（`--print` 会读），不清理。
+  文件一起删除；`jstart.argv` 与 `jstart.args`（超长命令的 java 参数文件）保留。
 
 - **组件键**：target 短名 + 短指纹（本地路径先绝对化；不含任何应用参数），因此同一个 target
   无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；spec 写了 `[app] instance` 时

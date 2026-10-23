@@ -47,7 +47,7 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 | `test/jstart/download_test.d` | 并行下载（--jobs 并发/串行可观测）与 Range 分段下载合并、内容校验 |
 | `test/jstart/spec_test.d` | launch spec 识别/完整解析（含 [app] runtime、`[engine] init` 与旧 `[app] engine`/java/[jvm] 告警）、行号告警、未知段、deps/engine 段原样保留等 |
 | `test/jstart/engine_test.d` | entry-out argv 解析、引擎依赖去重合并、base 下协议文件名常量 |
-| `test/jstart/args_test.d` | CLI 选项解析：子命令与布尔开关（`--verbose`/`--quiet`/`--offline`/`--print`）、带值选项（`--snapshot-remote`/`--main`/`--base` 等）、target 与 rest 切分、数字选项钳制 |
+| `test/jstart/args_test.d` | CLI 选项解析：子命令与布尔开关（`--verbose`/`--quiet`/`--offline`）、带值选项（`--snapshot-remote`/`--main`/`--base` 等）、target 与 rest 切分、数字选项钳制 |
 | `test/jstart/mainclass_test.d` | 主类优先级（`--main` > `[app] main` > Manifest `Main-Class`）与类名语法校验（挡掉路径/url/空格） |
 | `test/jstart/base_test.d` | 组件键/base 推导、目录创建与私有权限校验 |
 | `test/jstart/fetch_test.d` | 发行仓库 url/补丁命名、基线推断、带 classifier 的快照查找、端到端 fetch（补丁探测 → bspatch → gzip → sha1 校验，本地静态服务） |
@@ -66,14 +66,14 @@ dub test --compiler=ldc2               # 单元测试（unittest 配置），产
 - run：参数（`--port=8080`、普通参数）透传并 exec 成功；
 - gav 目标 resolve；
 - info：结构化输出 app/main/依赖来源与本地落盘路径；
-- native（tar.gz）：现场打包 demo，验证 resolve/`run --print`/参数转发与解压目录；
+- native（tar.gz）：现场打包 demo，验证 resolve/run 参数转发与解压目录；
 - fetch：本地文件与增量补丁路径（`--from`，本地静态服务，不联网）；
 - 多 webapp spec：`[subapp]` 段（含 `libs` 扩展依赖）→ `engine-subapps.jstart` →
   init 命令 → `entry-out`（本地 fake dist init 命令），并验证缺 `[engine]` 与
   `classpath` 被拒；
-- war 引擎：`run --print` 输出 init 命令、验证 `--entry`/`--engine-classpath-file`/
-  `--app-classpath-file`/参数透传（引擎 jar 用本地空文件，不联网）；另用本地 fake
-  init 命令端到端验证"init 命令写 argv → exec 最终命令"（`engine-entry.argv` 落盘与参数
+- war 引擎：验证 `--entry`/`--engine-classpath-file`/`--app-classpath-file`/参数透传；
+  另用本地 fake
+  init 命令端到端验证"init 命令写 argv → exec 最终命令"（`jstart.argv` 交接与参数
   转发）；另有 **命令形式** 用例（`init = bash <file>`，不依赖可执行 wrapper），验证
   分词/`PATH` 查找与协议参数追加；
 - 真实组件运行测试（可选，联网+大下载+java 17+）：`bash test/war-run-test.sh`

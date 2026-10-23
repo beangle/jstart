@@ -190,9 +190,8 @@ https://repo.example.com/bas/beangle-bas-engine.jar
 --path=/
 ```
 
-4. **检查装配**：`jstart run --print app.jstart` 打印将执行的启动命令（`--base` 下已有
-   上次运行留下的 `engine-entry.argv` 时，打印其中保存的最终命令，否则打印 init 命令的
-   准备命令；`--print` 不执行准备，也不要求程序已在 `PATH` 上），用于定制前后对照。
+4. **检查装配**：正常 `jstart run app.jstart` 之后，组件目录里的 `jstart.argv`
+   就是最终启动命令（NUL 分隔），用 `tr '\0' '\n' < .../jstart.argv` 查看。
 
 ### classpath 顺序
 
@@ -208,13 +207,11 @@ CLASSPATH_EXTRA → WEB-INF/classes → WEB-INF/lib/*.jar（排序） → 应用
 
 - `resolve <war>`：只解析并准备 war 内置依赖，打印 war 落盘路径，**不含**引擎；
 - `classpath`/`info` 对 war 文件不展开、不涉及引擎（`info` 只额外给出 `engine init:`）；
-  查看将执行的完整命令请用 `run --print`；
-- `run --print <spec>`（entry 为 war）：照常下载引擎依赖；**不执行** init 命令的准备
-  （准备有副作用），若 `--base` 下已有 `engine-entry.argv` 则打印其中的最终命令，否则
-  打印 init 命令的准备命令（逐参数引号），不 exec；
+  最终启动命令看运行后的 `jstart.argv`；
+- `resolve <spec>` 会同时取回应用依赖与 `[engine]` 段里的引擎 jar，可用于离线预取；
 - `repo <war>` / `repo <spec>`：只整合**应用**依赖（war 内置清单或 spec `[libs]`），
   不读取 `[engine]` 段。离线机器需要引擎 jar 时，先在联网机上
-  `jstart run --print <spec>`（会下载应用 + 引擎依赖到 `--local` 仓库），再把该仓库
+  `jstart resolve <spec>`（会下载应用 + 引擎依赖到 `--local` 仓库），再把该仓库
   目录拷到离线机（见 [offline.md](offline.md)）。
 
 ## 验证
