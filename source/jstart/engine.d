@@ -27,7 +27,7 @@ module jstart.engine;
 
 import std.algorithm : endsWith;
 import std.array : split;
-import std.file : exists, isFile;
+import std.file : exists, isFile, remove;
 import std.path : buildPath;
 import std.process : environment;
 import std.string : indexOf, startsWith;
@@ -95,6 +95,32 @@ immutable string engineDepsClasspathFile = "engine-deps.classpath";
  * it was given.
  */
 immutable string subappsPlanFile = "engine-subapps.jstart";
+
+/**
+ * Remove the files the engine init command needed, right before exec'ing the
+ * final launch command.
+ *
+ * The engine/app classpath files and the multi-webapp plan are only inputs to
+ * the init command; the final command written to `engine-entry.argv` no longer
+ * references them. `engine-entry.argv` itself is kept: it is the record of what
+ * was actually launched (`run --print` reads it back), and when the command is
+ * folded into `engine-entry.argv.args`, java still reads that argfile at
+ * startup - so both stay.
+ *
+ * Cleanup failures are ignored: a leftover file is harmless, a failed launch is
+ * not.
+ */
+void removeEngineWorkFiles(string base) {
+  foreach (name; [engineDepsClasspathFile, entryClasspathFile, subappsPlanFile]) {
+    auto path = buildPath(base, name);
+    try {
+      if (exists(path))
+        remove(path);
+    } catch (Exception) {
+      // ignore: cleanup must never block startup
+    }
+  }
+}
 
 /**
  * `[engine] init` 的取值既可以是**可执行文件路径**，也可以是**命令行**（程序 + 参数）：

@@ -126,10 +126,14 @@ java 并回传退出码），代码里以 `version (Windows)` 分支隔离；POS
 ```text
 <根>/<组件键>/app/             native tar.gz 的解压树（.jstart.stamp 在内，标记匹配即复用）
 <根>/<组件键>/webapps/<ctx>/   引擎解压出的 docBase（引擎的 --base 就是组件目录）
-<根>/<组件键>/engine-app.classpath 应用依赖 classpath，经 --app-classpath-file 交给 init 命令
-<根>/<组件键>/engine-deps.classpath 引擎依赖 classpath，经 --engine-classpath-file 交给 init 命令
-<根>/<组件键>/engine-entry.argv init 命令写出的最终启动命令（NUL 分隔 argv）
+<根>/<组件键>/engine-app.classpath 应用依赖 classpath（init 输入，启动前删除）
+<根>/<组件键>/engine-deps.classpath 引擎依赖 classpath（init 输入，启动前删除）
+<根>/<组件键>/engine-entry.argv init 命令写出的最终启动命令（NUL 分隔 argv，保留）
 ```
+
+- **init 的中间文件不长期保留**：classpath 文件、多应用计划（`engine-subapps.jstart`）
+  在 exec 前删除；`engine-entry.argv` 留作启动记录（`--print` 会读），超长命令另有
+  `engine-entry.argv.args`，java 启动时还要读，保留；
 
 - **jstart 只写运行目录，不管运行中的实例**：exec 之后进程即应用，pid 的记录与停止
   交给调用方（pid 由上层工具自行记录）。要跑多个副本就给每个副本

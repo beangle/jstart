@@ -484,9 +484,12 @@ base 一词有两层，记住这两行就够：**base 根（root）**默认 `/va
 | `<root>/<组件键>` | 一个组件一份 | 组件目录，jstart 创建为 0700 并校验属主（同一 target 永远同一个目录；`[app] instance` 时目录名就是 `<name>`） |
 | `<base>/app/` | 一个 base 一份 | native（tar.gz）的解压树（`.jstart.stamp` 在内），标记匹配时复用 |
 | `<base>/webapps/<ctx>/` | 一个 base 一份 | 引擎解压出的 docBase（引擎拿到的 `--base` 就是组件目录） |
-| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 命令 |
-| `<base>/engine-deps.classpath` | 一个 base 一份 | 引擎依赖 classpath，经 `--engine-classpath-file` 交给 init 命令 |
-| `<base>/engine-entry.argv` | 一个 base 一份 | init 命令写出的最终启动命令（NUL 分隔 argv） |
+| `<base>/engine-app.classpath` | 一个 base 一份 | 应用依赖 classpath，经 `--app-classpath-file` 交给 init 命令；**init 成功后删除** |
+| `<base>/engine-deps.classpath` | 一个 base 一份 | 引擎依赖 classpath，经 `--engine-classpath-file` 交给 init 命令；**init 成功后删除** |
+| `<base>/engine-entry.argv` | 一个 base 一份 | init 命令写出的最终启动命令（NUL 分隔 argv），保留；超长时另有 `.args`，java 启动时还会读 |
+
+- 多应用计划 `<base>/engine-subapps.jstart` 同样是 init 的输入，init 成功后与两个 classpath
+  文件一起删除；`engine-entry.argv` 是启动记录（`--print` 会读），不清理。
 
 - **组件键**：target 短名 + 短指纹（本地路径先绝对化；不含任何应用参数），因此同一个 target
   无论参数怎么变都落在同一个组件目录，不同 target 不会碰撞；spec 写了 `[app] instance` 时

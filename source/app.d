@@ -21,7 +21,7 @@ import jstart.archive : Artifact, Archive, expandLocalPath, mergeLibraries, pars
 import jstart.base : nativeDirName, resolveBase;
 import jstart.distrepo : fetchDist;
 import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
-  entryClasspathFile, parseEntryArgv, resolveEngineInit, subappsPlanFile;
+  entryClasspathFile, parseEntryArgv, removeEngineWorkFiles, resolveEngineInit, subappsPlanFile;
 import jstart.http : runProcessCapture;
 import jstart.launcher : execCommand, printCommand, printJavaCommand, runJarApp, runNativeApp;
 import jstart.mainclass : MainClass, MainSource, isPlausibleMainClass, pickMainClass,
@@ -581,6 +581,8 @@ private int runEngine(BootArgs opts, Resolver resolver, string entry,
     stderr.writeln("Engine init command wrote an empty launch command to " ~ entryOut);
     return 1;
   }
+  // 启动命令已到手：清掉 init 阶段的中间文件，只留 argv（及其 @argfile）
+  removeEngineWorkFiles(base);
   return execCommand(argv, showProgress(opts));
 }
 
@@ -772,6 +774,8 @@ private int runMultiWebapp(BootArgs opts, Resolver resolver, LaunchSpec spec) {
     stderr.writeln("Engine init command wrote an empty launch command to " ~ entryOut);
     return 1;
   }
+  // 启动命令已到手：清掉 init 阶段的中间文件，只留 argv（及其 @argfile）
+  removeEngineWorkFiles(base);
   return execCommand(argv, showProgress(opts));
 }
 

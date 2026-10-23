@@ -8,13 +8,16 @@
 module test.jstart.engine_test;
 
 import std.conv : to;
+import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+import std.path : buildPath;
 import std.process : environment;
 import std.string : endsWith;
+import std.uuid : randomUUID;
 
 import jstart.archive : Archive, Artifact, LocalFile, RemoteFile;
 import jstart.engine : appendEngineDeps, engineDepsClasspathFile, entryArgvFile,
   entryClasspathFile, engineInitArgv, findOnPath, isProgramPath, parseCommandLine,
-  parseEntryArgv, resolveEngineInit, subappsPlanFile;
+  parseEntryArgv, removeEngineWorkFiles, resolveEngineInit, subappsPlanFile;
 
 unittest {
   // --entry-out：NUL 分隔 argv；忽略结尾 NUL 与手写换行；保留中间空参数。
@@ -51,6 +54,26 @@ unittest {
   assert(entryClasspathFile == "engine-app.classpath");
   assert(engineDepsClasspathFile == "engine-deps.classpath");
   assert(subappsPlanFile == "engine-subapps.jstart");
+}
+
+unittest {
+  // 启动前清理：init 的输入文件删掉，argv 记录与 java @argfile 留下。
+  auto dir = buildPath(tempDir(), "jstart-engine-cleanup-" ~ randomUUID().toString);
+  mkdirRecurse(dir);
+  scope (exit)
+    if (exists(dir))
+      rmdirRecurse(dir);
+  foreach (name; [entryArgvFile, entryArgvFile ~ ".args", entryClasspathFile,
+      engineDepsClasspathFile, subappsPlanFile])
+    write(buildPath(dir, name), "x");
+
+  removeEngineWorkFiles(dir);
+
+  assert(!exists(buildPath(dir, engineDepsClasspathFile)));
+  assert(!exists(buildPath(dir, entryClasspathFile)));
+  assert(!exists(buildPath(dir, subappsPlanFile)));
+  assert(exists(buildPath(dir, entryArgvFile)), "argv 记录要留下");
+  assert(exists(buildPath(dir, entryArgvFile ~ ".args")), "java @argfile 运行时还要读");
 }
 
 unittest {

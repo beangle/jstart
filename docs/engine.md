@@ -89,6 +89,10 @@ printf '%s\0' java -cp "$cp" com.example.ContainerMain > "$entryOut"
   （java 参数文件，脚本写出），jstart 原样 exec，由 java launcher 展开。
 - 脚本的 **stderr 透传**（日志/错误）；stdout 被 jstart 捕获（`--verbose` 时回显），
   以免污染 jstart 自己的输出。
+- **中间文件会被清理**：classpath 文件与多应用计划只是 init 的输入，init 成功、argv
+  到手后 jstart 会删掉 `<base>/engine-deps.classpath`、`<base>/engine-app.classpath` 与
+  `<base>/engine-subapps.jstart`。`<base>/engine-entry.argv` 保留（`run --print` 与排错要
+  读它）；命令过长时脚本另写 `engine-entry.argv.args`，java 启动时还要读它，**不能删**。
 
 ### `--entry` 是文件还是目录
 
