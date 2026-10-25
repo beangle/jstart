@@ -314,6 +314,10 @@ int main(string[] args) {
     if (nativeArchive.length == 0) {
       return 1;
     }
+    // [engine] + native entry：不在这里解压/exec，交给 engine init 处理。
+    if (specMode && launchType(spec) == LaunchType.engine) {
+      appPath = nativeArchive;
+    } else {
     auto execHint = specMode ? spec.exec : "";
     auto artifactId = nativeArtifactId(target);
     // 解压到 <base>/app：base 由 --base / [app] base+instance 决定，不用包旁目录兜底。
@@ -337,6 +341,7 @@ int main(string[] args) {
       return 1;
     }
     nativeRoot = extracted.dir;
+    }
   } else {
     appPath = resolver.fetchTarget(target);
     if (appPath.length == 0) {
@@ -367,7 +372,7 @@ int main(string[] args) {
     return 1;
   }
 
-  if (nativeMode) {
+  if (nativeMode && !(specMode && launchType(spec) == LaunchType.engine)) {
     return runNative(opts, resolver, appPath, deps, specMode, spec, nativeArchive, nativeRoot, base);
   }
 
@@ -1140,7 +1145,7 @@ private string fetchArtifact(BootArgs opts, Resolver resolver, string target) {
     auto remote = opts.remote;
     try {
       auto artifact = parseGav(gav, gav);
-      if (artifact.isSnapshot && opts.snapshotRemote.strip.length > 0) {
+      if (artifact.isSnapshot && !isNativeTarget(target) && opts.snapshotRemote.strip.length > 0) {
         remote = opts.snapshotRemote;
       }
     } catch (Exception e) {

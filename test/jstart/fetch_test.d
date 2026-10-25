@@ -314,6 +314,15 @@ unittest {
   auto r4 = fetchDist("org.example:demo:jar:linux-amd64:3.0-SNAPSHOT", "1.0",
       base, localBase, false);
   assert(r4.ok && r4.reused && !r4.viaDelta);
+
+  // native 的 SNAPSHOT 整包同名覆盖：远端 sha1 变化时必须重新下载，不能复用旧包
+  write(buildPath(versionDir, "demo-2.0-SNAPSHOT-linux-amd64.tar.gz"), cast(ubyte[]) "new-snapshot");
+  write(buildPath(versionDir, "demo-2.0-SNAPSHOT-linux-amd64.tar.gz.sha1"),
+      sha1OfFile(buildPath(versionDir, "demo-2.0-SNAPSHOT-linux-amd64.tar.gz")));
+  auto r5 = fetchDist("org.example:demo:tar.gz:linux-amd64:2.0-SNAPSHOT", "0.9",
+      base, localBase, false);
+  assert(r5.ok && !r5.reused);
+  assert(cast(string) read(r5.path) == "new-snapshot");
 }
 
 /// bspatch 的取用顺序：系统命令优先（用脚本模拟），失败/尺寸不符回退内置实现。

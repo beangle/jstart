@@ -16,11 +16,12 @@
  * artifact is downloaded instead.
  *
  * SNAPSHOT 版本不做任何快照元数据解析（不发 HEAD `latest`、不取
- * `maven-metadata.xml`）：native 构建费时、包大、发布不频繁，开发版一般不上传，
- * 所以 `-SNAPSHOT` 只当字面版本名走同一条 local → delta → whole 流程。
+ * `maven-metadata.xml`）：`-SNAPSHOT` 只当字面版本名。但本地已有包时会比对远端
+ * `.sha1`，因为 native SNAPSHOT 同名覆盖；远端变化才重新走 delta/whole。
  */
 module jstart.distrepo;
 
+import std.array : split;
 import std.conv : to;
 import std.file : dirEntries, exists, isDir, readText, remove, rename, SpanMode;
 import std.path : baseName, dirName;
@@ -31,7 +32,7 @@ import std.stdio : stderr, writeln;
 import jstart.archive : Artifact, parseGav;
 import jstart.bspatch : applyBsdiff, bspatchAvailable;
 import jstart.gzip : gzipAvailable, gzipTo, gunzipTo;
-import jstart.http : downloadFile, downloadFileSmart, remoteExists;
+import jstart.http : downloadFile, downloadFileSmart, httpGetText, remoteExists;
 import jstart.repo : LocalRepo, RemoteRepo, parseRemoteSpec, parseSha1Text, sha1OfFile;
 
 /// Default dist repository: micdn's `/native` endpoint (single root for releases and snapshots).
@@ -118,8 +119,20 @@ FetchResult fetchDist(string gav, string fromVersion, string remoteSpec,
   auto local = new LocalRepo(localBase);
   auto remotes = offline ? [] : buildDistRemotes(remoteSpec);
 
-  // 1) 本地已有：SNAPSHOT 先查最新时间戳文件，再看字面别名
+  // 1) 本地已有：SNAPSHOT 先查最新时间戳文件，再看字面别名。
+  //    native SNAPSHOT 的整包同名覆盖，必须先比对远端 .sha1；否则第二次启动会一直用旧镜像。
   auto existing = findLocalArtifact(local, a, verbose);
+  if (existing.length && a.isSnapshot && remotes.length
+      && remoteSnapshotChanged(remotes, a, existing, verbose)) {
+    if (verbose) {
+      writeln("Remote snapshot changed, replacing local " ~ existing);
+    }
+    remove(existing);
+    if (exists(existing ~ ".sha1")) {
+      remove(existing ~ ".sha1");
+    }
+    existing = "";
+  }
   if (existing.length) {
     if (verbose) {
       writeln("Using local " ~ existing);
@@ -221,6 +234,37 @@ string findLocalArtifact(LocalRepo local, Artifact a, bool verbose = true) {
     remove(sha1File);
   }
   return "";
+}
+
+/**
+ * Native SNAPSHOT 发布时保持同名，micdn 只做覆盖。用远端 `.sha1` 判断本地缓存是否过期：
+ * 远端不可达或没有校验文件时保留本地，避免网络故障阻断启动。
+ */
+private bool remoteSnapshotChanged(
+    RemoteRepo[] remotes,
+    Artifact a,
+    string localFile,
+    bool verbose) {
+  string localSha1;
+  try {
+    if (exists(localFile ~ ".sha1")) {
+      localSha1 = readText(localFile ~ ".sha1").strip;
+    }
+  } catch (Exception) {
+    localSha1 = "";
+  }
+  foreach (remote; remotes) {
+    string remoteSha1;
+    if (!httpGetText(distSha1Url(remote.base, a), remoteSha1, verbose, remote.token)) {
+      continue;
+    }
+    auto token = remoteSha1.strip.split()[0];
+    if (localSha1.length == 0 || token != localSha1) {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 /// Local file of the baseline version: its newest snapshot file, else the plain file.

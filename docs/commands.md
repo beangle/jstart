@@ -17,7 +17,7 @@ jstart [options] <command> <target> [args...]
 | `--local=<dir>` | 本地仓库，默认 `~/.m2/repository`；release 与 SNAPSHOT **同库同布局**（SNAPSHOT 时间戳文件在对应版本目录里）；repo 命令里是"目标仓库" |
 | `--source=<dir>` | 仅 repo 命令：源仓库，默认 `~/.m2/repository`，须与 `--local` 不同 |
 | `--from=<version>` | fetch/native 的 release 构件与 native（tar.gz）gav 目标：增量补丁的基线版本；缺省取本地仓库里最接近的较低版本。Maven SNAPSHOT jar/war 先解析最新时间戳，不走增量补丁 |
-| `--remote=<repos>` | 远程仓库，逗号分隔；每项为 `[token@]url`（token 只发给该仓库）。含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"本地仓库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native` |
+| `--remote=<repos>` | 远程仓库，逗号分隔；每项为 `[token@]url`（token 只发给该仓库）。含义随命令：resolve/run 是**普通（正式版）构件**的上游——缺省用内置镜像（阿里云 → 华为云 → Central），显式给出时也会把 Central 补在末尾；**SNAPSHOT 完全不看这份列表**（见 `--snapshot-remote` 与下"本地仓库"）；fetch/native 是发行仓库基地址，缺省 `https://sas.openurp.net/native`；native target 的 resolve/run 也用它 |
 | `--snapshot-remote=<repos>` | 可选，**仅 SNAPSHOT**（resolve/run/classpath/info 的 pom/jar/war 依赖、以及 fetch 的 Maven SNAPSHOT jar/war）：开发版上游，逗号分隔，每项为 `[token@]url`。**不兜到 `--remote`**，也不含默认镜像与 Central 兜底；不配时若本地仓库已有该文件就直接用（不发请求、不报错），只有本地缺失、需要拉取才报错 |
 | `--offline` | 只用本地仓库：不探测远端（SNAPSHOT 也不做 `latest`/元数据探测）、不下载，缺件直接失败；与 `--remote`/`--snapshot-remote` 同时给出时以离线为准 |
 | `--base=<dir>` | run：**base 根目录**，替换缺省的 `/var/tmp/jstart`（不是拼在默认根下）；组件的运行目录是 `<base>/<组件键>`（见"组件 base 与运行目录"）。要固定目录名用 spec 的 `[app] instance = <name>`（没有同名命令行选项） |
@@ -70,7 +70,7 @@ SNAPSHOT 都在 maven2 布局的版本目录下：
   这套元数据解析同时服务于 maven 依赖（`resolve`/`run` 的 jar/war 等）与 `fetch` 的
   Maven SNAPSHOT jar/war：fetch 也先解析最新时间戳，再只取构件、不解析依赖。
   `fetch` 的 native tar.gz 发行包不做快照元数据探测（native 构建费时、包大、发布不频繁），
-  `-SNAPSHOT` 只当字面版本名走「本地命中 → 增量补丁 → 整包下载」；
+  `-SNAPSHOT` 只当字面版本名；但本地命中前会比对远端 `.sha1`，同名包被重新发布时会刷新；
 - SNAPSHOT 与正式版共用 `--local` 指定的仓库；时间戳文件与字面别名按 maven 布局同处
   版本目录，文件名互不覆盖。
 
@@ -343,8 +343,8 @@ jstart fetch org.beangle.ems:beangle-ems-portal:jar:4.20.14 --from=4.20.13
 流程（Maven SNAPSHOT jar/war 在第一步之前先解析 `latest`/`metadata`，取最新时间戳文件；
 以下增量流程只针对正式版与 native tar.gz）：
 
-1. 正式版/native 本地已有就直接用；native `-SNAPSHOT` 先看版本目录里时间戳最新的一份，
-   再看同在其中的 `-SNAPSHOT` 字面文件。命中且 `.sha1` 校验通过即返回（exit 0）；
+1. 正式版/native 本地已有就直接用；native `-SNAPSHOT` 先在本地命中，再比对远端 `.sha1`，
+   远端同名包更新时重新下载；Maven SNAPSHOT 另按时间戳/元数据解析；
 2. 确定基线版本：`--from=<version>` 优先；缺省扫描 `--local` 仓库里该构件的版本目录
    （正式版与 SNAPSHOT 同一棵树），取比目标版本低的最高版本；
 3. 探测 `<仓库>/<g>/<a>/<version>/<a>-<基线>_<版本>[-<classifier>].<packaging>.diff`
@@ -415,10 +415,11 @@ boot=$(jstart --quiet resolve org.beangle.ems:beangle-ems-portal:tar.gz:linux-am
 
 - **取包**：取包就是 `fetch` 的职责——gav 走发行仓库（默认 `--remote`，`--from` 指定增量
   基线），`http(s)://...tar.gz` url 直接下载（按主机路径缓存），本地文件原样使用；
-- **快照**：native 侧**不对 `-SNAPSHOT` 特殊照顾**——不做 `latest` 头/`maven-metadata.xml`
-  探测，`-SNAPSHOT` 只当字面版本名（本地命中 → 增量补丁 → 整包下载）。native 构建费时、
-  包大、发布不频繁，开发版一般不上传；确需开发版时，像正式版那样发布一个带 `-SNAPSHOT`
-  字面名的包即可，`--snapshot-remote` 对它无效；
+  native target 的 `--remote` 是 `/native` 仓库，不是 Maven 仓库；`--snapshot-remote` 对
+  native 不生效；
+- **快照**：native 侧不做 `latest` 头/`maven-metadata.xml` 探测；`-SNAPSHOT` 只当字面
+  版本名。为了支持开发版同名覆盖，本地已有包时会请求远端 `.sha1`，不同则删除本地并重新
+  走增量补丁或整包下载；远端不可达时保留本地；
 - **解压**：`tar -xzf` 解压到组件的 base 下（`<base>/app`），目录内的 `.jstart.stamp` 记录
   包的尺寸+mtime：标记匹配即复用，包内容变化（如增量重建后）自动重解。解压先写独立临时目录、
   再整体改名就位，因此并发/强杀残留也不会看到半个目录；旧目录改名挪走后清理，正在运行的
@@ -454,8 +455,11 @@ boot=$(jstart --quiet resolve org.beangle.ems:beangle-ems-portal:tar.gz:linux-am
 - **参数**：spec `[args]` 段在前、命令行参数在后，全部作为 argv 附加在可执行文件之后
   （`-D`/`-X` 也归应用，不做 JVM 参数拆分）；`[runtime]` 段与 `[app] runtime` 对 native 无意义，
   给出时告警忽略；
-- **子命令**：`resolve` 输出可执行文件绝对路径（供脚本 exec）；`run` 解析后 exec 它（进程即
-  应用，无父子等待）；`info` 输出 `type: app`、`entry type: native` 与 `archive`/`root`；
+- **engine 模式**：spec 同时声明 `[engine]` 和 native entry 时，jstart 只取包，不解压/exec；
+  把 tar.gz 作为 `--entry` 交给 `[engine] init`，由 basctl 等初始化脚本解压并写最终 argv；
+- **子命令**：`resolve` 输出可执行文件绝对路径（engine 模式输出 tar.gz 路径）；`run` 解析后
+  exec 它（进程即应用，无父子等待）；`info` 输出 `type: app`、`entry type: native` 与
+  `archive`/`root`；
   `classpath` 对 native 无意义（exit 2，提示改用 `resolve`）；
 - **依赖**：native 包内没有依赖清单，需要额外依赖时用 spec `[libs]` 段显式罗列（此时即全部依赖）。
 
